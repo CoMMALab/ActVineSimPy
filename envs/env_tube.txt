@@ -1,0 +1,10 @@
+bound: 2000 1000
+start: 0 0 1.51
+goal: 1600 10 0
+ob_type: tube
+scale: 1
+obstacles: 
+# Left and right bounds
+-200 000 -100 1000   
+1700 000 1800 1000
+ 

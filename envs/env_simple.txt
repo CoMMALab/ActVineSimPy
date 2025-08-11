@@ -1,0 +1,7 @@
+bound: 30
+start: 15 2 0
+goal: 15 20 0
+ob_type: box
+obstacles:
+6 10 24 11
+6 23 24 24

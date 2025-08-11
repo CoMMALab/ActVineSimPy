@@ -1,0 +1,11 @@
+bound_x = None
+bound_y = None
+obstacles = []
+start = None
+goal = None
+vine_thickness = None
+obstacle_type = None
+shrink = None
+unshrunk_ob = []
+scale = None
+min_r = 200
