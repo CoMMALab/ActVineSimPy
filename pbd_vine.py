@@ -184,7 +184,6 @@ def tube_sdf(pxy):
     return 0.5 * (20 - dist_to_arc0) + 5000
 
 
-
 def vine_collision_sdf(params: VineParams, body_xy: jnp.ndarray, n_bodies: int):
     """
     body_xy: (n_bodies, 2)
@@ -476,6 +475,18 @@ if __name__ == "__main__":
     #     [10, -60, 450, -40],
     # ]
     
+
+    '''
+    My Notes on how things work:
+        - How rectangles are described: [top_left_x, top_left_y, bottom_right_x, bottom_right_y]
+    
+    My ToDos:
+        - add boxes to test environment
+        - add some way to acknowledge certain boxes as dynamic
+        - figure out out how to give dynamic boxes their own bounding boxes (should be same as static, right?)
+        - implement physics (hard part)
+    '''
+
     # Fig obs
     obstacles = [
         [-20, 20, 10, 80],
