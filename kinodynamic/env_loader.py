@@ -38,6 +38,12 @@ def load_box_config(filename: str):
                 continue
             
             if reading_obstacles:
+
+                if line.startswith("dynamic_obstacles:"):
+                    reading_obstacles = False
+                    reading_dynamic_obstacles = True
+                    continue
+
                 parts = line.split()
                 if len(parts) == 4:
                     cfg['obstacles'].append([float(p) for p in parts])
@@ -66,10 +72,7 @@ def load_box_config(filename: str):
                 cfg['scale'] = float(line.split(':')[1].strip())
 
             elif line.startswith("obstacles:"):
-                reading_obstacles = True
-            elif line.startswith("dynamic_obstacles:"):
-                reading_obstacles = False
-                reading_dynamic_obstacles = True
+                reading_obstacles = True              
 
 
     # Make sure for obstacles, x1 < x2 and y1 < y2
@@ -104,9 +107,8 @@ def load_box_config(filename: str):
     cfg['obstacles'][:, :] *= cfg['scale']
 
     # Only scale dynamic obstacles if they exist:
-    if (cfg["dynamic_obstacles"] != (0,)):
+    if (cfg["dynamic_obstacles"].size != 0):
         cfg['dynamic_obstacles'][:, :] *= cfg['scale']
-        print(cfg['dynamic_obstacles'].shape)
 
     cfg['start'] = [cfg['start'][0] * cfg['scale'], cfg['start'][1] * cfg['scale'], cfg['start'][2]]
     cfg['goal'] = [cfg['goal'][0] * cfg['scale'], cfg['goal'][1] * cfg['scale'], cfg['goal'][2]]

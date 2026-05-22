@@ -1113,6 +1113,27 @@ if __name__ == "__main__":
         
     render()
         
+    # For obstacles (defined beforehand in case there are no dynamic obstacles):
+
+    all_obstacles = None
+
+    if (cfg["dynamic_obstacles"].size != 0):
+        all_obstacles = np.append(cfg['obstacles'], cfg['dynamic_obstacles'], axis=0)
+    else:
+        all_obstacles = cfg['obstacles'].copy()
+
+        print()
+        print(cfg['dynamic_obstacles'])
+        print()
+        print()
+        print(cfg['obstacles'])
+        print()
+    
+    # else:
+    #     print()
+    #     print("NO DYNAMIC OBJECTS DETECTED")
+    #     print()
+
     # Safe params
     sim_params = VineParams(
         max_bodies=70,
@@ -1126,7 +1147,7 @@ if __name__ == "__main__":
         # Curiously, decreasing substeps helps prevent penetration bugs. But it doesn't fix the root problem
         substeps=15, # FIXME THIS NUMBER CAN BE MUCH SMALLER IF WE DO LANGRANGE PROPERRLY
         alpha=1e-2,
-        obstacle_rects=cfg['obstacles'],
+        obstacle_rects = all_obstacles,
         use_tube_obstacle=args.env=='envs/env_tube.txt',
     )
     
