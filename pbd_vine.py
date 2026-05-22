@@ -474,18 +474,6 @@ if __name__ == "__main__":
     #     [10, 60, 450, 80],
     #     [10, -60, 450, -40],
     # ]
-    
-
-    '''
-    My Notes on how things work:
-        - How rectangles are described: [top_left_x, top_left_y, bottom_right_x, bottom_right_y]
-    
-    My ToDos:
-        - add boxes to test environment
-        - add some way to acknowledge certain boxes as dynamic
-        - figure out out how to give dynamic boxes their own bounding boxes (should be same as static, right?)
-        - implement physics (hard part)
-    '''
 
     # Fig obs
     obstacles = [

@@ -13,7 +13,9 @@ def load_box_config(filename: str):
       obstacles:
         x1 y1 x2 y2
         ...
-    Returns a dict with bound, start, goal, ob_type, obstacles (Nx4).
+      dynamic_obstacles:
+        x1 y1 x2 y2
+    Returns a dict with bound, start, goal, ob_type, obstacles, dynamic_obstacles (Nx4).
     """
 
     cfg = {
@@ -23,9 +25,11 @@ def load_box_config(filename: str):
         'goal': None,
         'scale': 1.0,
         'ob_type': None,
-        'obstacles': []
+        'obstacles': [],
+        'dynamic_obstacles': []
     }
     reading_obstacles = False
+    reading_dynamic_obstacles = False
 
     with open(filename, 'r') as f:
         for line in f:
@@ -37,6 +41,12 @@ def load_box_config(filename: str):
                 parts = line.split()
                 if len(parts) == 4:
                     cfg['obstacles'].append([float(p) for p in parts])
+                continue
+                
+            if reading_dynamic_obstacles:
+                parts = line.split()
+                if len(parts) == 4:
+                    cfg['dynamic_obstacles'].append([float(p) for p in parts])
                 continue
 
             if line.startswith("bound:"):
@@ -54,8 +64,12 @@ def load_box_config(filename: str):
                 cfg['ob_type'] = line.split(':')[1].strip()
             elif line.startswith("scale:"):
                 cfg['scale'] = float(line.split(':')[1].strip())
+
             elif line.startswith("obstacles:"):
                 reading_obstacles = True
+            elif line.startswith("dynamic_obstacles:"):
+                reading_obstacles = False
+                reading_dynamic_obstacles = True
 
 
     # Make sure for obstacles, x1 < x2 and y1 < y2
@@ -69,6 +83,18 @@ def load_box_config(filename: str):
             cfg['obstacles'][i][3] = y1
     
     cfg['obstacles'] = np.array(cfg['obstacles'], dtype=np.float32)
+
+     # Do the same for dynamic obstacles
+    for i in range(len(cfg['dynamic_obstacles'])):
+        x1, y1, x2, y2 = cfg['dynamic_obstacles'][i]
+        if x1 > x2:
+            cfg['dynamic_obstacles'][i][0] = x2
+            cfg['dynamic_obstacles'][i][2] = x1
+        if y1 > y2:
+            cfg['dynamic_obstacles'][i][1] = y2
+            cfg['dynamic_obstacles'][i][3] = y1
+    
+    cfg['dynamic_obstacles'] = np.array(cfg['dynamic_obstacles'], dtype=np.float32)
     
     # If lack goal radius, set to 100
     if 'goal_radius' not in cfg:
@@ -76,6 +102,12 @@ def load_box_config(filename: str):
 
     # Scale the obstacles
     cfg['obstacles'][:, :] *= cfg['scale']
+
+    # Only scale dynamic obstacles if they exist:
+    if (cfg["dynamic_obstacles"] != (0,)):
+        cfg['dynamic_obstacles'][:, :] *= cfg['scale']
+        print(cfg['dynamic_obstacles'].shape)
+
     cfg['start'] = [cfg['start'][0] * cfg['scale'], cfg['start'][1] * cfg['scale'], cfg['start'][2]]
     cfg['goal'] = [cfg['goal'][0] * cfg['scale'], cfg['goal'][1] * cfg['scale'], cfg['goal'][2]]
     cfg['goal_radius'] = cfg['goal_radius'] * cfg['scale']
