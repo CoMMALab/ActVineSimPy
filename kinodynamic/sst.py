@@ -1070,7 +1070,7 @@ if __name__ == "__main__":
     # Load the config file
     cfg = load_box_config(args.env)
     
-    init_vis(figsize=(12,9), obstacles=cfg['obstacles'], start=cfg['start'], goal=cfg['goal'],
+    init_vis(figsize=(12,9), obstacles=cfg['obstacles'], dynamic_obstacles=cfg['dynamic_obstacles'], start=cfg['start'], goal=cfg['goal'],
             save_pygame_folder=f'pics/live/')
     
     # See if we already have points saved

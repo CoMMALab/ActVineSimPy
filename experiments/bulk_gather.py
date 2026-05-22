@@ -103,7 +103,7 @@ def go(args):
                 os.remove(file_path)
             os.rmdir(save_pygame_folder)
     
-        init_vis(figsize=(12,9), obstacles=cfg['obstacles'], start=cfg['start'], goal=cfg['goal'], 
+        init_vis(figsize=(12,9), obstacles=cfg['obstacles'], dynamic_obstacles=cfg['dynamic_obstacles'], start=cfg['start'], goal=cfg['goal'], 
                 save_pygame_folder=save_pygame_folder)
         
         output_std = []

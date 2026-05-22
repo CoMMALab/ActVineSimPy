@@ -37,7 +37,7 @@ def view_all_solutions(solutions, sim_params, cfg, frames_to_display=None, no_ob
         sim_params.obstacle_rects = np.asarray(cfg['obstacles'])
         print("Replaced obstacles with corner markers.")
 
-    render.init_vis(figsize=(12, 9), obstacles=cfg['obstacles'], start=cfg['start'], goal=cfg['goal'],
+    render.init_vis(figsize=(12, 9), obstacles=cfg['obstacles'], dynamic_obstacles=cfg['dynamic_obstacles'], start=cfg['start'], goal=cfg['goal'],
                          save_pygame_folder='pics/view_solutions_free/')
     # fast_render.draw_goal(cfg['goal'], cfg['goal_radius'])
 

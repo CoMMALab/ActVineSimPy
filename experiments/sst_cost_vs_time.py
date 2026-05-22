@@ -40,7 +40,7 @@ def main():
     # --- Initialize visualization (mimicking sst.py's setup) ---
     # This is called to ensure that if sst_star or sst internally use drawing functions
     # that depend on this initialization, they do not fail.
-    init_vis(figsize=(12,9), obstacles=cfg['obstacles'], start=cfg['start'], goal=cfg['goal'])
+    init_vis(figsize=(12,9), obstacles=cfg['obstacles'], dynamic_obstacles=['dynamic_obstacles'], start=cfg['start'], goal=cfg['goal'])
 
     # --- Base Simulation Parameters (VineParams) ---
     # Copied from sst.py main for consistency
