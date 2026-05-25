@@ -24,7 +24,7 @@ from jax import grad, vmap
 class VineParams:
 
   def __init__(self, max_bodies, body_length, radius, dt, grow_rate, grow_force, 
-               stiffness, damping, substeps, alpha, obstacle_rects, use_tube_obstacle=False):
+               stiffness, damping, substeps, alpha, obstacle_rects, dynamic_objects = np.empty((0,)), use_tube_obstacle=False):
     self.max_bodies = max_bodies
     self.body_length = body_length
     self.radius = radius
@@ -38,8 +38,14 @@ class VineParams:
     self.obstacle_rects = obstacle_rects
     self.use_tube_obstacle = use_tube_obstacle  # If True, use hardcoded tube instead of env
     
-    self.hash = hash((max_bodies, body_length, radius, dt, grow_rate, grow_force,
+    self.dynamic_objects = dynamic_objects
+
+    if dynamic_objects.size == 0:
+        self.hash = hash((max_bodies, body_length, radius, dt, grow_rate, grow_force,
                         stiffness, damping, substeps, alpha, tuple(map(tuple, obstacle_rects)), use_tube_obstacle))
+    else:
+        self.hash = hash((max_bodies, body_length, radius, dt, grow_rate, grow_force,
+                        stiffness, damping, substeps, alpha, tuple(map(tuple, obstacle_rects)), tuple(map(tuple, dynamic_objects)), use_tube_obstacle))
 
   def _tree_flatten(self):
     children = (self.obstacle_rects,)
@@ -196,9 +202,18 @@ def vine_collision_sdf(params: VineParams, body_xy: jnp.ndarray, n_bodies: int):
         # For each rect, compute distance, then take min
         # shape of rects: (R,4)
         px, py = xy
+
         # We'll vmap the distance to each rect
-        dists = vmap(point_rect_sdf, in_axes=(None, None, 0))(px, py, params.obstacle_rects)
-        
+
+        all_rects = None
+        if params.dynamic_objects.size != 0:
+            all_rects = np.append(params.obstacle_rects, params.dynamic_objects, axis=0)
+        else:
+            all_rects = params.obstacle_rects
+
+        # dists = vmap(point_rect_sdf, in_axes=(None, None, 0))(px, py, params.obstacle_rects)
+        dists = vmap(point_rect_sdf, in_axes=(None, None, 0))(px, py, all_rects)
+
         min_dist = jnp.min(dists)  # min over all rects
         # Then we subtract radius
         return min_dist - params.radius

@@ -1140,14 +1140,16 @@ if __name__ == "__main__":
         body_length=68.0, # 25.0 mm
         radius=50.0, # 16.0,
         dt=1/10,
-        grow_rate=20.0,
-        grow_force=15.0,
+        grow_rate=20.0, # was 20
+        grow_force=5.0, # was 15
         stiffness=20.0,
         damping=50.0,
         # Curiously, decreasing substeps helps prevent penetration bugs. But it doesn't fix the root problem
         substeps=15, # FIXME THIS NUMBER CAN BE MUCH SMALLER IF WE DO LANGRANGE PROPERRLY
         alpha=1e-2,
-        obstacle_rects = all_obstacles,
+        # obstacle_rects = all_obstacles,
+        obstacle_rects=cfg['obstacles'],
+        dynamic_objects=cfg['dynamic_obstacles'],
         use_tube_obstacle=args.env=='envs/env_tube.txt',
     )
     
