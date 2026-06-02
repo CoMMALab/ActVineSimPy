@@ -1,23 +1,27 @@
-    My Notes on how things work:
-        - How rectangles are described: [top_left_x, top_left_y, bottom_right_x, bottom_right_y]
-    
-    My ToDos:
-        - add some way to acknowledge certain boxes as dynamic
-                - change how obstacles are read in (new group: dynamic obstacles)
-
-                - #FIXME: how do you handle environments where there's no dynamic obstacles?
-                            (NOTE: this never happens for static ones because the walls are static)
-                        - might have already fixed this, but double check to make sure you know exactly what's going on
-
-                - #FIXME: why does test env crash when trying to look for cached solutions, even when --noplan is not being used???
-                        - no cache directory exists (FIXED, by adding in directory)
-
-                - #NOTE: did not check everywhere load_box_config is used (hopefully it will be handled automatically by planner stuff)
-
-        - figure out out how to give dynamic boxes their own bounding boxes (should be same as static, right?)
-                - #TODO: now make it that dyanamic objects, being registered as dyanmic, are affected like static objects (for now; will change their behavior with physics part)
-        
+        My ToDos:
         - implement physics (hard part)
 
-    Other Stuff:
-        
+                - collision penalty: 
+                        - keep track of all dynamic object positions in cspace (extend the cspace)
+                        - use updated coords (from gradient descent) to recalculate collision penalty 
+
+                        - ALSO need to incorporate new term into penalty (instead of vine collides with objects, also dynamic objects collides with any other object)
+
+                - inertial penalty:
+                        - use change in dynamic object as parameter in equation to be used during gradient descent
+                                - how much can we move the dynamic object in order to minimize the term?
+                        - remember to update the cspace afterwards with the new dynamic object's position (essential for inertial and collision penalties)
+
+                        - for distance that it moves:
+                                - store past distance, then use current distance to find it (since this is done using gradient descent, just adjusting
+                                weights until a solution that makes sense)
+
+                - for changes in sst: just work on modifying rollout (what actually calls forward for the sim):
+                        - make batched forward step return new dynamic body locations so that JAX stops bugging out
+                        - then take these new positions and update the environment:
+                                - re-render everything
+                                - make sure the next sim_params object that is used is updated as well
+
+
+                        - biggest question: how exactly does rollout work? where should I update dynamic objects
+                                based on return positions?

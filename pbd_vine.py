@@ -38,17 +38,30 @@ class VineParams:
     self.obstacle_rects = obstacle_rects
     self.use_tube_obstacle = use_tube_obstacle  # If True, use hardcoded tube instead of env
     
-    self.dynamic_objects = dynamic_objects
+    # for dynamic objects
+    self.dynamic_objects = dynamic_objects   # stores current position
+
+    # JAX-functional paradigm: should be returned by function instead, so get rid of this
+    # self.dynamic_obj_cspace = dynamic_objects.copy() # stores current position after being updated by grad descent
 
     if dynamic_objects.size == 0:
         self.hash = hash((max_bodies, body_length, radius, dt, grow_rate, grow_force,
                         stiffness, damping, substeps, alpha, tuple(map(tuple, obstacle_rects)), use_tube_obstacle))
     else:
         self.hash = hash((max_bodies, body_length, radius, dt, grow_rate, grow_force,
-                        stiffness, damping, substeps, alpha, tuple(map(tuple, obstacle_rects)), tuple(map(tuple, dynamic_objects)), use_tube_obstacle))
+                        stiffness, damping, substeps, alpha, tuple(map(tuple, obstacle_rects)), 
+                        tuple(map(tuple, dynamic_objects)), 
+                        use_tube_obstacle))
 
   def _tree_flatten(self):
-    children = (self.obstacle_rects,)
+
+    if self.dynamic_objects.size == 0:
+        children = (self.obstacle_rects,)
+    else:
+    #    children = (self.obstacle_rects, self.dynamic_objects, self.dynamic_obj_cspace)
+       children = (self.obstacle_rects, self.dynamic_objects)
+
+
     aux_data = {'max_bodies': self.max_bodies,
                 'body_length': self.body_length,
                 'radius': self.radius,
@@ -65,7 +78,21 @@ class VineParams:
 
   @classmethod
   def _tree_unflatten(cls, aux_data, children):
-    return cls(*children, **aux_data)
+    # return cls(*children, **aux_data)
+
+    if len(children) == 2:
+        # obstacle_rects, dynamic_objects, dynamic_obj_cspace = children
+        obstacle_rects, dynamic_objects = children
+    else:
+        obstacle_rects = children[0]
+        dynamic_objects = np.empty((0,))
+        # dynamic_obj_cspace = None
+    return cls(
+        obstacle_rects=obstacle_rects,
+        dynamic_objects=dynamic_objects,
+        # dynamic_obj_cspace=dynamic_obj_cspace,
+        **aux_data
+    )
   
   def __hash__(self):
       return self.hash
@@ -258,7 +285,8 @@ def vine_collision_sdf(params: VineParams, body_xy: jnp.ndarray, n_bodies: int):
 # PBD "Single Solve" for collisions + bending
 ######################################################
 def pbd_solve_once(params: VineParams, 
-                   cspace: jnp.ndarray, 
+                   cspace: jnp.ndarray,
+                   dynamic_obj_positions: jnp.ndarray, # from last bit of grad descent, like cspace 
                    n_bodies: int,
                    target_len: float,
                    bend_params: jnp.ndarray,
@@ -333,12 +361,21 @@ def pbd_solve_once(params: VineParams,
         # Penalty for not growing the last segment long enough
         return params.grow_force * jnp.abs(target_len - q[params.max_bodies])
     
+    def inertial_penalty(new_dynamic_positions):
+        # Penalty for how far dynamic objects have moved from their past positions
+        # (measured using Euclidean distance)
+        return np.linalg.norm(params.dynamic_objects - new_dynamic_positions)
+    
     # Combine them => total energy
-    def total_penalty(q):
-        return collision_penalty(q) + growth_penalty(q)
+    def total_penalty(cspace, dynamic_obj_cspace):
+        return collision_penalty(cspace) + growth_penalty(cspace) + inertial_penalty(dynamic_obj_cspace)
 
     # Step 4: compute gradient wrt cspace => this is our "force"
-    penalty_grad = grad(total_penalty)(cspace)
+    penalty_grad = grad(total_penalty, argnums=0)(cspace, dynamic_obj_positions)
+
+    # Update next dynamic positions based on gradient
+    inertial_grad = grad(total_penalty, argnums=1)(cspace, dynamic_obj_positions)
+
     turning_radius = jnp.where(jnp.abs(cspace[:-1]) < 1e-3, 0, params.body_length * 1e-3 / cspace[:-1])
     bend_moment = -1 * bend_energy_func(turning_radius, bend_params[:, 0], bend_params[:, 1])
     
@@ -383,11 +420,12 @@ def pbd_solve_once(params: VineParams,
     # a direct projection.  We'll do a simple "alpha" that you can tune or 
     # that is dt-based. 
     cspace_new = cspace - params.alpha * penalty_grad
+    new_dynamic_positions = dynamic_obj_positions - params.alpha * inertial_grad
     
     # jax.debug.print("penalty_grad {}", penalty_grad)
     # jax.debug.print("cspace_new {}", cspace_new)
     
-    return cspace_new
+    return cspace_new, new_dynamic_positions
 
 
 
@@ -427,7 +465,8 @@ def multiply_vine(params: VineParams, cspace: jnp.ndarray, n_bodies: int):
 # Main "advance" for one simulation step
 ######################################################
 
-def step_vine(params: VineParams, cspace: jnp.ndarray, n_bodies: int,
+def step_vine(params: VineParams, cspace: jnp.ndarray, dynamic_obj_positions: jnp.ndarray, 
+              n_bodies: int,
               bend_params: jnp.ndarray,
               x0, y0, heading0, bend_energy_func):
     """
@@ -446,19 +485,21 @@ def step_vine(params: VineParams, cspace: jnp.ndarray, n_bodies: int,
     
     target_len = cspace[-1] + params.grow_rate * params.dt
 
-    def body_loop_fun(iter, q_in):
-        q_out = pbd_solve_once(params, q_in, n_bodies_grown, target_len, bend_params, x0, y0, heading0, bend_energy_func)
-        return q_out
+    def body_loop_fun(iter, cspace_in, dynamic_positions_in):
+        new_cspace, new_dynamic_positions = pbd_solve_once(params, cspace_in, dynamic_positions_in,
+                                                           n_bodies_grown, target_len, bend_params, x0, y0, heading0, bend_energy_func)
+        return new_cspace, new_dynamic_positions
         
-    cspace_final = jax.lax.fori_loop(0, params.substeps, body_loop_fun, cspace_grown)
+    cspace_final, final_dynamic_positions = jax.lax.fori_loop(0, params.substeps, body_loop_fun, cspace_grown, dynamic_obj_positions)
     
-    return cspace_final, n_bodies_grown
+    return cspace_final, n_bodies_grown, final_dynamic_positions
 
 ######################################################
 # Batch stepping
 #####################################################
 def step_vine_batched(params: VineParams, 
                        cspaces: jnp.ndarray,  # shape (batch, max_bodies+1)
+                       batched_dynamic_positions: jnp.ndarray, #shape (batch,)
                        n_bodies_list: jnp.ndarray,  # shape (batch,)
                        bend_params: jnp.ndarray,
                        x0_list: jnp.ndarray,
@@ -468,10 +509,10 @@ def step_vine_batched(params: VineParams,
                        ):
 
     # We'll vmap over batch dimension
-    new_cspaces, new_n_bodies = vmap(step_vine, (None, 0, 0, 0, None, None, None, None)) \
-                                (params, cspaces, n_bodies_list, bend_params, x0_list, y0_list, heading0_list, bend_energy_func)
+    new_cspaces, new_n_bodies, new_dynamic_positions = vmap(step_vine, (None, 0, 0, 0, None, None, None, None)) \
+                                (params, cspaces, batched_dynamic_positions, n_bodies_list, bend_params, x0_list, y0_list, heading0_list, bend_energy_func)
     # out is ( (batch_cspaces), (batch_nb) )
-    return new_cspaces, new_n_bodies
+    return new_cspaces, new_n_bodies, new_dynamic_positions
 
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0) 

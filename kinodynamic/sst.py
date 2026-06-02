@@ -450,6 +450,8 @@ def rollout(sst_params, simparams, batch_size,
     cspace_record = np.zeros((history_size, batch_size, simparams.max_bodies + 1), dtype=np.float32)
     bodies_record = np.zeros((history_size, batch_size), dtype=np.int32)
     time_record = np.zeros((history_size, batch_size), dtype=np.float32)
+
+    
     
     # Track which batch elements have reached the max_bodies limit,
     # so dont update them anymore
@@ -457,7 +459,7 @@ def rollout(sst_params, simparams, batch_size,
         
     for i in range(steps_to_iter):
  
-        next_cspace, next_bodies = forward(
+        next_cspace, next_bodies, next_dynamic_positions = forward(
             simparams, cspace, bodies, bending_control,
             init_x, init_y, init_heading, actuator_params_fwd
         )
@@ -470,7 +472,7 @@ def rollout(sst_params, simparams, batch_size,
         cspace = np.where(reached_max[..., None], cspace, next_cspace)
         bodies = np.where(reached_max, bodies, next_bodies)
         curr_time = curr_time + simparams.dt
-        
+
         if i % record_every == 0:
             # Record the current state
             cspace_record[i // record_every] = cspace
@@ -1053,6 +1055,8 @@ def sst_star(sst_params: SSTparams, sim_params: VineParams, callback=None):
         # we can do better
         
         tree.clean_states()
+
+        
     
 if __name__ == "__main__":
     
@@ -1112,27 +1116,6 @@ if __name__ == "__main__":
         point_costs = None
         
     render()
-        
-    # For obstacles (defined beforehand in case there are no dynamic obstacles):
-
-    all_obstacles = None
-
-    if (cfg["dynamic_obstacles"].size != 0):
-        all_obstacles = np.append(cfg['obstacles'], cfg['dynamic_obstacles'], axis=0)
-    else:
-        all_obstacles = cfg['obstacles'].copy()
-
-        print()
-        print(cfg['dynamic_obstacles'])
-        print()
-        print()
-        print(cfg['obstacles'])
-        print()
-    
-    # else:
-    #     print()
-    #     print("NO DYNAMIC OBJECTS DETECTED")
-    #     print()
 
     # Safe params
     sim_params = VineParams(
@@ -1147,7 +1130,6 @@ if __name__ == "__main__":
         # Curiously, decreasing substeps helps prevent penetration bugs. But it doesn't fix the root problem
         substeps=15, # FIXME THIS NUMBER CAN BE MUCH SMALLER IF WE DO LANGRANGE PROPERRLY
         alpha=1e-2,
-        # obstacle_rects = all_obstacles,
         obstacle_rects=cfg['obstacles'],
         dynamic_objects=cfg['dynamic_obstacles'],
         use_tube_obstacle=args.env=='envs/env_tube.txt',
