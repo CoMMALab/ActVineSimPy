@@ -195,10 +195,6 @@ def _draw_dynamic_obstacles():
 
     if _dynamic_obstacles is not None:
 
-        print()
-        print(_dynamic_obstacles)
-        print()
-
         for obs in _dynamic_obstacles:
             x1, y1, x2, y2 = obs
             

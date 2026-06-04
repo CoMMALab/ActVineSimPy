@@ -23,5 +23,4 @@
                                 - make sure the next sim_params object that is used is updated as well
 
 
-                        - biggest question: how exactly does rollout work? where should I update dynamic objects
-                                based on return positions?
+                - 

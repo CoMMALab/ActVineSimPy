@@ -217,9 +217,10 @@ class StatesStruct:
     Use the function call (ie isactive()) to get the data, truncated to the last valid item.
     '''
     
-    def __init__(self, max_bodies):
+    def __init__(self, max_bodies, num_dynamic_objs):
         self.init_size = 64
         self.max_bodies = max_bodies
+        self.num_dynamic_objs = num_dynamic_objs
         
         # --------- States ---------
         self.num_states = 0
@@ -231,7 +232,10 @@ class StatesStruct:
         self._bodies = np.zeros((self.init_size), dtype=np.int32)
         self._times = np.zeros((self.init_size), dtype=np.float32)
         self._bending_controls = np.zeros((self.init_size, max_bodies, bending_controls_size), dtype=np.float32)
-        
+
+        self._dynamic_positions = np.zeros((self.init_size, num_dynamic_objs, 4), 
+                                           dtype=np.float32)
+
         # Heuristic stuff
         self._cost_to_come = np.zeros((self.init_size), dtype=np.int32) # Cost to come
         self._cost_total = np.zeros((self.init_size), dtype=np.int32)
@@ -252,6 +256,8 @@ class StatesStruct:
     def bodies(self): return self._bodies[:self.num_states]
     def times(self): return self._times[:self.num_states]
     def bending_controls(self): return self._bending_controls[:self.num_states]
+
+    def dynamic_positions(self): return self._dynamic_positions
     
     def cost_to_come(self): return self._cost_to_come[:self.num_states]
     def tip(self): return self._tips[:self.num_states]
@@ -274,6 +280,9 @@ class StatesStruct:
         self._times = np.concatenate([self._times, np.zeros(current_size, dtype=np.float32)], axis=0)
         self._bending_controls = np.concatenate([self._bending_controls, np.zeros((current_size, self.max_bodies, bending_controls_size), dtype=np.float32)], axis=0)
         
+        self._dynamic_positions = np.concatenate([self._dynamic_positions, np.zeros((current_size, self.num_dynamic_objs, 4), dtype=np.float32)], 
+                                                 axis=0)
+
         self._cost_to_come = np.concatenate([self._cost_to_come, np.zeros(current_size, dtype=np.int32)], axis=0)
         self._cost_total = np.concatenate([self._cost_total, np.zeros(current_size, dtype=np.int32)], axis=0)
         self._tips = np.concatenate([self._tips, np.zeros((current_size, 3), dtype=np.float32)], axis=0)
@@ -281,7 +290,7 @@ class StatesStruct:
         self._parent_idxs = np.concatenate([self._parent_idxs, np.zeros(current_size, dtype=np.int32)], axis=0)
         self._num_children = np.concatenate([self._num_children, np.zeros(current_size, dtype=np.int32)], axis=0)
                 
-    def add_state(self, isactive, c_space, bodies, time, bending_control, cost_to_come, cost_total, tip, parent_idx, num_children):
+    def add_state(self, isactive, c_space, dynamic_obj_positions, bodies, time, bending_control, cost_to_come, cost_total, tip, parent_idx, num_children):
         if self.num_states == self._c_spaces.shape[0]:
             self.extend_states()
         
@@ -293,6 +302,8 @@ class StatesStruct:
         self._bodies[idx] = bodies
         self._times[idx] = time
         self._bending_controls[idx] = bending_control
+
+        self._dynamic_positions[idx] = dynamic_obj_positions
                 
         self._cost_to_come[idx] = cost_to_come
         self._cost_total[idx] = cost_total
@@ -305,13 +316,15 @@ class StatesStruct:
         
         return idx
     
-    def add_states(self, isactive, c_space, bodies, time, bending_control, cost_to_come, cost_total, tip, parent_idx, num_children):
+    def add_states(self, isactive, c_space, dynamic_obj_positions, bodies, time, bending_control, cost_to_come, cost_total, tip, parent_idx, num_children):
         num_to_add = c_space.shape[0]
         
         assert c_space.shape == (num_to_add, self.max_bodies + 1)
         assert bodies.shape == (num_to_add,)
         assert time.shape == (num_to_add,)
         assert bending_control.shape == (num_to_add, self.max_bodies, 2)
+
+        assert dynamic_obj_positions.shape == (num_to_add, self.num_dynamic_objs, 4)
         
         assert cost_to_come.shape == (num_to_add,)
         assert cost_total.shape == (num_to_add,)
@@ -331,6 +344,8 @@ class StatesStruct:
         self._bodies[to_add_slice] = bodies
         self._times[to_add_slice] = time
         self._bending_controls[to_add_slice] = bending_control
+
+        self._dynamic_positions[to_add_slice] = dynamic_obj_positions
         
         self._cost_to_come[to_add_slice] = cost_to_come
         self._cost_total[to_add_slice] = cost_total
@@ -365,6 +380,8 @@ class StatesStruct:
         self._bodies = self._bodies[keep_states]
         self._times = self._times[keep_states]
         self._bending_controls = self._bending_controls[keep_states]
+
+        self._dynamic_positions = self._dynamic_positions[keep_states]
         
         self._cost_to_come = self._cost_to_come[keep_states]
         self._cost_total = self._cost_total[keep_states]
@@ -425,7 +442,7 @@ forward = jax.jit(step_vine_batched, static_argnames=['params', 'x0_list', 'y0_l
         
 def rollout(sst_params, simparams, batch_size, 
             time_to_evolve,
-            curr_time, cspace, bodies, bending_control, 
+            curr_time, cspace, dynamic_obj_positions, bodies, bending_control, 
             init_x, init_y, init_heading,
             ):
     """
@@ -440,6 +457,8 @@ def rollout(sst_params, simparams, batch_size,
         cspace_record : shape (steps_to_iter, batch_size, max_bodies + 1)
         bodies_record  : shape (steps_to_iter, batch_size)
         time_record    : shape (steps_to_iter, batch_size)
+
+        dynamic_obj_record : shape (steps_to_iter, batch_size, num_dynamic_objs, 4 (for the coords))
     """
     
     # Record every δs distance, to reduce pressure on the set cover
@@ -451,16 +470,17 @@ def rollout(sst_params, simparams, batch_size,
     bodies_record = np.zeros((history_size, batch_size), dtype=np.int32)
     time_record = np.zeros((history_size, batch_size), dtype=np.float32)
 
-    
+    dynamic_obj_record = np.zeros((history_size, batch_size, int(sim_params.dynamic_objects.size / 4), 4),
+                                  dtype=np.float32)
     
     # Track which batch elements have reached the max_bodies limit,
     # so dont update them anymore
     reached_max = bodies >= simparams.max_bodies - 1
         
     for i in range(steps_to_iter):
- 
+        
         next_cspace, next_bodies, next_dynamic_positions = forward(
-            simparams, cspace, bodies, bending_control,
+            simparams, cspace, dynamic_obj_positions, bodies, bending_control,
             init_x, init_y, init_heading, actuator_params_fwd
         )
         
@@ -470,14 +490,19 @@ def rollout(sst_params, simparams, batch_size,
         # Record the cspace and bodies for this step, but if a vine already
         # hit its limit, reuse the last one
         cspace = np.where(reached_max[..., None], cspace, next_cspace)
-        bodies = np.where(reached_max, bodies, next_bodies)
-        curr_time = curr_time + simparams.dt
+        bodies = np.where(reached_max, bodies, next_bodies)        
+        curr_time = curr_time + simparams.dt                
+        # NOTE: reached max for dynamic_objs as well?
+        dynamic_obj_positions = np.where(reached_max[..., None, None], 
+                                         dynamic_obj_positions, next_dynamic_positions)
 
         if i % record_every == 0:
             # Record the current state
             cspace_record[i // record_every] = cspace
             bodies_record[i // record_every] = bodies
             time_record[i // record_every] = curr_time
+
+            dynamic_obj_record[i // record_every] = dynamic_obj_positions
             
         # All our vines have hit their limit, stop the rollout
         if np.all(reached_max):
@@ -487,10 +512,11 @@ def rollout(sst_params, simparams, batch_size,
     assert np.all(bodies < simparams.max_bodies), f"bodies: {bodies}, max_bodies: {simparams.max_bodies}"
     
     last_index_filled = i // record_every
-    
+
     return cspace_record[:last_index_filled], \
             bodies_record[:last_index_filled], \
             time_record[:last_index_filled], \
+            dynamic_obj_record[:last_index_filled], \
             last_index_filled
 
 # rollout = jax.jit(rollout_raw, static_argnames=['params', 'batch_size', 'time_to_evolve', 'init_x', 'init_y', 'init_heading'])
@@ -678,13 +704,18 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
     tip = cspace_to_tip(sim_params, 1, c_space[None, ...], np.array([bodies]), init_x, init_y, init_heading)
     
     if not tree:
-        tree = StatesStruct(sim_params.max_bodies)
+
+        num_dynamic_objects = int(sim_params.dynamic_objects.size / 4) # each obj has 4 coords (features)
+
+        tree = StatesStruct(sim_params.max_bodies, num_dynamic_objects)
         cost_to_go = 0 if sst_params.points is None else geometric_cost_to_go(sst_params, tip).item()
         state0_idx = tree.add_state(isactive=True,
                     c_space=c_space,
                     bodies=bodies,
                     time=0,
                     bending_control=bending_control,
+                    # Initial dynamic obj position:
+                    dynamic_obj_positions=sim_params.dynamic_objects, 
                     # Heuristic stuff
                     cost_to_come=0,
                     cost_total= tiebreak_factor * length_unbatched(sim_params, c_space, bodies) + cost_to_go,
@@ -750,7 +781,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         
         print('Starting rollout')
         start_time = time.time()
-        xnew_cspaces, xnew_bodies, xnew_times, steps_to_iter = \
+        xnew_cspaces, xnew_bodies, xnew_times, xnew_dynamic_positions, steps_to_iter = \
                 rollout(sst_params, sim_params,
                         batch_size,
                         time_to_evolve = sst_params.time_to_evolve,
@@ -758,6 +789,8 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
                         cspace = tree._c_spaces[propagate_origin_idx],
                         bodies = tree._bodies[propagate_origin_idx],
                         bending_control = current_bending_controls,
+                        # For dynamic bodies:
+                        dynamic_obj_positions=tree._dynamic_positions[propagate_origin_idx],
                         init_x = init_x,
                         init_y = init_y,
                         init_heading = init_heading)
@@ -770,17 +803,26 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
             xnew_cspaces = xnew_cspaces[take_one_idx, batch_indices]
             xnew_bodies = xnew_bodies[take_one_idx, batch_indices]
             xnew_times = xnew_times[take_one_idx, batch_indices]
+
+            xnew_dynamic_positions = xnew_dynamic_positions[take_one_idx, batch_indices]
+
             steps_to_iter = 1
         
-        # Rollout returns a record of position at each timestep, so flatten timestep and batch together
+        # Rollout returns a record of position at each timestep, so flatten timestep and batch together                
+        
         xnew_cspaces = xnew_cspaces.reshape(-1, sim_params.max_bodies + 1)
         xnew_bodies = xnew_bodies.reshape(-1)
         xnew_times = xnew_times.reshape(-1)
+        
+        xnew_dynamic_positions = xnew_dynamic_positions.reshape(-1, tree.num_dynamic_objs, 4)
         
         assert xnew_cspaces.shape == (steps_to_iter * batch_size, sim_params.max_bodies + 1), f"xnew_cspaces shape: {xnew_cspaces.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert xnew_bodies.shape == (steps_to_iter * batch_size,), f"xnew_bodies shape: {xnew_bodies.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert xnew_times.shape == (steps_to_iter * batch_size,), f"xnew_times shape: {xnew_times.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         
+        assert xnew_dynamic_positions.shape == (steps_to_iter * batch_size, tree.num_dynamic_objs, 4), \
+                                   f"xnew_dynamic_positions shape: {xnew_times.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+
         # Assert that no new cspace is all zeros
         assert np.all(~np.all(xnew_cspaces == 0, axis=1)), f"xnew_cspaces: {xnew_cspaces}"
         finite_mask = np.all(np.isfinite(xnew_cspaces), axis=1)
@@ -824,6 +866,8 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
             xnew_costs_come = xnew_costs_come[non_overlapping_mask]
             current_bending_controls = current_bending_controls[non_overlapping_mask]
             propagate_origin_idx = propagate_origin_idx[non_overlapping_mask]
+
+            xnew_dynamic_positions = xnew_dynamic_positions[non_overlapping_mask]
             
         if sst_params.do_cost_to_go:
             xnew_costs_total = xnew_costs_come + geometric_cost_to_go(sst_params, xnew_tips) + \
@@ -883,11 +927,13 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         # assert np.all(min_tip_dist > sst_params.δs * sst_params.δs)
                 
         # Add new witness-creating states to the tree, and record their indexes      
+
         xnew_fresh_idx = tree.add_states(isactive=True,
                                         c_space=xnew_cspaces[xnew_fresh_mask],
                                         bodies=xnew_bodies[xnew_fresh_mask],
                                         time=xnew_times[xnew_fresh_mask],
                                         bending_control=current_bending_controls[xnew_fresh_mask],
+                                        dynamic_obj_positions=xnew_dynamic_positions[xnew_fresh_mask],
                                         # Heuristic stuff
                                         cost_to_come=xnew_costs_come[xnew_fresh_mask],
                                         cost_total=xnew_costs_total[xnew_fresh_mask],
@@ -902,6 +948,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
                                         bodies=xnew_bodies[xnew_dominating_states_mask],
                                         time=xnew_times[xnew_dominating_states_mask],
                                         bending_control=current_bending_controls[xnew_dominating_states_mask],
+                                        dynamic_obj_positions=xnew_dynamic_positions[xnew_dominating_states_mask],
                                         # Heuristic stuff
                                         cost_to_come=xnew_costs_come[xnew_dominating_states_mask],
                                         cost_total=xnew_costs_total[xnew_dominating_states_mask],

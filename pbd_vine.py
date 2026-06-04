@@ -364,7 +364,7 @@ def pbd_solve_once(params: VineParams,
     def inertial_penalty(new_dynamic_positions):
         # Penalty for how far dynamic objects have moved from their past positions
         # (measured using Euclidean distance)
-        return np.linalg.norm(params.dynamic_objects - new_dynamic_positions)
+        return jnp.linalg.norm(params.dynamic_objects - new_dynamic_positions)
     
     # Combine them => total energy
     def total_penalty(cspace, dynamic_obj_cspace):
@@ -485,12 +485,16 @@ def step_vine(params: VineParams, cspace: jnp.ndarray, dynamic_obj_positions: jn
     
     target_len = cspace[-1] + params.grow_rate * params.dt
 
-    def body_loop_fun(iter, cspace_in, dynamic_positions_in):
+    # def body_loop_fun(iter, cspace_in, dynamic_positions_in):
+    def body_loop_fun(iter, init_val):
+        cspace_in = init_val[0]
+        dynamic_positions_in = init_val[1]
         new_cspace, new_dynamic_positions = pbd_solve_once(params, cspace_in, dynamic_positions_in,
                                                            n_bodies_grown, target_len, bend_params, x0, y0, heading0, bend_energy_func)
         return new_cspace, new_dynamic_positions
-        
-    cspace_final, final_dynamic_positions = jax.lax.fori_loop(0, params.substeps, body_loop_fun, cspace_grown, dynamic_obj_positions)
+
+    init_val = (cspace_grown, dynamic_obj_positions)    
+    cspace_final, final_dynamic_positions = jax.lax.fori_loop(0, params.substeps, body_loop_fun, init_val)
     
     return cspace_final, n_bodies_grown, final_dynamic_positions
 
@@ -509,7 +513,7 @@ def step_vine_batched(params: VineParams,
                        ):
 
     # We'll vmap over batch dimension
-    new_cspaces, new_n_bodies, new_dynamic_positions = vmap(step_vine, (None, 0, 0, 0, None, None, None, None)) \
+    new_cspaces, new_n_bodies, new_dynamic_positions = vmap(step_vine, (None, 0, 0, 0, 0, None, None, None, None)) \
                                 (params, cspaces, batched_dynamic_positions, n_bodies_list, bend_params, x0_list, y0_list, heading0_list, bend_energy_func)
     # out is ( (batch_cspaces), (batch_nb) )
     return new_cspaces, new_n_bodies, new_dynamic_positions
