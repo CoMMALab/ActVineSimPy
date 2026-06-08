@@ -303,7 +303,8 @@ class StatesStruct:
         self._times[idx] = time
         self._bending_controls[idx] = bending_control
 
-        self._dynamic_positions[idx] = dynamic_obj_positions
+        if self.num_dynamic_objs != 0:
+            self._dynamic_positions[idx] = dynamic_obj_positions
                 
         self._cost_to_come[idx] = cost_to_come
         self._cost_total[idx] = cost_total
@@ -324,7 +325,8 @@ class StatesStruct:
         assert time.shape == (num_to_add,)
         assert bending_control.shape == (num_to_add, self.max_bodies, 2)
 
-        assert dynamic_obj_positions.shape == (num_to_add, self.num_dynamic_objs, 4)
+        if self.num_dynamic_objs != 0:
+            assert dynamic_obj_positions.shape == (num_to_add, self.num_dynamic_objs, 4)
         
         assert cost_to_come.shape == (num_to_add,)
         assert cost_total.shape == (num_to_add,)
@@ -345,7 +347,8 @@ class StatesStruct:
         self._times[to_add_slice] = time
         self._bending_controls[to_add_slice] = bending_control
 
-        self._dynamic_positions[to_add_slice] = dynamic_obj_positions
+        if self.num_dynamic_objs != 0:
+            self._dynamic_positions[to_add_slice] = dynamic_obj_positions
         
         self._cost_to_come[to_add_slice] = cost_to_come
         self._cost_total[to_add_slice] = cost_total
@@ -478,7 +481,6 @@ def rollout(sst_params, simparams, batch_size,
     reached_max = bodies >= simparams.max_bodies - 1
 
     
-        
     for i in range(steps_to_iter):
         
         next_cspace, next_bodies, next_dynamic_positions = forward(
@@ -700,6 +702,9 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
     bodies = 1
     c_space = np.zeros((sim_params.max_bodies+1))
     c_space[-1] = sim_params.body_length
+
+    dynamic_positions = sim_params.dynamic_objects.copy()
+
     bending_control = np.zeros((1, sim_params.max_bodies, 2))
     bending_control[:, :, 0] = 0.0 # pressure
     bending_control[:, :, 1] = 0.025/2 # l0
@@ -717,7 +722,8 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
                     time=0,
                     bending_control=bending_control,
                     # Initial dynamic obj position:
-                    dynamic_obj_positions=sim_params.dynamic_objects, 
+                    # dynamic_obj_positions=sim_params.dynamic_objects, 
+                    dynamic_obj_positions=dynamic_positions,
                     # Heuristic stuff
                     cost_to_come=0,
                     cost_total= tiebreak_factor * length_unbatched(sim_params, c_space, bodies) + cost_to_go,
@@ -816,13 +822,15 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         xnew_bodies = xnew_bodies.reshape(-1)
         xnew_times = xnew_times.reshape(-1)
         
-        xnew_dynamic_positions = xnew_dynamic_positions.reshape(-1, tree.num_dynamic_objs, 4)
+        if tree.num_dynamic_objs != 0:
+            xnew_dynamic_positions = xnew_dynamic_positions.reshape(-1, tree.num_dynamic_objs, 4)
         
         assert xnew_cspaces.shape == (steps_to_iter * batch_size, sim_params.max_bodies + 1), f"xnew_cspaces shape: {xnew_cspaces.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert xnew_bodies.shape == (steps_to_iter * batch_size,), f"xnew_bodies shape: {xnew_bodies.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert xnew_times.shape == (steps_to_iter * batch_size,), f"xnew_times shape: {xnew_times.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         
-        assert xnew_dynamic_positions.shape == (steps_to_iter * batch_size, tree.num_dynamic_objs, 4), \
+        if tree.num_dynamic_objs != 0:
+            assert xnew_dynamic_positions.shape == (steps_to_iter * batch_size, tree.num_dynamic_objs, 4), \
                                    f"xnew_dynamic_positions shape: {xnew_times.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
 
         # Assert that no new cspace is all zeros
@@ -870,7 +878,8 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
             current_bending_controls = current_bending_controls[non_overlapping_mask]
             propagate_origin_idx = propagate_origin_idx[non_overlapping_mask]
 
-            xnew_dynamic_positions = xnew_dynamic_positions[non_overlapping_mask]
+            if tree.num_dynamic_objs != 0:
+                xnew_dynamic_positions = xnew_dynamic_positions[non_overlapping_mask]
             
         if sst_params.do_cost_to_go:
             xnew_costs_total = xnew_costs_come + geometric_cost_to_go(sst_params, xnew_tips) + \
@@ -878,9 +887,9 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         else:
             xnew_costs_total = xnew_costs_come
         
-        # print()
-        # print("NEW DYNAMIC POSITION:", xnew_dynamic_positions)
-        # print()
+        print()
+        print("NEW DYNAMIC POSITION:", xnew_dynamic_positions)
+        print()
 
         draw_dead_state(sim_params, xnew_cspaces, xnew_bodies, init_x, init_y, init_heading)
         
@@ -940,7 +949,8 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
                                         bodies=xnew_bodies[xnew_fresh_mask],
                                         time=xnew_times[xnew_fresh_mask],
                                         bending_control=current_bending_controls[xnew_fresh_mask],
-                                        dynamic_obj_positions=xnew_dynamic_positions[xnew_fresh_mask],
+                                        dynamic_obj_positions=xnew_dynamic_positions[xnew_fresh_mask] if tree.num_dynamic_objs != 0 \
+                                            else None,
                                         # Heuristic stuff
                                         cost_to_come=xnew_costs_come[xnew_fresh_mask],
                                         cost_total=xnew_costs_total[xnew_fresh_mask],
@@ -955,8 +965,8 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
                                         bodies=xnew_bodies[xnew_dominating_states_mask],
                                         time=xnew_times[xnew_dominating_states_mask],
                                         bending_control=current_bending_controls[xnew_dominating_states_mask],
-                                        dynamic_obj_positions=xnew_dynamic_positions[xnew_dominating_states_mask],
-                                        # Heuristic stuff
+                                        dynamic_obj_positions=xnew_dynamic_positions[xnew_dominating_states_mask] if tree.num_dynamic_objs != 0 \
+                                            else None,
                                         cost_to_come=xnew_costs_come[xnew_dominating_states_mask],
                                         cost_total=xnew_costs_total[xnew_dominating_states_mask],
                                         tip=xnew_tips[xnew_dominating_states_mask],
@@ -1178,7 +1188,7 @@ if __name__ == "__main__":
         radius=50.0, # 16.0,
         dt=1/10,
         grow_rate=20.0, # was 20
-        grow_force=5.0, # was 15
+        grow_force=14, # was 15
         stiffness=20.0,
         damping=50.0,
         # Curiously, decreasing substeps helps prevent penetration bugs. But it doesn't fix the root problem

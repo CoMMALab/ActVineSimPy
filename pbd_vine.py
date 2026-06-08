@@ -365,6 +365,12 @@ def pbd_solve_once(params: VineParams,
         # Penalty for how far dynamic objects have moved from their past positions
         # (measured using Euclidean distance)
 
+        if params.dynamic_objects.size == 0:
+            return 1
+
+        # print("Original shape:", params.dynamic_objects)
+        # print("Argument shape:", new_dynamic_positions)
+
         diff = params.dynamic_objects - new_dynamic_positions
         is_zero = jnp.allclose(diff, 0.)    # checks if diff is all-zeros
         safe_diff = jnp.where(is_zero, jnp.ones_like(diff), diff) # replaces all zeros with 1's to allow differentiation
@@ -375,7 +381,10 @@ def pbd_solve_once(params: VineParams,
     
     # Combine them => total energy
     def total_penalty(cspace, dynamic_obj_cspace):
-        return collision_penalty(cspace) + growth_penalty(cspace) + inertial_penalty(dynamic_obj_cspace)
+
+        return collision_penalty(cspace) + \
+               growth_penalty(cspace) + \
+               inertial_penalty(dynamic_obj_cspace)
 
     # Step 4: compute gradient wrt cspace => this is our "force"
     penalty_grad = grad(total_penalty, argnums=0)(cspace, dynamic_obj_positions)
