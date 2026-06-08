@@ -23,4 +23,7 @@
                                 - make sure the next sim_params object that is used is updated as well
 
 
-                - 
+                - BUG: everything is nan for dynamic objects:
+                        - inertial grad in pdb_solve is nan
+                        - look back at the calculation and check how differentiation is being done
+                          (especially with how that function gets its inputs)

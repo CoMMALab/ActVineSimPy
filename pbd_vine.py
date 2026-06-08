@@ -364,7 +364,14 @@ def pbd_solve_once(params: VineParams,
     def inertial_penalty(new_dynamic_positions):
         # Penalty for how far dynamic objects have moved from their past positions
         # (measured using Euclidean distance)
-        return jnp.linalg.norm(params.dynamic_objects - new_dynamic_positions)
+
+        diff = params.dynamic_objects - new_dynamic_positions
+        is_zero = jnp.allclose(diff, 0.)    # checks if diff is all-zeros
+        safe_diff = jnp.where(is_zero, jnp.ones_like(diff), diff) # replaces all zeros with 1's to allow differentiation
+        l = jnp.where(is_zero, 0., jnp.linalg.norm(safe_diff)) 
+        
+        # jax.debug.print("INERTIAL PENALTY: {x}", x = l)
+        return l
     
     # Combine them => total energy
     def total_penalty(cspace, dynamic_obj_cspace):
@@ -490,7 +497,8 @@ def step_vine(params: VineParams, cspace: jnp.ndarray, dynamic_obj_positions: jn
         cspace_in = init_val[0]
         dynamic_positions_in = init_val[1]
         new_cspace, new_dynamic_positions = pbd_solve_once(params, cspace_in, dynamic_positions_in,
-                                                           n_bodies_grown, target_len, bend_params, x0, y0, heading0, bend_energy_func)
+                                                           n_bodies_grown, target_len, bend_params, x0, y0, heading0, bend_energy_func)\
+
         return new_cspace, new_dynamic_positions
 
     init_val = (cspace_grown, dynamic_obj_positions)    

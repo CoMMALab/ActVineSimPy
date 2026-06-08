@@ -299,6 +299,8 @@ def draw_dead_state(params, state, bodies, x0, y0, heading0):
     points = _compute_vine_points(params, state, bodies, x0, y0, heading0)
     _draw_vine(_tree_surf, params, points, alpha=120)
 
+    
+
 def draw_live_state(params, cspace, bodies, x0, y0, heading0, draw_circles=False, actuator_colors=None):
     """
     Draw the current "live" state (the next extension),
@@ -324,6 +326,8 @@ def draw_live_state(params, cspace, bodies, x0, y0, heading0, draw_circles=False
     _draw_vine(_live_surf, params, points, draw_circles=draw_circles, circle_col=circle_col, 
                circle_thickness=8 if actuator_colors is not None else 5)
     
+
+
     return points[4], points[5]
 
 ##########################

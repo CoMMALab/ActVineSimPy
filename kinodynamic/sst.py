@@ -476,6 +476,8 @@ def rollout(sst_params, simparams, batch_size,
     # Track which batch elements have reached the max_bodies limit,
     # so dont update them anymore
     reached_max = bodies >= simparams.max_bodies - 1
+
+    
         
     for i in range(steps_to_iter):
         
@@ -483,7 +485,7 @@ def rollout(sst_params, simparams, batch_size,
             simparams, cspace, dynamic_obj_positions, bodies, bending_control,
             init_x, init_y, init_heading, actuator_params_fwd
         )
-        
+
         # Check if forward() has caused any vine has hit max length
         reached_max = reached_max | (bodies >= simparams.max_bodies - 1)
         
@@ -795,7 +797,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
                         init_y = init_y,
                         init_heading = init_heading)
         print('Rollout time:', time.time() - start_time)
-        
+
         if not sst_params.do_maximal:
             # Sample one timestep to take from per batch
             take_one_idx = np.random.randint(0, steps_to_iter, batch_size)
@@ -851,6 +853,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         #   - xnew_costs: shape (steps * B,)
         #   - current_bending_controls: shape (steps * B, max_bodies)
         #   - propagate_origins_idx: shape (steps * B,)
+        #   - xnew_dynamic_positions: shape (steps * B, number of dynamic bodies, 4)
     
         # --------- Find non-overlapping subset of states ---------
         if sst_params.do_set_cover:
@@ -875,6 +878,10 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         else:
             xnew_costs_total = xnew_costs_come
         
+        # print()
+        # print("NEW DYNAMIC POSITION:", xnew_dynamic_positions)
+        # print()
+
         draw_dead_state(sim_params, xnew_cspaces, xnew_bodies, init_x, init_y, init_heading)
         
         # If any states falls in the goal region, add to the solutions
