@@ -382,9 +382,9 @@ def pbd_solve_once(params: VineParams,
     # Combine them => total energy
     def total_penalty(cspace, dynamic_obj_cspace):
 
-        return collision_penalty(cspace) + \
-               growth_penalty(cspace) + \
-               inertial_penalty(dynamic_obj_cspace)
+        return 1.0 * collision_penalty(cspace) + \
+               1.0 * growth_penalty(cspace) + \
+               1.0 * inertial_penalty(dynamic_obj_cspace)
 
     # Step 4: compute gradient wrt cspace => this is our "force"
     penalty_grad = grad(total_penalty, argnums=0)(cspace, dynamic_obj_positions)
@@ -394,9 +394,6 @@ def pbd_solve_once(params: VineParams,
 
     turning_radius = jnp.where(jnp.abs(cspace[:-1]) < 1e-3, 0, params.body_length * 1e-3 / cspace[:-1])
     bend_moment = -1 * bend_energy_func(turning_radius, bend_params[:, 0], bend_params[:, 1])
-    
-    # jax.debug.print("penalty_grad {}", penalty_grad)
-    # jax.debug.print("bend_moment {}", params.stiffness * bend_moment * 8e0)
         
     penalty_grad = penalty_grad.at[:-1].add(params.stiffness * bend_moment * 8e0)
     
@@ -437,9 +434,6 @@ def pbd_solve_once(params: VineParams,
     # that is dt-based. 
     cspace_new = cspace - params.alpha * penalty_grad
     new_dynamic_positions = dynamic_obj_positions - params.alpha * inertial_grad
-    
-    # jax.debug.print("penalty_grad {}", penalty_grad)
-    # jax.debug.print("cspace_new {}", cspace_new)
     
     return cspace_new, new_dynamic_positions
 

@@ -703,7 +703,8 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
     c_space = np.zeros((sim_params.max_bodies+1))
     c_space[-1] = sim_params.body_length
 
-    dynamic_positions = sim_params.dynamic_objects.copy()
+    # dynamic_positions = sim_params.dynamic_objects.copy()
+    dynamic_positions = sim_params.dynamic_objects + 1
 
     bending_control = np.zeros((1, sim_params.max_bodies, 2))
     bending_control[:, :, 0] = 0.0 # pressure
@@ -887,11 +888,24 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         else:
             xnew_costs_total = xnew_costs_come
         
+        # DEBUGGING PURPOSES (env_dynamics)
+        
         print()
         print("NEW DYNAMIC POSITION:", xnew_dynamic_positions)
         print()
 
-        draw_dead_state(sim_params, xnew_cspaces, xnew_bodies, init_x, init_y, init_heading)
+        # tally = 0
+        # for i in range(xnew_dynamic_positions.shape[0]):
+        #     if np.array_equal(xnew_dynamic_positions[i, 0, :], sim_params.dynamic_objects[0]):
+        #         tally += 1
+        # if tally == xnew_dynamic_positions.shape[0]:
+        #     print("DYNAMIC OBJECT HAS NOT MOVED")
+        # else:
+        #     print("IT ACTUALLY MOVED")
+
+        ########        
+
+        draw_dead_state(sim_params, xnew_cspaces, xnew_dynamic_positions, xnew_bodies, init_x, init_y, init_heading)
         
         # If any states falls in the goal region, add to the solutions
         # Append all info: bodies, cspaces, costs, bending controls
@@ -1188,7 +1202,7 @@ if __name__ == "__main__":
         radius=50.0, # 16.0,
         dt=1/10,
         grow_rate=20.0, # was 20
-        grow_force=14, # was 15
+        grow_force=10.0, # was 15
         stiffness=20.0,
         damping=50.0,
         # Curiously, decreasing substeps helps prevent penetration bugs. But it doesn't fix the root problem
@@ -1198,7 +1212,7 @@ if __name__ == "__main__":
         dynamic_objects=cfg['dynamic_obstacles'],
         use_tube_obstacle=args.env=='envs/env_tube.txt',
     )
-    
+
     # SST params
     sst_params = SSTparams(
         batch_size=100,
