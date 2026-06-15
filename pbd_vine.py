@@ -323,12 +323,48 @@ def pbd_solve_once(params: VineParams,
 
     # Step 2b: define a function "coll_energy = sum( penalty_i^2 )" 
     #    so that the gradient wrt each angle tries to push out of collision.
-    def collision_penalty(q):
+    def collision_penalty(q, dynamic_obj_positions):
         xy_ = cspace_to_positions(params, q, n_bodies, x0, y0, heading0)
         sdfs_ = vine_collision_sdf(params, xy_, n_bodies)
                 
         # penalty only for negative
         pen = jnp.where(sdfs_<0.0, -sdfs_, 0.0)
+
+        if dynamic_obj_positions.size == 0:
+            return jnp.sum(0.5 * pen * pen)
+        
+        # penalty for dynamic obstacles interacting with each other or static obstacles:
+        #NOTE: shape of dynamic_obj_positions: (num objs, 4)
+
+        all_rects = np.append(params.obstacle_rects, params.dynamic_objects, axis=0)
+
+        def obj_collision_penalty(obj_coords: tuple[4]):
+            '''
+            Uses point_rect_sdf on each corner of the obj 
+            Returns sum of the negative distances based from the corners
+            '''
+
+            up_left = (obj_coords[0], obj_coords[1])
+            down_right = (obj_coords[2], obj_coords[3])
+            down_left = (up_left[0], down_right[1])
+            up_right = (down_right[0], up_left[1])
+
+            all_corners = [up_left, down_right, down_left, up_right]
+
+            raw_corner_dists = [vmap(point_rect_sdf, (None, None, 0))(corner[0], corner[1], all_rects) 
+                                for corner in all_corners]
+            # only keep negative values
+            real_corner_dists = [jnp.where(dist >= 0, 0.0, dist) for dist in raw_corner_dists]
+
+            # jax.debug.print("REAL CORNER DISTS: {x}", x = type(raw_corner_dists[0]))
+
+            return sum(real_corner_dists)
+
+        all_obj_penalties = [obj_collision_penalty(tuple(obj)) for obj in dynamic_obj_positions]
+        total_obj_pen = sum(all_obj_penalties) 
+
+        jax.debug.print("OBJ COLLISION PEN: {x}", x = total_obj_pen)
+
         return jnp.sum(0.5 * pen * pen)  # sum of squared penetration
 
     # Step 3: bending energy
@@ -382,7 +418,7 @@ def pbd_solve_once(params: VineParams,
     # Combine them => total energy
     def total_penalty(cspace, dynamic_obj_cspace):
 
-        return 1.0 * collision_penalty(cspace) + \
+        return 1.0 * collision_penalty(cspace, dynamic_obj_cspace) + \
                1.0 * growth_penalty(cspace) + \
                1.0 * inertial_penalty(dynamic_obj_cspace)
 
@@ -514,7 +550,7 @@ def step_vine(params: VineParams, cspace: jnp.ndarray, dynamic_obj_positions: jn
 #####################################################
 def step_vine_batched(params: VineParams, 
                        cspaces: jnp.ndarray,  # shape (batch, max_bodies+1)
-                       batched_dynamic_positions: jnp.ndarray, #shape (batch,)
+                       batched_dynamic_positions: jnp.ndarray, #shape (batch, num dybanamic_objs, 4)
                        n_bodies_list: jnp.ndarray,  # shape (batch,)
                        bend_params: jnp.ndarray,
                        x0_list: jnp.ndarray,

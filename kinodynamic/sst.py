@@ -704,7 +704,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
     c_space[-1] = sim_params.body_length
 
     # dynamic_positions = sim_params.dynamic_objects.copy()
-    dynamic_positions = sim_params.dynamic_objects + 1
+    dynamic_positions = sim_params.dynamic_objects
 
     bending_control = np.zeros((1, sim_params.max_bodies, 2))
     bending_control[:, :, 0] = 0.0 # pressure
@@ -890,9 +890,9 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         
         # DEBUGGING PURPOSES (env_dynamics)
         
-        print()
-        print("NEW DYNAMIC POSITION:", xnew_dynamic_positions)
-        print()
+        # print()
+        # print("NEW DYNAMIC POSITION:", xnew_dynamic_positions)
+        # print()
 
         # tally = 0
         # for i in range(xnew_dynamic_positions.shape[0]):
