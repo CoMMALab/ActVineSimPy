@@ -138,11 +138,11 @@ def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray,
     Returns:
         Shape (batch, 3) with the tip coordinates (x, y, theta)
     """
-    assert cspace.shape == (batch_size, params.max_bodies + 1,), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
+    assert cspace.shape == (batch_size, params.max_bodies + 1, 3), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
     assert n_bodies.shape == (batch_size,)
     
-    angles = cspace[:, :-1]        # shape (n_bodies,)
-    last_len = cspace[:, params.max_bodies] 
+    angles = cspace[:, :-1, -1]        # shape (n_bodies,)
+    last_len = cspace[:, params.max_bodies, -1] 
     
     # Step 1: compute global angles for each segment center
     global_angle_full = heading0 + jnp.cumsum(angles, axis=1)   # shape (batch_size, n_bodies,)
@@ -191,14 +191,14 @@ def length(params: VineParams, cspace: np.ndarray, n_bodies: np.ndarray):
     """
     
     batch_size = cspace.shape[0]
-    assert cspace.shape == (batch_size, params.max_bodies + 1,), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
+    assert cspace.shape == (batch_size, params.max_bodies + 1, 3), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
     assert n_bodies.shape == (batch_size,)
     
     # Standard bodies (all except the last one) have fixed length
     fixed_length_bodies = (n_bodies - 1) * params.body_length
     
     # Last body has variable length from the cspace
-    last_body_length = cspace[:, params.max_bodies]
+    last_body_length = cspace[:, params.max_bodies, -1]
     
     # Total length is the sum
     total_lengths = fixed_length_bodies + last_body_length
@@ -228,7 +228,7 @@ class StatesStruct:
         self._isactive = np.zeros((self.init_size), dtype=bool)
         self._kil = np.zeros((self.init_size), dtype=bool)
         
-        self._c_spaces = np.zeros((self.init_size, max_bodies+1), dtype=np.float32)
+        self._c_spaces = np.zeros((self.init_size, max_bodies+1, 3), dtype=np.float32)
         self._bodies = np.zeros((self.init_size), dtype=np.int32)
         self._times = np.zeros((self.init_size), dtype=np.float32)
         self._bending_controls = np.zeros((self.init_size, max_bodies, bending_controls_size), dtype=np.float32)
@@ -275,7 +275,7 @@ class StatesStruct:
         self._isactive = np.concatenate([self._isactive, np.zeros(current_size, dtype=bool)], axis=0)
         self._kil = np.concatenate([self._kil, np.zeros(current_size, dtype=bool)], axis=0)
         
-        self._c_spaces = np.concatenate([self._c_spaces, np.zeros((current_size, self.max_bodies+1), dtype=np.float32)], axis=0)
+        self._c_spaces = np.concatenate([self._c_spaces, np.zeros((current_size, self.max_bodies+1, 3), dtype=np.float32)], axis=0)
         self._bodies = np.concatenate([self._bodies, np.zeros(current_size, dtype=np.int32)], axis=0)
         self._times = np.concatenate([self._times, np.zeros(current_size, dtype=np.float32)], axis=0)
         self._bending_controls = np.concatenate([self._bending_controls, np.zeros((current_size, self.max_bodies, bending_controls_size), dtype=np.float32)], axis=0)
@@ -320,7 +320,7 @@ class StatesStruct:
     def add_states(self, isactive, c_space, dynamic_obj_positions, bodies, time, bending_control, cost_to_come, cost_total, tip, parent_idx, num_children):
         num_to_add = c_space.shape[0]
         
-        assert c_space.shape == (num_to_add, self.max_bodies + 1)
+        assert c_space.shape == (num_to_add, self.max_bodies + 1, 3)
         assert bodies.shape == (num_to_add,)
         assert time.shape == (num_to_add,)
         assert bending_control.shape == (num_to_add, self.max_bodies, 2)
@@ -457,7 +457,7 @@ def rollout(sst_params, simparams, batch_size,
     Args:
         Left as an exercise for the reader.
     Returns:
-        cspace_record : shape (steps_to_iter, batch_size, max_bodies + 1)
+        cspace_record : shape (steps_to_iter, batch_size, max_bodies + 1, 3)
         bodies_record  : shape (steps_to_iter, batch_size)
         time_record    : shape (steps_to_iter, batch_size)
 
@@ -469,7 +469,7 @@ def rollout(sst_params, simparams, batch_size,
     steps_to_iter = int(ceil((time_to_evolve) / simparams.dt))        
     
     history_size = steps_to_iter // record_every + 1
-    cspace_record = np.zeros((history_size, batch_size, simparams.max_bodies + 1), dtype=np.float32)
+    cspace_record = np.zeros((history_size, batch_size, simparams.max_bodies + 1, 3), dtype=np.float32)
     bodies_record = np.zeros((history_size, batch_size), dtype=np.int32)
     time_record = np.zeros((history_size, batch_size), dtype=np.float32)
 
@@ -493,7 +493,7 @@ def rollout(sst_params, simparams, batch_size,
         
         # Record the cspace and bodies for this step, but if a vine already
         # hit its limit, reuse the last one
-        cspace = np.where(reached_max[..., None], cspace, next_cspace)
+        cspace = np.where(reached_max[..., None, None], cspace, next_cspace)
         bodies = np.where(reached_max, bodies, next_bodies)        
         curr_time = curr_time + simparams.dt                
         # NOTE: reached max for dynamic_objs as well?
@@ -700,8 +700,8 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
     init_heading = sst_params.start[2]
     
     bodies = 1
-    c_space = np.zeros((sim_params.max_bodies+1))
-    c_space[-1] = sim_params.body_length
+    c_space = np.zeros((sim_params.max_bodies+1, 3))
+    c_space[-1, -1] = sim_params.body_length
 
     # dynamic_positions = sim_params.dynamic_objects.copy()
     dynamic_positions = sim_params.dynamic_objects
@@ -723,7 +723,6 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
                     time=0,
                     bending_control=bending_control,
                     # Initial dynamic obj position:
-                    # dynamic_obj_positions=sim_params.dynamic_objects, 
                     dynamic_obj_positions=dynamic_positions,
                     # Heuristic stuff
                     cost_to_come=0,
@@ -819,14 +818,14 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         
         # Rollout returns a record of position at each timestep, so flatten timestep and batch together                
         
-        xnew_cspaces = xnew_cspaces.reshape(-1, sim_params.max_bodies + 1)
+        xnew_cspaces = xnew_cspaces.reshape(-1, sim_params.max_bodies + 1, 3)
         xnew_bodies = xnew_bodies.reshape(-1)
         xnew_times = xnew_times.reshape(-1)
         
         if tree.num_dynamic_objs != 0:
             xnew_dynamic_positions = xnew_dynamic_positions.reshape(-1, tree.num_dynamic_objs, 4)
         
-        assert xnew_cspaces.shape == (steps_to_iter * batch_size, sim_params.max_bodies + 1), f"xnew_cspaces shape: {xnew_cspaces.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+        assert xnew_cspaces.shape == (steps_to_iter * batch_size, sim_params.max_bodies + 1, 3), f"xnew_cspaces shape: {xnew_cspaces.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert xnew_bodies.shape == (steps_to_iter * batch_size,), f"xnew_bodies shape: {xnew_bodies.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert xnew_times.shape == (steps_to_iter * batch_size,), f"xnew_times shape: {xnew_times.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         
@@ -835,7 +834,9 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
                                    f"xnew_dynamic_positions shape: {xnew_times.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
 
         # Assert that no new cspace is all zeros
-        assert np.all(~np.all(xnew_cspaces == 0, axis=1)), f"xnew_cspaces: {xnew_cspaces}"
+        # assert np.all(~np.all(xnew_cspaces == 0, axis=1)), f"xnew_cspaces: {xnew_cspaces}"
+        assert np.all(~np.all(xnew_cspaces == 0, axis=(1,2))), f"xnew_cspaces shape: {xnew_cspaces.shape}"
+
         finite_mask = np.all(np.isfinite(xnew_cspaces), axis=1)
         assert np.all(finite_mask), f"{np.sum(finite_mask)} finite cspaces out of {xnew_cspaces.shape[0]}"
         

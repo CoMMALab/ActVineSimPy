@@ -266,7 +266,7 @@ def _compute_vine_points(params, cspace, bodies, x0, y0, heading0):
     
     batch_size = cspace.shape[0]
     
-    assert cspace.ndim == 2
+    assert cspace.ndim == 3
     assert cspace.shape[1] == params.max_bodies + 1
     assert bodies.shape == (batch_size,)
     
@@ -276,8 +276,8 @@ def _compute_vine_points(params, cspace, bodies, x0, y0, heading0):
     bodies = np.asarray(bodies, dtype=np.int32)
     cspace = np.asarray(cspace, dtype=np.float32)
         
-    angles = cspace[:, :-1]
-    last_len = cspace[:, params.max_bodies]
+    angles = cspace[:, :-1, -1]
+    last_len = cspace[:, params.max_bodies, -1]
     n_bodies = bodies
 
     global_angle_full = heading0 + np.cumsum(angles, axis=1)
@@ -379,8 +379,6 @@ def draw_live_state(params, cspace, bodies, x0, y0, heading0, draw_circles=False
     _draw_vine(_live_surf, params, points, draw_circles=draw_circles, circle_col=circle_col, 
                circle_thickness=8 if actuator_colors is not None else 5)
     
-
-
     return points[4], points[5]
 
 ##########################

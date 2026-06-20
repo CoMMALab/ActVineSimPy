@@ -58,7 +58,6 @@ class VineParams:
     if self.dynamic_objects.size == 0:
         children = (self.obstacle_rects,)
     else:
-    #    children = (self.obstacle_rects, self.dynamic_objects, self.dynamic_obj_cspace)
        children = (self.obstacle_rects, self.dynamic_objects)
 
 
@@ -117,8 +116,17 @@ def cspace_to_positions(params: VineParams, cspace: jnp.ndarray,
       coords: shape (n_bodies, 2) = (x_i, y_i) for each full segment
               plus potentially a final partial segment if n_bodies < max_bodies
     """
-    angles = cspace[:-1]        # shape (n_bodies,)
-    last_len = cspace[params.max_bodies] 
+    '''
+    NOTE:
+    For maximal coord system, cspace is now (n, 3). This needed to be done to incorporate
+    physics for dynamic obstacles.
+    '''
+
+    # angles = cspace[:-1]        # shape (n_bodies,)
+    # last_len = cspace[params.max_bodies] 
+
+    last_len = cspace[params.max_bodies, -1]
+    angles = cspace[:-1, -1]
 
     # Step 1: compute global angles for each segment center
     global_angle_full = heading0 + jnp.cumsum(angles)   # shape (n_bodies,)
@@ -311,6 +319,11 @@ def pbd_solve_once(params: VineParams,
       bending => torque 
     We'll do a simplified linear approach: delta angles = -K^-1 * grad(energy).
     """
+    '''
+    NOTE:
+    For maximal coord system, cspace is now (n, 3). This needed to be done to incorporate
+    physics for dynamic obstacles.
+    '''
     
     # Step 1: get current body positions
     # Step 2: compute the collision SDF for each body
@@ -363,7 +376,7 @@ def pbd_solve_once(params: VineParams,
         all_obj_penalties = [obj_collision_penalty(tuple(obj)) for obj in dynamic_obj_positions]
         total_obj_pen = sum(all_obj_penalties) 
 
-        jax.debug.print("OBJ COLLISION PEN: {x}", x = total_obj_pen)
+        # jax.debug.print("OBJ COLLISION PEN: {x}", x = total_obj_pen)
 
         return jnp.sum(0.5 * pen * pen)  # sum of squared penetration
 
@@ -371,7 +384,7 @@ def pbd_solve_once(params: VineParams,
     def bend_penalty(q):
         # simple: sum( 0.5*K*(angle_i^2) ), ignoring partial segment dimension
         # or do the real function that includes q[:n_bodies]
-        angles = q[:-1]
+        angles = q[:-1, -1]
         
         deviation = jnp.abs(angles - target_angles)
         
@@ -395,7 +408,7 @@ def pbd_solve_once(params: VineParams,
     
     def growth_penalty(q):
         # Penalty for not growing the last segment long enough
-        return params.grow_force * jnp.abs(target_len - q[params.max_bodies])
+        return params.grow_force * jnp.abs(target_len - q[params.max_bodies, -1])
     
     def inertial_penalty(new_dynamic_positions):
         # Penalty for how far dynamic objects have moved from their past positions
@@ -428,10 +441,10 @@ def pbd_solve_once(params: VineParams,
     # Update next dynamic positions based on gradient
     inertial_grad = grad(total_penalty, argnums=1)(cspace, dynamic_obj_positions)
 
-    turning_radius = jnp.where(jnp.abs(cspace[:-1]) < 1e-3, 0, params.body_length * 1e-3 / cspace[:-1])
+    turning_radius = jnp.where(jnp.abs(cspace[:-1, -1]) < 1e-3, 0, params.body_length * 1e-3 / cspace[:-1, -1])
     bend_moment = -1 * bend_energy_func(turning_radius, bend_params[:, 0], bend_params[:, 1])
         
-    penalty_grad = penalty_grad.at[:-1].add(params.stiffness * bend_moment * 8e0)
+    penalty_grad = penalty_grad.at[:-1, -1].add(params.stiffness * bend_moment * 8e0)
     
     # We won't normalize the growth rate gradient, save it
     last_seg_grad = penalty_grad[-1] 
@@ -451,7 +464,7 @@ def pbd_solve_once(params: VineParams,
     
     # Zero out gradients after n_bodies
     mask = jnp.arange(params.max_bodies+1) < n_bodies
-    penalty_grad = penalty_grad * mask
+    penalty_grad = penalty_grad * mask[:, None]
     
     # Normalize grad magnitude to 1
     # FIXME bandaid solution for stability. The magnitude of the
@@ -486,7 +499,7 @@ def multiply_vine(params: VineParams, cspace: jnp.ndarray, n_bodies: int):
     """
     # The partial length is cspace[max_bodies] 
     last_len_idx = params.max_bodies
-    last_len = cspace[last_len_idx]
+    last_len = cspace[last_len_idx, -1]
     
     # If new_len > body_length => we promote
     def promote_body(_):
@@ -494,8 +507,8 @@ def multiply_vine(params: VineParams, cspace: jnp.ndarray, n_bodies: int):
         # set partial length to new_len - body_length leftover, but typically 0 
         # or set leftover as well. We'll keep it simple and set leftover=0
         # And increment n_bodies
-        q_promoted = cspace.at[n_bodies].set(0.0)  # the new angle
-        q_promoted = q_promoted.at[last_len_idx].set(last_len - params.body_length)  # leftover
+        q_promoted = cspace.at[n_bodies, -1].set(0.0)  # the new angle
+        q_promoted = q_promoted.at[last_len_idx, -1].set(last_len - params.body_length)  # leftover
         return (q_promoted, n_bodies+1)
     
     def no_promote(_):
@@ -529,7 +542,7 @@ def step_vine(params: VineParams, cspace: jnp.ndarray, dynamic_obj_positions: jn
     
     cspace_grown, n_bodies_grown = multiply_vine(params, cspace, n_bodies)
     
-    target_len = cspace[-1] + params.grow_rate * params.dt
+    target_len = cspace[-1, -1] + params.grow_rate * params.dt
 
     # def body_loop_fun(iter, cspace_in, dynamic_positions_in):
     def body_loop_fun(iter, init_val):
