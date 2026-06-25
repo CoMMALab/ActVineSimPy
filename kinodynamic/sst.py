@@ -701,7 +701,9 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
     
     bodies = 1
     c_space = np.zeros((sim_params.max_bodies+1, 3))
+
     c_space[-1, -1] = sim_params.body_length
+    c_space[0, 0], c_space[0, 1] = init_x, init_y
 
     # dynamic_positions = sim_params.dynamic_objects.copy()
     dynamic_positions = sim_params.dynamic_objects

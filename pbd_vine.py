@@ -14,8 +14,12 @@ import numpy as np
 
 from jax import grad, vmap
 
-# Jax prints like this
-# jax.debug.print("penalty_grad {}", penalty_grad)
+import cvxpy as cp
+from cvxpylayers.jax import CvxpyLayer
+from functools import partial
+import torch
+cvxpylater = None
+
 
 ######################################################
 # VineParams: holds environment and vine physical data
@@ -103,7 +107,6 @@ class VineParams:
 # The final partial segment length is cspace[-1].
 ######################################################
 
-
 def cspace_to_positions(params: VineParams, cspace: jnp.ndarray, 
                        n_bodies: int, 
                        x0: float, y0: float, heading0: float):
@@ -116,11 +119,6 @@ def cspace_to_positions(params: VineParams, cspace: jnp.ndarray,
       coords: shape (n_bodies, 2) = (x_i, y_i) for each full segment
               plus potentially a final partial segment if n_bodies < max_bodies
     """
-    '''
-    NOTE:
-    For maximal coord system, cspace is now (n, 3). This needed to be done to incorporate
-    physics for dynamic obstacles.
-    '''
 
     # angles = cspace[:-1]        # shape (n_bodies,)
     # last_len = cspace[params.max_bodies] 
@@ -266,27 +264,124 @@ def vine_collision_sdf(params: VineParams, body_xy: jnp.ndarray, n_bodies: int):
 
 
 ######################################################
-# Bending Force
+# Torch Variants (used in QP solver)
 ######################################################
-# def bending_torques(params: VineParams, cspace: jnp.ndarray, n_bodies: int):
-#     """
-#     For each angle, we compute a torque that tries to keep angle=0 (or some ref).
-#     Basic model: torque_i = -K * theta_i - D * dtheta_i
-#     This code can be extended with user control, advanced curves, etc.
 
-#     We do not have velocity in c-space for simplicity; you can store that if you want.
-#     For now, treat "dtheta_i" as small or omit damping, or approximate it.
+def torch_point_rect_sdf(px, py, rect):
+    """
+    Signed distance from a point (px,py) to axis-aligned rectangle [rx1,ry1, rx2,ry2].
+    If inside, distance is negative.
+    Otherwise positive. 
+    We'll do the usual approach:
+      dx = max( [rx1 - px, 0, px - rx2] ), 
+      dy = max( [ry1 - py, 0, py - ry2] ),
+      dist = sqrt(dx^2 + dy^2).
+    If px in [rx1,rx2], dx=0. If py in [ry1,ry2], dy=0. 
+    Then sign is negative if px is strictly inside in both x,y.
+    """
+    rx1, ry1, rx2, ry2 = rect
+    dx = torch.where(px < rx1, rx1 - px, 0.0)
+    dx = torch.where(px > rx2, px - rx2, dx)
+    dy = torch.where(py < ry1, ry1 - py, 0.0)
+    dy = torch.where(py > ry2, py - ry2, dy)
+    dist_out = torch.sqrt(dx*dx + dy*dy)
+    # Check if inside
+    inside = torch.logical_and( (px>=rx1)&(px<=rx2), (py>=ry1)&(py<=ry2))
+    # If inside => negative distance, we approximate how negative by min distance to an edge
+    # The distance to an edge is min( (px - rx1), (rx2 - px), (py - ry1), (ry2 - py) ), but we can do it carefully
+    if_inside_dist = torch.min(torch.tensor([px-rx1, rx2-px, py-ry1, ry2-py]))
+    dist_signed = torch.where(inside, -if_inside_dist, dist_out)
+    return dist_signed
 
-#     Return shape (n_bodies,) of torques.  The final entry is 0 for partial length.
-#     """
-#     angles = cspace[:n_bodies]
-#     # We just do an easy linear model: T = - K * angle
-#     T = -params.stiffness * angles
-#     # The partial-segment length dimension doesn't get a torque
-#     # So we zero out the torque for any index beyond n_bodies
-#     # We'll produce shape = (params.max_bodies,) or so, then slice
-#     # but let's keep it shape (n_bodies,) for clarity
-#     return T
+
+def torch_cspace_to_positions(params: VineParams, cspace: torch.tensor, 
+                              n_bodies: int, 
+                              x0: float, y0: float, heading0: float):
+    """
+    Convert a single vine's c-space -> global center coordinates of each body
+      cspace has shape (N+1,) but we only use the first n_bodies angles (plus last_length).
+    We also incorporate an initial anchor (x0, y0) and heading0 for the first segment.
+
+    Returns:
+      coords: shape (n_bodies, 2) = (x_i, y_i) for each full segment
+              plus potentially a final partial segment if n_bodies < max_bodies
+    """
+
+    # angles = cspace[:-1]        # shape (n_bodies,)
+    # last_len = cspace[params.max_bodies] 
+
+    last_len = cspace[params.max_bodies, -1]
+    angles = cspace[:-1, -1]
+
+    # Step 1: compute global angles for each segment center
+    global_angle_full = heading0 + torch.cumsum(angles)   # shape (n_bodies,)
+    
+    # Step 2: compute the center of each segment
+    #   For the i-th segment, the center is offset from the anchor by
+    #        sum_{k=0..i-1} [ L*cos(global_angle_full[k]), L*sin(global_angle_full[k]) ]
+    #   But we can do that more efficiently. We'll build an array of cos/sin, then do a cumsum.
+
+    # Cosines and sines of each segment angle:
+    c_ = torch.cos(global_angle_full)
+    s_ = torch.sin(global_angle_full)
+
+    # Prepare the lengths of each segment
+    full_lengths = torch.full((params.max_bodies,), params.body_length)
+    full_lengths = full_lengths.at[n_bodies-1].set(last_len)
+
+    # Now we do a cumulative sum of to get the tip coords of each segment
+    tip_x = x0 + torch.cumsum(full_lengths * c_)
+    tip_y = y0 + torch.cumsum(full_lengths * s_)
+        
+    # Now we'll compute the center of each segment, by
+    # subtracting 0.5*full_lengths from the tip coords
+    center_x = tip_x - 0.5 * full_lengths * c_
+    center_y = tip_y - 0.5 * full_lengths * s_
+    
+    # Except, for the very last segment, the center position *is* the tip position
+    center_x = center_x.at[n_bodies-1].set(tip_x[n_bodies-1])
+    center_y = center_y.at[n_bodies-1].set(tip_y[n_bodies-1])
+
+    # Now, use a mask to zero out the segments past n_bodies
+    mask = torch.arange(params.max_bodies) < n_bodies
+    center_x = center_x * mask
+    center_y = center_y * mask
+    
+    # Stack them together
+    coords = torch.stack([center_x, center_y], axis=1)
+    
+    return coords
+
+
+def torch_vine_collision_sdf(params: VineParams, body_xy: torch.tensor, n_bodies: int):
+
+    def dist_to_all_rects(xy):
+        # For each rect, compute distance, then take min
+        # shape of rects: (R,4)
+        px, py = xy
+
+        # We'll vmap the distance to each rect
+
+        #NOTE: we only compare vine->static sdfs in solver, so no need to include dyn-objs here
+        all_rects = params.obstacle_rects
+
+        # dists = vmap(point_rect_sdf, in_axes=(None, None, 0))(px, py, params.obstacle_rects)
+        dists = torch.vmap(point_rect_sdf, in_axes=(None, None, 0))(px, py, all_rects)
+
+        min_dist = torch.min(dists)  # min over all rects
+        # Then we subtract radius
+        return min_dist - params.radius
+    
+    if params.use_tube_obstacle:
+        sd_vals = torch.vmap(tube_sdf)(body_xy)
+    else:
+        sd_vals = torch.vmap(dist_to_all_rects)(body_xy)
+    
+    # Mask out the segments that don't exist
+    mask = torch.arange(params.max_bodies) < n_bodies
+    sd_vals = torch.where(mask, sd_vals, 1e6)
+        
+    return sd_vals  # shape (n_bodies,)
 
 
 ######################################################
@@ -487,7 +582,6 @@ def pbd_solve_once(params: VineParams,
     return cspace_new, new_dynamic_positions
 
 
-
 ######################################################
 # Growth / Extend
 ######################################################
@@ -518,6 +612,160 @@ def multiply_vine(params: VineParams, cspace: jnp.ndarray, n_bodies: int):
     (cspace_out, n_bodies_out) = jax.lax.cond(last_len > params.body_length, promote_body, no_promote, None)
 
     return cspace_out, n_bodies_out
+
+
+######################################################
+# Splitting Cone Solver: new solver to account for dynamic obstacles
+######################################################
+
+def cspace_sdf_constraint(params: VineParams, 
+                   cspace: torch.tensor, 
+                   n_bodies: int,
+                   x0: float, y0:float, heading0: float):
+    '''
+    Measure of how much vine intersects with static obstacles
+    (Dynamic obstacle intersection is handled by another constraint)
+    '''
+
+    # Measure of vine colliding with all other obstacles:
+    xy_ = torch_cspace_to_positions(params, cspace, n_bodies, x0, y0, heading0)
+    sdfs_ = torch_vine_collision_sdf(params, xy_, n_bodies)
+    return sdfs_
+
+
+def dynamic_obj_sdf_constraint(params: VineParams, dynamic_obj_positions: torch.tensor):
+    '''
+    Measure of how much each dynamic obstacle intersects
+    any other obstacle (whether dynamic or static)
+    '''
+    
+    def obj_to_corners(coords: tuple[4]):
+        '''
+        Returns x,y's of given object's corners (matching indices => same corner across both arrays)
+        '''
+        obj_corners = ((coords[0], coords[0]), # top left
+                       (coords[1], coords[1]), # bottom right
+                       (coords[0], coords[1]), # bottom left
+                       (coords[1], coords[0])  # top right
+                       )
+        xs = obj_corners[:, 0]
+        ys = obj_corners[:, 1]
+        return xs, ys
+
+    def check_obj_collision(coords: tuple[4], all_rects, is_recursive_call:bool = False):
+        '''
+        Returns scalar for given dynamic obstacle;
+        More negative => more collisions with static objs and/or other dynamic objs
+        
+        Done by checking how deep each obj's corner is within other objs' sdfs;
+        Returns (4 * all_rects,) array, containing negative values where collisions were detected
+        '''            
+
+        # Check one way: given obj -> other objs
+        xs, ys = obj_to_corners(coords)
+
+        dists = torch.vmap(torch_point_rect_sdf, in_axes=(0, 0, 0))(xs, ys, all_rects)
+        dists = dists.flatten()
+        dists = torch.where(dists > 0, 0, dists)
+
+        if is_recursive_call:
+            return dists 
+
+        # Check other way: other objs -> given obj
+        other_dists = torch.vmap(check_obj_collision, in_axes=(0, None, None))(all_rects, coords, True)
+        other_dists = other_dists.flatten()
+        other_dists = torch.where(other_dists > 0, 0, other_dists)
+
+        return torch.sum(dists) + torch.sum(other_dists)
+    
+    all_rects = np.append(params.obstacle_rects, dynamic_obj_positions, axis=0)
+
+    dyn_obj_collision_measures = torch.vmap(check_obj_collision, in_axes=(0, None, None))(
+        dynamic_obj_positions, all_rects, False
+    )
+
+    return dyn_obj_collision_measures
+
+
+def joint_constraint(params: VineParams,
+                    c_space: torch.tensor,
+                    n_bodies: int,
+                    x0: float, y0: float):
+    '''
+    Joints of the vine should be kept at fixed distance of each other
+    '''
+
+    # Sub-constraint 1:
+    constraints = torch.zeros(n_bodies * 2)
+    xs = c_space[:n_bodies, 0]
+    ys = c_space[:n_bodies, 1]
+    thetas = c_space[:n_bodies, 2]
+    
+    constraints[0] = (xs[0] - x0) - params.radius * torch.cos(thetas[0])
+    constraints[1] = (ys[0] - y0) - params.radius * torch.sin(thetas[0])
+
+    constraints[2::2] = (xs[1:] - xs[:-1]) - params.radius * torch.cos(thetas[1:]) \
+                                         - params.radius * torch.cos(thetas[:-1])
+
+    constraints[3::2] = (ys[1:] - ys[:-1]) - params.radius * torch.sin(thetas[1:]) \
+                                         - params.radius * torch.sin(thetas[:-1])
+
+    return constraints
+
+    
+
+def compute_jacobians(params: VineParams, 
+                      c_space: torch.tensor,
+                      dstate: torch.tensor, # velocity vector
+                      dynamic_obj_positions: torch.tensor,
+                      n_bodies: int,
+                      x0: float, y0: float, heading0: float):
+    '''
+    Finds jacobians of the contraint equations used by the QP solver
+    '''
+    #FIXME: convert c_space, dynamic_obj_positions to torch tensors elsewhere in code
+    #FIXME: remember to wrap in vmap to make it batched, like in the other sim
+
+    # # Jacobian of sdf constraint:
+    # sdf_wrt_cspace, aux_data1 = jax.jacrev(partial(sdf_constraint, params),
+    #                                         argnums=0, has_aux=True)(
+    #                                             c_space, dynamic_obj_positions, n_bodies,
+    #                                             x0, y0, heading0
+    #                                         )
+    # sdf_wrt_dyn_objs, aux_data2 = jax.jacrev(partial(sdf_constraint, params),
+    #                                         argnums=1, has_aux=True)(
+    #                                             c_space, dynamic_obj_positions, n_bodies,
+    #                                             x0, y0, heading0
+    #                                         )
+    # # Current measure of sdf contraint:
+    # sdf_cspace_measure, sdf_dyn_obj_measure = sdf_constraint(params, c_space, dynamic_obj_positions, n_bodies,
+    #                                                    x0, y0, heading0)
+    
+    # # Jacobian of joint constraint:
+    # joint_wrt_cspace, aux_data3 = jax.jacrev(partial(joint_constraint, params),
+    #                                          argnums=0, has_aux=True)(
+    #                                             c_space, dynamic_obj_positions, n_bodies,
+    #                                             x0, y0
+    #                                          )
+    
+    # joint_wrt_dyn_objs, aux_data4 = jax.jacrev(partial(joint_constraint, params),
+    #                                          argnums=1, has_aux=True)(
+    #                                             c_space, dynamic_obj_positions, n_bodies,
+    #                                             x0, y0
+    #                                          )
+    # # Current measure of joint constaint:
+    # #FIXME: add measure from dynamic objs as well
+    # joint_cspace_measure = joint_constraint(params, c_space, dynamic_obj_positions, 
+    #                                         n_bodies, x0, y0)
+
+    pass
+
+
+def SCS_solve_layers():
+    pass
+
+def SCS_solve():
+    pass
 
 
 ######################################################
