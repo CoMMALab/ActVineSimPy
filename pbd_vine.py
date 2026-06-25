@@ -195,6 +195,7 @@ def point_rect_sdf(px, py, rect):
     dist_signed = jnp.where(inside, -if_inside_dist, dist_out)
     return dist_signed
     
+
 def tube_sdf(pxy):
     """
     SDF for a tube, 1000 long, 500 high, following a sine wave with a full period over the 1000 (2pi)
@@ -618,7 +619,7 @@ def multiply_vine(params: VineParams, cspace: jnp.ndarray, n_bodies: int):
 # Splitting Cone Solver: new solver to account for dynamic obstacles
 ######################################################
 
-def cspace_sdf_constraint(params: VineParams, 
+def cspace_sdf_measure(params: VineParams, 
                    cspace: torch.tensor, 
                    n_bodies: int,
                    x0: float, y0:float, heading0: float):
@@ -633,10 +634,12 @@ def cspace_sdf_constraint(params: VineParams,
     return sdfs_
 
 
-def dynamic_obj_sdf_constraint(params: VineParams, dynamic_obj_positions: torch.tensor):
+def dynamic_obj_sdf_measure(params: VineParams, dynamic_obj_positions: torch.tensor):
     '''
     Measure of how much each dynamic obstacle intersects
     any other obstacle (whether dynamic or static)
+
+    #NOTE: assumes dynamic AND static objects to be rectangular
     '''
     
     def obj_to_corners(coords: tuple[4]):
@@ -687,7 +690,7 @@ def dynamic_obj_sdf_constraint(params: VineParams, dynamic_obj_positions: torch.
     return dyn_obj_collision_measures
 
 
-def joint_constraint(params: VineParams,
+def joint_measure(params: VineParams,
                     c_space: torch.tensor,
                     n_bodies: int,
                     x0: float, y0: float):
@@ -695,7 +698,6 @@ def joint_constraint(params: VineParams,
     Joints of the vine should be kept at fixed distance of each other
     '''
 
-    # Sub-constraint 1:
     constraints = torch.zeros(n_bodies * 2)
     xs = c_space[:n_bodies, 0]
     ys = c_space[:n_bodies, 1]
@@ -712,7 +714,57 @@ def joint_constraint(params: VineParams,
 
     return constraints
 
+
+def proximity_measure(params: VineParams, 
+                         cspace: torch.tensor,
+                         dynamic_obj_positions: torch.tensor,
+                         n_bodies: int,
+                         x0: float, y0: float, heading0: float):
+    '''
+    The distance between any joint to any dynamic obj > 0 to prevent intersection
+
+    # NOTE: assumes that dynamic objects are rectnagular
+    '''
+    joint_centers = torch_cspace_to_positions(params, cspace, n_bodies, x0, y0, heading0)
+    joint_radius = params.radius
+
+    def get_overlap_measure(joint_center_coords: tuple[2], joint_radius: float,
+                        dynamic_obj_position: tuple[4]):
+        '''
+        Checks to see if given joint is in collision with given dynamic object;
+        Positive value indicates they're not in collision, 
+        negative value indicates otherwise
+        '''
+        center_x, center_y = joint_center_coords
+        rect_left, rect_top, rect_right, rect_bottom = dynamic_obj_position
+
+        # Find point on rectangle closest to joint center
+        closest_x = torch.clamp(torch.tensor(center_x), rect_left, rect_right)
+        closest_y = torch.clamp(torch.tensor(center_y), rect_bottom, rect_top)
+
+        # Depth of rectangle's penetration:
+        dist = torch.sqrt(torch.pow(closest_x - center_x, 2) + torch.pow(closest_y - center_y, 2))
+        depth = torch.tensor(joint_radius) - dist
+
+        return depth.item() * -1 # flip sign so that penetration is negative
     
+    def overlap_over_all_objects(joint_center_coords: tuple[2], joint_radius: float,
+                                 dynamic_obj_positions: torch.tensor):
+        '''
+        V-mapped get_overlap_measure: get the depths of every dynamic obj
+        in respect to the given joint,
+        return result shaped (len(dynamic_obj_positions),)
+        '''
+        joint_depths = torch.vmap(get_overlap_measure, in_axes=(None, None, 0))(
+                            joint_center_coords, joint_radius, dynamic_obj_positions)
+        return joint_depths
+
+    all_joint_depths = torch.vmap(overlap_over_all_objects, in_axes=(0, None, 0))(
+        joint_centers, joint_radius, dynamic_obj_positions
+    )
+
+    return all_joint_depths
+
 
 def compute_jacobians(params: VineParams, 
                       c_space: torch.tensor,
