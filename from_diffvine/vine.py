@@ -696,6 +696,13 @@ def forward_batched_part(params: VineParams, init_heading, init_x, init_y, state
 
     forces = StateTensor(torch.zeros_like(state))
 
+    # NOTE for comprehension:
+    # Bending energy is solved for each JOINT, which lie between each segment
+    # The following ops take the energy from each joint and apply it to the segments
+    # These forces are then collecting and given to the solver
+    # I think you can just bring all this stuff into the other sim pretty easily,
+    # Just using the given bending energy function
+
     # Apply unbending forces
     forces.theta[:] += -bend_energy        # Apply bend energy as torque to own joint
     forces.theta[:-1] += bend_energy[1:]   # Apply bend energy as torque to joint before

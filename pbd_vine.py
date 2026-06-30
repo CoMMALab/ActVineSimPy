@@ -619,6 +619,64 @@ def multiply_vine(params: VineParams, cspace: jnp.ndarray, n_bodies: int):
 # Splitting Cone Solver: new solver to account for dynamic obstacles
 ######################################################
 
+def extend_cspace(params: VineParams, cspace: torch.tensor, dstate: torch.tensor, n_bodies:int):
+    '''
+    Extends the cspace by one, if needed
+    (Mostly copied from DiffVine)
+    '''
+
+    new_i = n_bodies
+    last_i = n_bodies - 1
+    penult_i = n_bodies - 2
+
+    #FIXME: attempt to address from DiffVine
+    cspace = torch.tensor(cspace)
+
+    # Indices for each one in (n, 3) cspace
+    x = 0
+    y = 1
+    theta = 2
+
+    # Compute position of second last seg
+    endingx = cspace[penult_i, x] + params.radius * torch.cos(cspace[penult_i, theta])
+    endingy = cspace[penult_i, y] + params.radius * torch.sin(cspace[penult_i, theta])   
+
+    # Compute last body's distance
+    last_link_distance = ((cspace[last_i, x] - endingx)**2 + \
+                          (cspace[last_i, y] - endingy)**2).sqrt().squeeze(-1)
+    
+    # x2 to prevent 0-len segments
+    extend_needed = last_link_distance > params.radius * 2
+
+    # Compute location of new seg
+    last_link_theta = torch.atan2(cspace[last_i, y] - cspace[penult_i, y], 
+                                  cspace[last_i, x] - cspace[penult_i, x])
+    
+    new_seg_x = endingx + params.radius * torch.cos(last_link_theta)
+    new_seg_y = endingy + params.radius * torch.sin(last_link_theta)
+    new_seg_theta = last_link_theta.squeeze()
+
+    # Copy last body one forward
+    cspace[new_i, x] = torch.where(extend_needed, cspace[last_i, x], cspace[new_i, x])
+    cspace[new_i, y] = torch.where(extend_needed, cspace[last_i, y], cspace[new_i, y])
+    cspace[new_i, theta] = torch.where(extend_needed, cspace[last_i, theta], cspace[new_i, theta])
+
+    # Set the new segment position
+    cspace[last_i, x] = torch.where(extend_needed, new_seg_x, cspace[last_i, x])
+    cspace[last_i, y] = torch.where(extend_needed, new_seg_y, cspace[last_i, y])
+    cspace[last_i, theta] = torch.where(extend_needed, new_seg_theta, cspace[last_i, theta])
+
+    # Initialize d_state
+    dstate[new_i, x] = 0
+    dstate[new_i, y] = 0
+    dstate[new_i, theta] = 0
+
+    # Update n_bodies
+    n_bodies = n_bodies + extend_needed
+
+    return cspace, n_bodies
+
+
 def cspace_sdf_measure(params: VineParams, 
                    cspace: torch.tensor, 
                    n_bodies: int,
@@ -711,6 +769,8 @@ def joint_measure(params: VineParams,
 
     constraints[3::2] = (ys[1:] - ys[:-1]) - params.radius * torch.sin(thetas[1:]) \
                                          - params.radius * torch.sin(thetas[:-1])
+    
+    #NOTE: is zero_out required here like from DiffVine?    
 
     return constraints
 
@@ -766,51 +826,118 @@ def proximity_measure(params: VineParams,
     return all_joint_depths
 
 
+def growth_measure(params: VineParams, cspace: torch.tensor,
+                   dstate: torch.tensor, n_bodies: int):
+    '''
+    Measure of how much the current growing segment is growing;
+    Growth should be constrained such that the current segment should always be growing
+    each time step
+    '''
+    curr_id = n_bodies - 1
+    prev_id = n_bodies - 2
+
+    # Current growing segment info:
+    curr_x = cspace[curr_id, 0]
+    curr_y = cspace[curr_id, 1]
+    curr_velocity_x = dstate[curr_id, 0]
+    curr_velocity_y = dstate[curr_id, 1]
+
+    # Previous segment info:
+    prev_x = cspace[prev_id, 0]
+    prev_y = cspace[prev_id, 1]
+    prev_velocity_x = dstate[prev_id, 0]
+    prev_velocity_y = dstate[prev_id, 1]
+
+    # Derivative of the distance in respect to time:
+    growth = ((curr_x - prev_x) * (curr_velocity_x - prev_velocity_x) + 
+              (curr_y - prev_y) * (curr_velocity_y - prev_velocity_y)) / \
+              torch.sqrt(torch.pow(curr_x - prev_x, 2) + torch.pow(curr_y - prev_y, 2))
+    return growth
+
+
+def get_bending_energy(params: VineParams, cspace: torch.tensor, bend_params: torch.tensor, bend_energy_func: Callable):
+
+    #NOTE: vine stiffness and damping are NOT utilized
+
+    turning_radius = torch.where(torch.abs(cspace[:-1, -1]) < 1e-3, 0, params.body_length * 1e-3 / cspace[:-1, -1])
+    bend_moment = -1 * bend_energy_func(turning_radius, bend_params[:, 0], bend_params[:, 1])
+
+    return bend_moment
+
+def get_object_motion(params: VineParams, dynamic_obj_positions: torch.tensor, dstate: torch.tensor):
+    '''
+    Returns (len(dynamic_objects), ) shaped tensor;
+    For applying motion to the dynamic objects, while also acknowledging their inertia
+    '''
+    #FIXME: IMPLEMENT LATER
+    #NOTE: in forces, each object has (change x, change y, change theta)
+    return torch.zeros(dynamic_obj_positions.shape[0], 3)
+
+
 def compute_jacobians(params: VineParams, 
-                      c_space: torch.tensor,
+                      cspace: torch.tensor,
                       dstate: torch.tensor, # velocity vector
                       dynamic_obj_positions: torch.tensor,
                       n_bodies: int,
-                      x0: float, y0: float, heading0: float):
+                      x0: float, y0: float, heading0: float,
+                      bend_params: torch.tensor, bend_energy_func):
     '''
     Finds jacobians of the contraint equations used by the QP solver
     '''
     #FIXME: convert c_space, dynamic_obj_positions to torch tensors elsewhere in code
     #FIXME: remember to wrap in vmap to make it batched, like in the other sim
+    #FIXME: do we have to implement grow function as well, for the cspace?
 
-    # # Jacobian of sdf constraint:
-    # sdf_wrt_cspace, aux_data1 = jax.jacrev(partial(sdf_constraint, params),
-    #                                         argnums=0, has_aux=True)(
-    #                                             c_space, dynamic_obj_positions, n_bodies,
-    #                                             x0, y0, heading0
-    #                                         )
-    # sdf_wrt_dyn_objs, aux_data2 = jax.jacrev(partial(sdf_constraint, params),
-    #                                         argnums=1, has_aux=True)(
-    #                                             c_space, dynamic_obj_positions, n_bodies,
-    #                                             x0, y0, heading0
-    #                                         )
-    # # Current measure of sdf contraint:
-    # sdf_cspace_measure, sdf_dyn_obj_measure = sdf_constraint(params, c_space, dynamic_obj_positions, n_bodies,
-    #                                                    x0, y0, heading0)
-    
-    # # Jacobian of joint constraint:
-    # joint_wrt_cspace, aux_data3 = jax.jacrev(partial(joint_constraint, params),
-    #                                          argnums=0, has_aux=True)(
-    #                                             c_space, dynamic_obj_positions, n_bodies,
-    #                                             x0, y0
-    #                                          )
-    
-    # joint_wrt_dyn_objs, aux_data4 = jax.jacrev(partial(joint_constraint, params),
-    #                                          argnums=1, has_aux=True)(
-    #                                             c_space, dynamic_obj_positions, n_bodies,
-    #                                             x0, y0
-    #                                          )
-    # # Current measure of joint constaint:
-    # #FIXME: add measure from dynamic objs as well
-    # joint_cspace_measure = joint_constraint(params, c_space, dynamic_obj_positions, 
-    #                                         n_bodies, x0, y0)
+    cspace, n_bodies = extend_cspace(params, cspace, dstate, n_bodies)
 
-    pass
+    cspace_sdj_jac = torch.func.jacrev(partial(cspace_sdf_measure,
+                                                    params=params,
+                                                    x0=x0, y0=y0, n_bodies=n_bodies, heading0=heading0),
+                                            )(c_space=cspace)
+    cspace_sdf_now = cspace_sdf_measure(params, cspace, n_bodies, x0, y0, heading0)
+
+    dynamic_sdf_jac = torch.func.jacrev(partial(dynamic_obj_sdf_measure, params))(dynamic_obj_positions)
+    dynami_sdf_now = dynamic_obj_sdf_measure(params, dynamic_obj_positions)
+
+    joint_jac = torch.func.jacrev(partial(joint_measure, params=params, n_bodies=n_bodies,
+                                          x0=x0, y0=y0))(cspace=cspace)
+    joint_now = joint_measure(params, cspace, n_bodies, x0, y0)
+
+    proximity_jac = torch.func.jacrev(partial(proximity_measure, params=params,
+                                              n_bodies=n_bodies, x0=x0, y0=y0, heading0=heading0))(
+                                                  cspace=cspace, dynamic_obj_positions=dynamic_obj_positions
+                                              )
+    proximity_now = proximity_measure(params, cspace, dynamic_obj_positions, n_bodies,
+                                      x0, y0, heading0)
+    
+    growth_jac = torch.func.jacrev(partial(growth_measure, params=params, n_bodies=n_bodies))(
+        cspace=cspace, dstate=dstate
+    )
+    growth_now = growth_measure(params, cspace, dstate, n_bodies)
+
+    # Find bend energy to minimize for the vine:
+    bend_energy = get_bending_energy(params, cspace, bend_params, bend_energy_func)
+
+    # Find motion info for dynamic objects:
+    
+    obj_motion = get_object_motion(params, dynamic_obj_positions)
+
+    # Find forces affecting the segments:
+    # forces shape (cpsace + dyn_obj len, 3)
+
+    forces = torch.zeros(cspace.shape[0] + dynamic_obj_positions.shape[0], 3)
+    start_obj_idx = n_bodies + 1
+
+    forces[:n_bodies, 2] += -bend_energy
+    forces[:n_bodies - 1, 2] += bend_energy[1:]
+
+    forces[:n_bodies, 0] += dstate[:n_bodies, 0] # for x 
+    forces[:n_bodies, 1] += dstate[:n_bodies, 1] # for y
+
+    forces[start_obj_idx:, :] += obj_motion[:, :]
+
+    return n_bodies, forces, cspace_sdj_jac, cspace_sdf_now, dynamic_sdf_jac, dynami_sdf_now, \
+            joint_jac, joint_now, proximity_jac, proximity_now, growth_jac, growth_now
 
 
 def SCS_solve_layers():
