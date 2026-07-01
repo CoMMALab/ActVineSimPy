@@ -736,8 +736,10 @@ def solve(
     '''
     # Convert the values to a shape that qpth can understand
     N = params.max_bodies * 3
-    dt = params.dt
+    dt = params.dt # time step 
     M = create_M(params.m.abs(), params.I.abs(), params.max_bodies)
+    # m = mass, I is inertia <= where to put block info (mass and stuff)
+    # create_
 
     # Compute c
     p = forces * dt - torch.matmul(dstate, M)
@@ -764,6 +766,8 @@ def solve(
 
     init_layers(N, Q.shape, p.shape[1:], G.shape[1:], h.shape[1:], A.shape[1:], b.shape[1:])
     next_dstate_solution = solve_layers(Q, p, G, h, A, b)
+
+    # G, A: matrices to constrain; h, b: actual constraints
 
     return next_dstate_solution
 
