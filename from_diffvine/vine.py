@@ -309,6 +309,10 @@ class VineParams:
 
 def create_M(m, I, max_bodies):
     # Update mass matrix M (block diagonal)
+
+    # 1: creates tensor of [m, m, I * 100.0]
+    # 2: extends 1D tensor, so each 3 entries is m, m, I*100 for each body
+    # 3: creates diagonal matrix where the entries of 1D tensor are the diagonal
     diagonal_elements = torch.cat([m, m, I * 100.0]).repeat(max_bodies)
     return torch.diag(diagonal_elements)   # Shape: (nq, nq))
 
@@ -741,7 +745,7 @@ def solve(
     # m = mass, I is inertia <= where to put block info (mass and stuff)
     # create_
 
-    # Compute c
+    # Compute c 
     p = forces * dt - torch.matmul(dstate, M)
 
     # Expand Q to [batch_size, N, N]
@@ -749,13 +753,18 @@ def solve(
     # Q = params.M.unsqueeze(0).expand(batch_size, -1, -1)
 
     # Inequality constraints
-    G = -L * dt
+    G = -L * dt # L = sdf jacobian
     h = sdf_now
 
     # Equality constraints
     # Compute growth constraint components
+    # NOTE: I think this is just specific to growth, don't worry too much
     g_con = (
-        growth.squeeze(1) - 1000 * params.grow_rate -
+        growth.squeeze(1) - # get rid of dim 1 if it's size is only 1
+        1000 * params.grow_rate - 
+        
+        # batched matrix multiplication followed by squeeze calls
+        #  unsqueeze: inserts new dim at 2 with size of 1 (NOTE: used for broadcasting to allow math ops)
         torch.bmm(growth_wrt_dstate, dstate.unsqueeze(2)).squeeze(2).squeeze(1)
         )
     g_coeff = (growth_wrt_state * dt + growth_wrt_dstate)
@@ -767,7 +776,7 @@ def solve(
     init_layers(N, Q.shape, p.shape[1:], G.shape[1:], h.shape[1:], A.shape[1:], b.shape[1:])
     next_dstate_solution = solve_layers(Q, p, G, h, A, b)
 
-    # G, A: matrices to constrain; h, b: actual constraints
+    # G, A: matrices to constrain; h, b: actual constraints (goal you're trying to meet)
 
     return next_dstate_solution
 

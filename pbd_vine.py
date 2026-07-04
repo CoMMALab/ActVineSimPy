@@ -18,8 +18,8 @@ import cvxpy as cp
 from cvxpylayers.jax import CvxpyLayer
 from functools import partial
 import torch
-cvxpylayer = None
 
+cvxpylayer = None
 
 ######################################################
 # VineParams: holds environment and vine physical data
@@ -29,7 +29,13 @@ class VineParams:
 
   def __init__(self, max_bodies, body_length, radius, dt, grow_rate, grow_force, 
                stiffness, damping, substeps, alpha, obstacle_rects, dynamic_objects = np.empty((0,)), 
-               use_tube_obstacle=False, dynamic_obj_mass_matrix = np.empty((0,))):
+               use_tube_obstacle=False, 
+               dynamic_objs_mass = np.empty((0,)),
+               dynamic_objs_inertia = np.empty((0,)),
+               mass = torch.tensor([0.02], dtype=torch.float32), # mass for each vine segment
+               inertia = torch.tensor([10.0 / 100], dtype=torch.float) # moment of inertia for each vine seg 
+               ):
+    
     self.max_bodies = max_bodies
     self.body_length = body_length
     self.radius = radius
@@ -42,27 +48,34 @@ class VineParams:
     self.alpha = alpha
     self.obstacle_rects = obstacle_rects
     self.use_tube_obstacle = use_tube_obstacle  # If True, use hardcoded tube instead of env
+
+    self.mass = mass
+    self.inertia = inertia
     
     # for dynamic objects
     self.dynamic_objects = dynamic_objects   # stores current position
-    self.dynamic_obj_mass_matrix = dynamic_obj_mass_matrix # shaped: (# of objs,)
+    self.dynamic_objs_mass = dynamic_objs_mass # shaped: (# of objs,)
+    self.dynamic_objs_inertia = dynamic_objs_inertia
 
     if dynamic_objects.size == 0:
         self.hash = hash((max_bodies, body_length, radius, dt, grow_rate, grow_force,
                         stiffness, damping, substeps, alpha, tuple(map(tuple, obstacle_rects)), 
-                        use_tube_obstacle))
+                        use_tube_obstacle, mass, inertia))
     else:
         self.hash = hash((max_bodies, body_length, radius, dt, grow_rate, grow_force,
                         stiffness, damping, substeps, alpha, tuple(map(tuple, obstacle_rects)), 
                         tuple(map(tuple, dynamic_objects)), 
-                        use_tube_obstacle, tuple(map(tuple, dynamic_obj_mass_matrix))))
+                        use_tube_obstacle, 
+                        tuple(map(tuple, dynamic_objs_mass)), tuple(map(tuple, dynamic_objs_inertia)),
+                        mass, inertia))
 
   def _tree_flatten(self):
 
     if self.dynamic_objects.size == 0:
         children = (self.obstacle_rects,)
     else:
-       children = (self.obstacle_rects, self.dynamic_objects, self.dynamic_obj_mass_matrix)
+       children = (self.obstacle_rects, self.dynamic_objects, self.dynamic_objs_mass,
+                   self.dynamic_objs_inertia)
 
     aux_data = {'max_bodies': self.max_bodies,
                 'body_length': self.body_length,
@@ -74,24 +87,28 @@ class VineParams:
                 'damping': self.damping,
                 'substeps': self.substeps,
                 'alpha': self.alpha,
-                'use_tube_obstacle': self.use_tube_obstacle}
+                'use_tube_obstacle': self.use_tube_obstacle,
+                'mass': self.mass,
+                'inertia': self.inertia}
     
     return (children, aux_data)
 
   @classmethod
   def _tree_unflatten(cls, aux_data, children):
 
-    if len(children) == 3:
-        obstacle_rects, dynamic_objects, dynamic_obj_mass_matrix = children
+    if len(children) == 4:
+        obstacle_rects, dynamic_objects, dynamic_objs_mass, dynamic_objs_inertia = children
     else:
         obstacle_rects = children[0]
         dynamic_objects = np.empty((0,))
-        dynamic_obj_mass_matrix = np.empty((0,))
+        dynamic_objs_mass = np.empty((0,))
+        dynamic_objs_inertia = np.empty((0,))
 
     return cls(
         obstacle_rects=obstacle_rects,
         dynamic_objects=dynamic_objects,
-        dynamic_obj_mass_matrix = dynamic_obj_mass_matrix,
+        dynamic_objs_mass = dynamic_objs_mass,
+        dynamic_objs_inertia = dynamic_objs_inertia,
         **aux_data
     )
   
@@ -614,7 +631,7 @@ def multiply_vine(params: VineParams, cspace: jnp.ndarray, n_bodies: int):
 
 
 ######################################################
-# Splitting Cone Solver: new solver to account for dynamic obstacles
+# Splitting Cone Solver: constraints and minimization measures 
 ######################################################
 
 def extend_cspace(params: VineParams, cspace: torch.tensor, dstate: torch.tensor, n_bodies:int):
@@ -743,6 +760,7 @@ def dynamic_obj_sdf_measure(params: VineParams, dynamic_obj_positions: torch.ten
         dynamic_obj_positions, all_rects, False
     )
 
+    # shape: (# of dynamic objs,)
     return dyn_obj_collision_measures
 
 
@@ -766,9 +784,16 @@ def joint_measure(params: VineParams,
                                          - params.radius * torch.cos(thetas[:-1])
 
     constraints[3::2] = (ys[1:] - ys[:-1]) - params.radius * torch.sin(thetas[1:]) \
-                                         - params.radius * torch.sin(thetas[:-1])
-    
-    #NOTE: is zero_out required here like from DiffVine?    
+                                         - params.radius * torch.sin(thetas[:-1])   
+
+    #NOTE: do we also need to acknowledge special "last body", like in DiffVine?
+    endx = xs[n_bodies - 2] + params.radius * torch.cos(thetas[n_bodies - 2])
+    endy = ys[n_bodies - 2] + params.radius * torch.sin(thetas[n_bodies - 2])
+
+    angle_diff = torch.atan2(ys[n_bodies - 1] - endy, xs[n_bodies - 1] - endx - thetas[n_bodies - 1])
+    constraints[(n_bodies - 1) * 2] = angle_diff    
+
+    #NOTE: is zero_out required here like from DiffVine?
 
     return constraints
 
@@ -817,10 +842,11 @@ def proximity_measure(params: VineParams,
                             joint_center_coords, joint_radius, dynamic_obj_positions)
         return joint_depths
 
-    all_joint_depths = torch.vmap(overlap_over_all_objects, in_axes=(0, None, 0))(
+    all_joint_depths = torch.vmap(overlap_over_all_objects, in_axes=(0, None, None))(
         joint_centers, joint_radius, dynamic_obj_positions
     )
 
+    # shape: (# n_bodies, # dynamic objects)
     return all_joint_depths
 
 
@@ -879,7 +905,7 @@ def get_object_motion(params: VineParams, dstate: torch.tensor, weight: float):
         ])
 
     # Shape: (# dynamic objs, 3)
-    return torch.vmap(compute_KE, in_axes=(None, 0, 0))(weight, params.dynamic_obj_mass_matrix, dstate)
+    return torch.vmap(compute_KE, in_axes=(None, 0, 0))(weight, params.dynamic_objs_mass, dstate)
 
 
 def compute_jacobians(params: VineParams, 
@@ -893,10 +919,11 @@ def compute_jacobians(params: VineParams,
     Finds jacobians of the contraint equations used by the QP solver
     '''
     #FIXME: convert c_space, dynamic_obj_positions to torch tensors elsewhere in code
+    #NOTE: zero_out was not used in some parts, unlike DiffVine; might need to look into this
 
     cspace, n_bodies = extend_cspace(params, cspace, dstate, n_bodies)
 
-    cspace_sdj_jac = torch.func.jacrev(partial(cspace_sdf_measure,
+    cspace_sdf_jac = torch.func.jacrev(partial(cspace_sdf_measure,
                                                     params=params,
                                                     x0=x0, y0=y0, n_bodies=n_bodies, heading0=heading0),
                                             )(c_space=cspace)
@@ -916,8 +943,9 @@ def compute_jacobians(params: VineParams,
     proximity_now = proximity_measure(params, cspace, dynamic_obj_positions, n_bodies,
                                       x0, y0, heading0)
     
-    growth_jac = torch.func.jacrev(partial(growth_measure, params=params, n_bodies=n_bodies))(
-        cspace=cspace, dstate=dstate
+    growth_wrt_state, growth_wrt_dstate = torch.func.jacrev(partial(growth_measure, params=params),
+                                         argnums=(0, 1))(
+        cspace=cspace, dstate=dstate, n_bodies=n_bodies
     )
     growth_now = growth_measure(params, cspace, dstate, n_bodies)
 
@@ -926,7 +954,8 @@ def compute_jacobians(params: VineParams,
 
     # Find motion info for dynamic objects:
     
-    obj_motion = get_object_motion(params, dynamic_obj_positions)
+    kinetic_energy_weight = 0.5
+    obj_motion = get_object_motion(params, dstate, kinetic_energy_weight)
 
     #NOTE: forces shape: (cpsace + dyn_obj len, 3)
 
@@ -940,20 +969,100 @@ def compute_jacobians(params: VineParams,
     forces[:n_bodies, 1] += dstate[:n_bodies, 1] # for y
 
     # Add on movement energy of the objects for minimization        
-    #FIXME: add ability to read in mass for each dynamic object
+    #FIXME: add ability to read in MASS and INERTIA for each dynamic object
 
     forces[start_obj_idx:, :] += obj_motion[:, :]
 
-    return n_bodies, forces, cspace_sdj_jac, cspace_sdf_now, dynamic_sdf_jac, dynamic_sdf_now, \
-            joint_jac, joint_now, proximity_jac, proximity_now, growth_jac, growth_now
+    return n_bodies, forces, cspace_sdf_jac, cspace_sdf_now, dynamic_sdf_jac, dynamic_sdf_now, \
+            joint_jac, joint_now, proximity_jac, proximity_now, \
+            growth_wrt_state, growth_wrt_dstate, growth_now
 
 compute_jacobians_batched = torch.func.vmap(compute_jacobians, in_dims = (None, 0, 0, 0, 0, 0, 0, 0, None, None))
 
 
-def SCS_solve_layers():
+######################################################
+# Splitting Cone Solver: the actual solver
+######################################################
+
+def create_mass_matrix(params: VineParams, vine_inertia_weight: float, obj_inertia_weight: float):
+    '''
+    Creates combined mass/inertia matrix (stores mass/inertia for both vine and dynamic objs)
+    '''
+
+    vine_mass = params.mass
+    vine_inertia = params.inertia
+    max_bodies = params.max_bodies
+
+    objs_mass = params.dynamic_objs_mass
+    objs_inertia = params.dynamic_objs_inertia
+    num_objs = params.dynamic_objs_mass.size
+
+    # Create mass matrix for vine:
+    vine_diag_elements = torch.cat([vine_mass, vine_mass, 
+                                    vine_inertia * vine_inertia_weight]).repeat(max_bodies)
+    
+    obj_diag_elements = torch.cat([objs_mass, objs_mass,
+                                   objs_inertia * obj_inertia_weight]).repeat(num_objs)
+    
+    all_diag_elements = torch.cat([vine_diag_elements, obj_diag_elements])
+
+    # returns square matrix with all elements in this array down its diagonal:
+    return torch.diag(all_diag_elements) 
+
+
+# Something used within solve_layers:
+import scipy.linalg
+from torch.autograd import Function
+class MatrixSquareRoot(Function):
+    """Square root of a positive definite matrix.
+
+    NOTE: matrix square root is not differentiable for matrices with
+          zero eigenvalues.
+    """
+    @staticmethod
+    def forward(ctx, input):
+        m = input.detach().cpu().numpy().astype(np.float_)
+        sqrtm = torch.from_numpy(scipy.linalg.sqrtm(m).real).to(input)
+        ctx.save_for_backward(sqrtm)
+        return sqrtm
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        grad_input = None
+        if ctx.needs_input_grad[0]:
+            sqrtm, = ctx.saved_tensors
+            sqrtm = sqrtm.detach().cpu().numpy().astype(np.float_)
+            gm = grad_output.detach().cpu().numpy().astype(np.float_)
+
+            # Given a positive semi-definite matrix X,
+            # since X = X^{1/2}X^{1/2}, we can compute the gradient of the
+            # matrix square root dX^{1/2} by solving the Sylvester equation:
+            # dX = (d(X^{1/2})X^{1/2} + X^{1/2}(dX^{1/2}).
+            grad_sqrtm = scipy.linalg.solve_sylvester(sqrtm, sqrtm, gm)
+
+            grad_input = torch.from_numpy(grad_sqrtm).to(grad_output)
+        return grad_input
+
+sqrtm_module = MatrixSquareRoot()
+
+def SCS_solve_layers(mass_matrix, forces_info, inequality_step, inequality_now,
+                     equality_step, equality_now):
     '''
     Batched QP solve
+    (Newly defined args are for SCS, not cvxpy)
     '''
+    global cvxpylayer
+    global sqrtm_module
+
+    batch_size = forces_info.shape[0]
+    mass_matrix_batched = sqrtm_module.apply(mass_matrix).unsqueeze(0).expand(batch_size, -1, -1)
+
+    solver_args_scs = {'acceleration_lookback': 40_000, 'verbose': False, 'max_iters': 10_000}
+
+    solution = cvxpylayer(mass_matrix_batched, forces_info, inequality_step, inequality_now,
+                          equality_step, equality_now, solver_args = solver_args_scs)
+    
+    return solution[0]
 
 
 def SCS_solve(params: VineParams, dstate, forces,
@@ -961,15 +1070,107 @@ def SCS_solve(params: VineParams, dstate, forces,
               dynamic_sdf_jac, dynamic_sdf_now,
               joint_jac, joint_now,
               proximity_jac, proximity_now,
-              growth_jac, growth_now):
+              growth_wrt_state, growth_wrt_dstate, growth_now):
+    
+    '''
+    Also batched: combines batched init_layers with batched solve_layers
+    '''
 
     global cvxpylayer
 
+    # Configure constraints and matrices to be used by the solver
+
+    solution_size = (dstate.shape[1], dstate.shape[2]) # returns next_dstate, so keep the same shape (without batched part)
+    dt = params.dt
+
+    vine_inertia_weight = 100
+    obj_inertia_weight = 100
+    mass_inertia_diag = create_mass_matrix(params, vine_inertia_weight, obj_inertia_weight)
+
+    # Transform force infomation (what to mimimize: bending and KE)
+    forces_info = forces * dt - torch.matmul(dstate, mass_inertia_diag)
+
+    # Combined Inequality constraints: cspace_sdf, dynamic_sdf, proximity
+    cspace_sdf_step = -1 * cspace_sdf_jac * dt
+    dynamic_sdf_step = -1 * dynamic_sdf_jac * dt
+    proximity_step = -1 * proximity_jac * dt
+
+    # Create diag-matrix so each batch can store info on cspace, dynamic, proximity info
+
+    inequality_step = torch.vmap(torch.block_diag)(cspace_sdf_step, dynamic_sdf_step, proximity_step)
+    inequality_now = torch.vmap(torch.block_diag)(cspace_sdf_now, dynamic_sdf_now, proximity_now)
     
+    # Combined Equality constraints: growth, joint
+    # NOTE: for now, is copied from DiffVine
+
+    growth_constraint = (
+        growth_now.squeeze(1) - 1000 * params.grow_rate -
+        torch.bmm(growth_wrt_dstate, dstate.unsqeeze(2)).squeeze(2).squeeze(1)
+    )
+    growth_coeff = (growth_wrt_state * dt + growth_wrt_dstate)
+
+    equality_step = torch.cat([joint_jac * dt, growth_coeff], dim = 1)
+    equality_now = torch.cat([-joint_now, -growth_constraint.unsqueeze(1)], dim = 1)
+
+    # Initialize layers, if need be:
+    if cvxpylayer is None:
+        next_dstate = cp.Variable(solution_size)
+
+        mass_matrix_sqrt = cp.Parameter(mass_inertia_diag.shape)
+        forces_param = cp.Parameter(forces_info.shape[1:])
+        inequality_step_param = cp.Parameter(inequality_step.shape[1:])
+        inequality_now_param = cp.Parameter(inequality_now.shape[1:])
+        equality_step_param = cp.Parameter(equality_step.shape[1:])
+        equality_now_param = cp.Parameter(equality_now.shape[1:])
+
+        objective = cp.Minimize(0.5 * cp.sum_squares(mass_matrix_sqrt @ next_dstate) + 
+                                forces_param @ next_dstate)
+        
+        constraints = [equality_step_param @ next_dstate == equality_now_param,
+                       inequality_step_param @ next_dstate <= inequality_now_param]
+        
+        problem = cp.Problem(objective, constraints)
+        
+        cvxpylayer = CvxpyLayer(problem, parameters = [
+            mass_matrix_sqrt, forces_param, inequality_step_param, inequality_now_param,
+            equality_step_param, equality_now_param
+        ], variables = [next_dstate])
+
+    next_dstate_solution = SCS_solve_layers(mass_inertia_diag, forces_info, 
+                                            inequality_step, inequality_now, 
+                                            equality_step, equality_now)
+    return next_dstate_solution
 
 
-    # Initialize layers:
-    next_dstate = cp.variable()
+######################################################
+# New simulation advance, using Splitting Cone Solver
+######################################################
+
+def SCS_step_vine(params: VineParams, cspace: torch.tensor, dstate: torch.tensor,
+                  dynamic_obj_positions: torch.tensor, n_bodies: int, 
+                  bend_params: torch.tensor, x0: float, y0: float, heading0: float, 
+                  bend_energy_func: callable):
+    
+    new_n_bodies, forces, cspace_sdf_jac, cspace_sdf_now, dynamic_sdf_jac, dynamic_sdf_now, \
+    joint_jac, joint_now, proximity_jac, proximity_now, \
+    growth_wrt_state, growth_wrt_dstate, growth_now = \
+    compute_jacobians_batched(params, cspace, dstate, dynamic_obj_positions, n_bodies,
+                              x0, y0, heading0, bend_params, bend_energy_func)
+    
+    next_dstate_solution = SCS_solve(params, dstate, forces, cspace_sdf_jac, cspace_sdf_now,
+                                     dynamic_sdf_jac, dynamic_sdf_now, joint_jac,
+                                     joint_now, proximity_jac, proximity_now,
+                                     growth_wrt_state, growth_wrt_dstate, growth_now)
+    
+    # Use found dstate to find new positions:
+
+    # Potential FIXME: why is detach() being used here in DiffVine?
+    # Look into how this approach is differentiable with cvxpylayer:
+    # what exactly are we training on?
+    new_cspace = cspace + next_dstate_solution[:, :params.max_bodies - 1, :].detach()
+    new_dynamic_obj_positions = dynamic_obj_positions + next_dstate_solution[:, params.max_bodies + 1:, :].detach()
+
+    return new_cspace, new_n_bodies, new_dynamic_obj_positions
 
 
 ######################################################
