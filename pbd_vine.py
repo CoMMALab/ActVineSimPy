@@ -681,7 +681,7 @@ def extend_cspace(params: VineParams, cspace: torch.tensor, dstate: torch.tensor
     cspace[last_i, y] = torch.where(extend_needed, new_seg_y, cspace[last_i, y])
     cspace[last_i, theta] = torch.where(extend_needed, new_seg_theta, cspace[last_i, theta])
 
-    # Initialize d_state
+    # Initialize corresponding d_state entry
     dstate[new_i, x] = 0
     dstate[new_i, y] = 0
     dstate[new_i, theta] = 0
@@ -1170,7 +1170,7 @@ def SCS_step_vine(params: VineParams, cspace: torch.tensor, dstate: torch.tensor
     new_cspace = cspace + next_dstate_solution[:, :params.max_bodies - 1, :].detach()
     new_dynamic_obj_positions = dynamic_obj_positions + next_dstate_solution[:, params.max_bodies + 1:, :].detach()
 
-    return new_cspace, new_n_bodies, new_dynamic_obj_positions
+    return new_cspace, new_n_bodies, new_dynamic_obj_positions, next_dstate_solution
 
 def SCS_step_vine_batched(params: VineParams, dstates, cspaces: torch.tensor, dynamic_positions: torch.tensor,
                           n_bodies_list: torch.tensor, bend_params: torch.tensor,
@@ -1180,10 +1180,11 @@ def SCS_step_vine_batched(params: VineParams, dstates, cspaces: torch.tensor, dy
     Batched SCS_step_vine
     '''
     
-    new_cspaces, new_n_bodies, new_dynamic_positions = torch.vmap(SCS_step_vine, in_axes=(None, 0, 0, 0, 0, 0, None, None, None, None)) \
-                                                    (params, cspaces, dstates, dynamic_positions, n_bodies_list, bend_params, 
-                                                     x0_list, y0_list, heading0_list, bend_energy_func)
-    return new_cspaces, new_n_bodies, new_dynamic_positions
+    new_cspaces, new_n_bodies, new_dynamic_positions, next_dstate_solution = \
+                                                torch.vmap(SCS_step_vine, in_axes=(None, 0, 0, 0, 0, 0, None, None, None, None)) \
+                                                (params, cspaces, dstates, dynamic_positions, n_bodies_list, bend_params, 
+                                                 x0_list, y0_list, heading0_list, bend_energy_func)
+    return new_cspaces, new_n_bodies, new_dynamic_positions, next_dstate_solution
 
 ######################################################
 # Main "advance" for one simulation step
