@@ -457,6 +457,7 @@ def rollout(sst_params, simparams, batch_size,
     Args:
         Left as an exercise for the reader.
     Returns:
+    
         cspace_record : shape (steps_to_iter, batch_size, max_bodies + 1, 3)
         bodies_record  : shape (steps_to_iter, batch_size)
         time_record    : shape (steps_to_iter, batch_size)

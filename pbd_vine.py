@@ -1149,7 +1149,7 @@ def SCS_solve(params: VineParams, dstate, forces,
 def SCS_step_vine(params: VineParams, cspace: torch.tensor, dstate: torch.tensor,
                   dynamic_obj_positions: torch.tensor, n_bodies: int, 
                   bend_params: torch.tensor, x0: float, y0: float, heading0: float, 
-                  bend_energy_func: callable):
+                  bend_energy_func: Callable):
     
     new_n_bodies, forces, cspace_sdf_jac, cspace_sdf_now, dynamic_sdf_jac, dynamic_sdf_now, \
     joint_jac, joint_now, proximity_jac, proximity_now, \
@@ -1172,6 +1172,18 @@ def SCS_step_vine(params: VineParams, cspace: torch.tensor, dstate: torch.tensor
 
     return new_cspace, new_n_bodies, new_dynamic_obj_positions
 
+def SCS_step_vine_batched(params: VineParams, dstates, cspaces: torch.tensor, dynamic_positions: torch.tensor,
+                          n_bodies_list: torch.tensor, bend_params: torch.tensor,
+                          x0_list: torch.tensor, y0_list: torch.tensor, heading0_list: torch.tensor,
+                          bend_energy_func: Callable):
+    '''
+    Batched SCS_step_vine
+    '''
+    
+    new_cspaces, new_n_bodies, new_dynamic_positions = torch.vmap(SCS_step_vine, in_axes=(None, 0, 0, 0, 0, 0, None, None, None, None)) \
+                                                    (params, cspaces, dstates, dynamic_positions, n_bodies_list, bend_params, 
+                                                     x0_list, y0_list, heading0_list, bend_energy_func)
+    return new_cspaces, new_n_bodies, new_dynamic_positions
 
 ######################################################
 # Main "advance" for one simulation step
