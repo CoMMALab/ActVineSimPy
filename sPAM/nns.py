@@ -198,6 +198,8 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256):
     os.makedirs(ckpt_path, exist_ok=True)
     
     # 1. Generate and scale data
+
+    #NOTE NOTE NOTE: HAD TO GO INTO THIS FUNCTION TO CHANGE
     inputs, outputs, is_sat = generate_data(params)
     
     # Save inputs and outputs as one pandas csv file
@@ -355,6 +357,10 @@ def get_prediction_function(state, scaling_info, model):
     
     def predict_fn(params, inputs_unscaled, model):
         # Scale inputs
+        print("")
+        print("TYPES:", type(scaling_info['in_min']), type(scaling_info['in_min']))
+        print("")
+
         in_min, in_rng = scaling_info['in_min'], scaling_info['in_range']
         scaled_inputs = (inputs_unscaled - in_min) / in_rng
         

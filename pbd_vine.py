@@ -343,7 +343,7 @@ def torch_cspace_to_positions(params: VineParams, cspace: torch.tensor,
 
     # Prepare the lengths of each segment
     full_lengths = torch.full((params.max_bodies,), params.body_length)
-    full_lengths = full_lengths.at[n_bodies-1].set(last_len)
+    full_lengths[n_bodies-1] = last_len
 
     # Now we do a cumulative sum of to get the tip coords of each segment
     tip_x = x0 + torch.cumsum(full_lengths * c_)
@@ -355,8 +355,8 @@ def torch_cspace_to_positions(params: VineParams, cspace: torch.tensor,
     center_y = tip_y - 0.5 * full_lengths * s_
     
     # Except, for the very last segment, the center position *is* the tip position
-    center_x = center_x.at[n_bodies-1].set(tip_x[n_bodies-1])
-    center_y = center_y.at[n_bodies-1].set(tip_y[n_bodies-1])
+    center_x[n_bodies-1] = tip_x[n_bodies-1]
+    center_y[n_bodies-1] = tip_y[n_bodies-1]
 
     # Now, use a mask to zero out the segments past n_bodies
     mask = torch.arange(params.max_bodies) < n_bodies
@@ -382,7 +382,7 @@ def torch_vine_collision_sdf(params: VineParams, body_xy: torch.tensor, n_bodies
         all_rects = params.obstacle_rects
 
         # dists = vmap(point_rect_sdf, in_axes=(None, None, 0))(px, py, params.obstacle_rects)
-        dists = torch.vmap(point_rect_sdf, in_axes=(None, None, 0))(px, py, all_rects)
+        dists = torch.vmap(point_rect_sdf, in_dims=(None, None, 0))(px, py, all_rects)
 
         min_dist = torch.min(dists)  # min over all rects
         # Then we subtract radius
@@ -740,7 +740,7 @@ def dynamic_obj_sdf_measure(params: VineParams, dynamic_obj_positions: torch.ten
         # Check one way: given obj -> other objs
         xs, ys = obj_to_corners(coords)
 
-        dists = torch.vmap(torch_point_rect_sdf, in_axes=(0, 0, 0))(xs, ys, all_rects)
+        dists = torch.vmap(torch_point_rect_sdf, in_dims=(0, 0, 0))(xs, ys, all_rects)
         dists = dists.flatten()
         dists = torch.where(dists > 0, 0, dists)
 
@@ -748,7 +748,7 @@ def dynamic_obj_sdf_measure(params: VineParams, dynamic_obj_positions: torch.ten
             return dists 
 
         # Check other way: other objs -> given obj
-        other_dists = torch.vmap(check_obj_collision, in_axes=(0, None, None))(all_rects, coords, True)
+        other_dists = torch.vmap(check_obj_collision, in_dims=(0, None, None))(all_rects, coords, True)
         other_dists = other_dists.flatten()
         other_dists = torch.where(other_dists > 0, 0, other_dists)
 
@@ -756,7 +756,7 @@ def dynamic_obj_sdf_measure(params: VineParams, dynamic_obj_positions: torch.ten
     
     all_rects = np.append(params.obstacle_rects, dynamic_obj_positions, axis=0)
 
-    dyn_obj_collision_measures = torch.vmap(check_obj_collision, in_axes=(0, None, None))(
+    dyn_obj_collision_measures = torch.vmap(check_obj_collision, in_dims=(0, None, None))(
         dynamic_obj_positions, all_rects, False
     )
 
@@ -838,11 +838,11 @@ def proximity_measure(params: VineParams,
         in respect to the given joint,
         return result shaped (len(dynamic_obj_positions),)
         '''
-        joint_depths = torch.vmap(get_overlap_measure, in_axes=(None, None, 0))(
+        joint_depths = torch.vmap(get_overlap_measure, in_dims=(None, None, 0))(
                             joint_center_coords, joint_radius, dynamic_obj_positions)
         return joint_depths
 
-    all_joint_depths = torch.vmap(overlap_over_all_objects, in_axes=(0, None, None))(
+    all_joint_depths = torch.vmap(overlap_over_all_objects, in_dims=(0, None, None))(
         joint_centers, joint_radius, dynamic_obj_positions
     )
 
@@ -905,7 +905,7 @@ def get_object_motion(params: VineParams, dstate: torch.tensor, weight: float):
         ])
 
     # Shape: (# dynamic objs, 3)
-    return torch.vmap(compute_KE, in_axes=(None, 0, 0))(weight, params.dynamic_objs_mass, dstate)
+    return torch.vmap(compute_KE, in_dims=(None, 0, 0))(weight, params.dynamic_objs_mass, dstate)
 
 
 def compute_jacobians(params: VineParams, 
@@ -1181,7 +1181,7 @@ def SCS_step_vine_batched(params: VineParams, dstates, cspaces: torch.tensor, dy
     '''
     
     new_cspaces, new_n_bodies, new_dynamic_positions, next_dstate_solution = \
-                                                torch.vmap(SCS_step_vine, in_axes=(None, 0, 0, 0, 0, 0, None, None, None, None)) \
+                                                torch.vmap(SCS_step_vine, in_dims=(None, 0, 0, 0, 0, 0, None, None, None, None)) \
                                                 (params, cspaces, dstates, dynamic_positions, n_bodies_list, bend_params, 
                                                  x0_list, y0_list, heading0_list, bend_energy_func)
     return new_cspaces, new_n_bodies, new_dynamic_positions, next_dstate_solution

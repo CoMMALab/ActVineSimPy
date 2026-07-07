@@ -105,7 +105,6 @@ def solve_inner(key, eps, l_0, params):
     radius is the radius we want the beam to bend by
     '''
     
-    
     # Solve for actuator saturation point 
     phi_sat = jnp.arccos(params.R_c / params.R_act_max)
     

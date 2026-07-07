@@ -21,22 +21,26 @@ from geometric.biarc_rrtstar import main as geometric_plan
 from kinodynamic.nearest import distance, nearest_neighbor, nearest_neighbor_all
 
 from sPAM.spam import paramstype, params as act_params
-from sPAM.nns import get_or_train_model, get_prediction_function
-from sPAM.nns_usage import solve as find_actuator_params, solve_fwd as actuator_params_fwd_
 
-trained_state, scaling_info, model = get_or_train_model(act_params)
-predict = get_prediction_function(trained_state, scaling_info, model)
+# from sPAM.nns import get_or_train_model, get_prediction_function
+from sPAM.torch_nns import get_or_train_model, get_prediction_function
+
+# from sPAM.nns_usage import solve as find_actuator_params, solve_fwd as actuator_params_fwd_
+from sPAM.nns_usage import torch_solve as find_actuator_params
+
+scaling_info, model = get_or_train_model(act_params)
+predict = get_prediction_function(scaling_info, model)
 
 # find_actuator_params = jax.vmap(find_actuator_params, in_axes=(None, None, 0))
-find_actuator_params = torch.vmap(find_actuator_params, in_axes=(None, None, 0))
+find_actuator_params = torch.vmap(find_actuator_params, in_dims=(None, None, 0))
 
 # find_actuator_params = jax.jit(find_actuator_params, static_argnames=('predict', 'params'))
 find_actuator_params = torch.compile(find_actuator_params)
 
 # actuator_params_fwd = jax.vmap(lambda a, b, c: actuator_params_fwd_(predict, act_params, a, b, c), 
-#                                in_axes=(0, 0, 0))
-actuator_params_fwd = torch.vmap(lambda a, b, c: actuator_params_fwd_(predict, act_params, a, b, c), 
-                               in_axes=(0, 0, 0))
+# #                                in_axes=(0, 0, 0))
+# actuator_params_fwd = torch.vmap(lambda a, b, c: actuator_params_fwd_(predict, act_params, a, b, c), 
+#                                in_dims=(0, 0, 0))
 
 # Jax prints like this
 # jax.debug.print("penalty_grad {}", penalty_grad)
@@ -153,7 +157,7 @@ def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray,
     
     # Step 1: compute global angles for each segment center
     # global_angle_full = heading0 + jnp.cumsum(angles, axis=1)   # shape (batch_size, n_bodies,)
-    global_angle_full = heading0 + torch.cumsum(angles, dim=1)
+    global_angle_full = heading0 + torch.cumsum(torch.tensor(angles), dim=1)
         
     # Step 2: compute the center of each segment
     #   For the i-th segment, the center is offset from the anchor by
@@ -174,7 +178,7 @@ def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray,
     # arange = jnp.arange(batch_size)
     arange = torch.arange(batch_size)
 
-    full_lengths = full_lengths.at[arange, n_bodies-1].set(last_len)
+    full_lengths[arange, n_bodies-1] = torch.tensor(last_len, dtype=torch.float32)
     
     
     # Now we do a cumulative sum of to get the tip coords of each segment
@@ -825,8 +829,10 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         # FIXME handle no-copy jax->np
         # NOTE: So the max turning radius is 1/3.33 = 0.3
         new_bend_angle = np.random.uniform(-3.33, 3.33, batch_size) # Shape (B,)
+        new_bend_angle = 1.0 / new_bend_angle
+
         # new_bend_angle = np.random.uniform(-125, 125, batch_size) # Shape (B,)
-        p, l0 = find_actuator_params(predict, act_params, 1.0 / new_bend_angle) 
+        p, l0 = find_actuator_params(predict, act_params, torch.tensor(new_bend_angle)) 
         
         assert np.all(np.isfinite(p)), f"p: {p}, l0: {l0}"
         

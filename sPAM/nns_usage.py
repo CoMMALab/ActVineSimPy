@@ -4,6 +4,8 @@ import jax.numpy as jnp
 import numpy as np
 import jax
 
+import torch
+
 def solve(predict, params: paramstype, radius):
     radius_sign = jnp.sign(radius)
     radius = jnp.abs(radius)
@@ -69,6 +71,65 @@ def solve(predict, params: paramstype, radius):
     # jax.debug.print("Actuator design eps {} \n l_0, p, \n {}", eps, jnp.column_stack((l_0, p_act)))
 
     return p_act[best_idx], radius_sign * l_0[best_idx] * 2.0 
+
+
+def torch_solve(predict, params: paramstype, radius):
+    '''
+    Torch-compatible for of solve()
+    '''
+    radius_sign = torch.sign(radius)
+    radius = torch.abs(radius)
+
+    # The ratio shortened
+    eps = (2 * params.R_beam + params.R_act_max) / (radius + params.R_beam)
+    
+    # The force of each actuator at the desired contraction eps
+    force = (torch.pi * params.P_beam * params.R_beam**3) / (2 * params.R_beam + params.R_act_max)
+            
+    l_0 = torch.tensor([0.020, 
+                     0.021,
+                     0.022,
+                    0.023,  
+                    0.024,
+                    0.025,
+                    0.026,
+                    0.027,
+                    0.028,
+                    0.029,
+                    0.030,
+                    0.031,
+                    0.032,
+                    0.033,
+                    0.034,
+                    0.035,
+                    0.036,
+                    0.037,
+                    0.038,
+                    0.039,
+                    0.040,  
+                    0.041,
+                    0.042,
+                     ]) 
+    
+    inputs = torch.stack((eps.repeat(len(l_0)), l_0), dim=-1)
+    ouputs = predict(inputs)
+    
+    # Inputs are (eps, l_0) --> (phi, m)
+    phi, m = ouputs[:, 0], ouputs[:, 1]
+    
+    # --- Solve for pressure ---
+    p_act = force / (torch.pi * params.R_c**2) * (2 * m * torch.cos(phi)**2) / (1 - 2 * m)
+        
+    # Valid is where pressure is positive and pressure is less than 28kPa
+    valid_mask = (p_act > 1e-3) & (p_act < 35e3) & (l_0 > params.min_l_0) & (l_0 < params.max_l_0)
+
+    # Pick the largest l_0 with err < 1e-3
+    best_idx = torch.argmax(torch.where(valid_mask, p_act, -9999))
+
+    return p_act[best_idx], radius_sign * l_0[best_idx] * 2.0 
+
+
+
 
 def solve_fwd(predict, params: paramstype, radius, p_act, l_0):
     l0_sign = jnp.sign(l_0) # The direction the actuator is meant to curl
