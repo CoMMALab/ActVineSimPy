@@ -1,6 +1,6 @@
 import jax
 import jax.numpy as jnp
-from sPAM.ellip import F, E
+from sPAM.torch_ellip import F, E
 import jaxopt
 from collections import namedtuple
 
@@ -26,7 +26,7 @@ def stack(*args):
     return torch.stack(args, dim=-1)
 
 def relu(x):
-    return torch.maximum(0, x)
+    return torch.maximum(torch.tensor(0), x)
 
 def objective_solve_for_phi_m(vals, eps, R, a, l):
     """
@@ -222,19 +222,19 @@ def solve(key, params: paramstype, radius, l0_candidates):
     return l0_candidates, p_act, err, is_sat, phi, m
 
 
-if __name__ == '__main__':
+# if __name__ == '__main__':
     
-    key = jax.random.PRNGKey(0)
+#     key = jax.random.PRNGKey(0)
     
-    l_0_candidates = jnp.linspace(0.05, 0.05, 1) # jnp.linspace(params.min_l_0, params.max_l_0, 100)
+#     l_0_candidates = jnp.linspace(0.05, 0.05, 1) # jnp.linspace(params.min_l_0, params.max_l_0, 100)
 
-    solve_jit = jax.jit(solve, static_argnames=('params'))
+#     solve_jit = jax.jit(solve, static_argnames=('params'))
     
-    l_0, p_act, err, is_sat, phi, m = solve_jit(key, params, radius=1.0, l0_candidates=l_0_candidates)
+#     l_0, p_act, err, is_sat, phi, m = solve_jit(key, params, radius=1.0, l0_candidates=l_0_candidates)
     
-    # Print all solutions in rows
-    for l, p, e, s in zip(l_0, p_act, err, is_sat):
-        print(f'l_0: {l:.4f}, P_act: {p:.4f}, Error: {e:.4f}, Saturated: {s}')
+#     # Print all solutions in rows
+#     for l, p, e, s in zip(l_0, p_act, err, is_sat):
+#         print(f'l_0: {l:.4f}, P_act: {p:.4f}, Error: {e:.4f}, Saturated: {s}')
 
 
 
@@ -284,7 +284,7 @@ def l_m_to_phi_eps(base_seed, l_0, m, params):
     """
 
     # 1. Compute phi_sat and m_crit
-    phi_sat = torch.arccos(params.R_c / params.R_act_max)
+    phi_sat = torch.arccos(torch.tensor(params.R_c / params.R_act_max))
 
     def objective_m_crit(m_val, phi_sat, l_0):
         return objective_solve_for_m_crit(m_val, phi_sat, l_0, params.R_c, params.a)
@@ -300,7 +300,7 @@ def l_m_to_phi_eps(base_seed, l_0, m, params):
     def torch_split(seed):
         g_master = torch.Generator().manual_seed(seed)
         seed1 = torch.randint(0, 2**31, (1,), generator=g_master).item()
-        seed2 = torch.randint(0, 2**31, (1,), geneator=g_master).item()
+        seed2 = torch.randint(0, 2**31, (1,), generator=g_master).item()
         
         g1 = torch.Generator().manual_seed(seed1)
         g2 = torch.Generator().manual_seed(seed2)
@@ -320,16 +320,26 @@ def l_m_to_phi_eps(base_seed, l_0, m, params):
         # eps_samples = jax.random.uniform(key_eps, (num_samples,), minval=1e-6, maxval=0.5)
 
         g_phi, g_eps = torch_split(base_seed)
-        phi_samples = torch.empty(num_samples).uniform(1e-3, phi_sat, geneator=g_phi)
-        eps_samples = torch.empty(num_samples).uniform(1e-6, 0.5, generator=g_eps)
+        phi_samples = torch.empty(num_samples).uniform_(1e-3, phi_sat, generator=g_phi)
+        eps_samples = torch.empty(num_samples).uniform_(1e-6, 0.5, generator=g_eps)
         
         def single_error(phi, eps):
             vals = stack(phi, eps)
             res = objective_solve_for_phi_eps(vals, l_0, m, params.R_c, params.a)
             return torch.sum(res[:2]**2)
 
-        errors = torch.vmap(single_error)(phi_samples, eps_samples)
-        best_idx = torch.nanargmin(errors)
+        # errors = torch.vmap(single_error)(phi_samples, eps_samples)
+        errors = []
+        for eps_entry, phi_entry in zip(eps_samples, phi_samples):
+            errors.append(single_error(eps_entry, phi_entry))
+        
+        errors = torch.stack(errors)
+        
+        # Doens't exist: best_idx = torch.nanargmin(errors)
+        mask = torch.isnan(errors)
+        errors_filled = errors.masked_fill(mask, float('inf'))
+        best_idx = torch.argmin(errors_filled)
+        
         guess = stack(phi_samples[best_idx], eps_samples[best_idx])
 
         # To replace:
@@ -339,11 +349,16 @@ def l_m_to_phi_eps(base_seed, l_0, m, params):
         residual_fn = functools.partial(
             objective_solve_for_phi_eps, l_0=l_0, m=m, R=params.R_c, a=params.a
         )
-        result = lsq_lma(guess, residual_fn, max_iter=100, tol=1e-4)
+        result = lsq_lma(guess, residual_fn, max_iter=100, gtol=1e-4, ptol=1e-4, ftol=1e-4)
         solution = result[-1]
 
         phi, eps = solution[0], solution[1]
-        return phi, eps, False, {'m_crit': m_crit, 'error': info.error}
+
+        #NOTE: added with torch edition, as info has disappeared and can't inform error field
+        final_residual = residual_fn(solution)
+        final_error = torch.sum(final_residual[:2] ** 2)
+
+        return phi, eps, False, {'m_crit': m_crit, 'error': final_error}
 
     def sat_branch(args):
         key, l_0, m = args
@@ -354,8 +369,8 @@ def l_m_to_phi_eps(base_seed, l_0, m, params):
         # l_a_samples = jax.random.uniform(key_la, (num_samples,), minval=1e-3, maxval=l_0)
 
         g_eps, g_la = torch_split(base_seed)
-        eps_samples = torch.empty(num_samples).uniform(1e-6, 0.5, generator=g_eps)                
-        l_a_samples = torch.empty(num_samples).uniform(1e-3, l_0, geneator=g_la)
+        eps_samples = torch.empty(num_samples).uniform_(1e-6, 0.5, generator=g_eps)                
+        l_a_samples = torch.empty(num_samples).uniform_(1e-3, l_0, generator=g_la)
 
 
         def single_error(eps, l_a):
@@ -363,31 +378,49 @@ def l_m_to_phi_eps(base_seed, l_0, m, params):
             res = objective_solve_for_eps_l_a(vals, l_0, m, phi_sat, params.R_c, params.a)
             return torch.sum(res[:2]**2)
         
-        errors = torch.vmap(single_error)(eps_samples, l_a_samples)
-        best_idx = torch.nanargmin(errors)
+        # errors = torch.vmap(single_error)(eps_samples, l_a_samples)
+
+        errors = []
+        for eps_entry, l_a_entry in zip(eps_samples, l_a_samples):
+            errors.append(single_error(eps_entry, l_a_entry))
+        
+        errors = torch.stack(errors)
+
+        # Doenst' exist: best_idx = torch.nanargmin(errors)
+
+        mask = torch.isnan(errors)
+        errors_filled = errors.masked_fill(mask, float('inf'))
+        best_idx = torch.argmin(errors_filled)
+
         guess = stack(eps_samples[best_idx], l_a_samples[best_idx])
 
         # opt = jaxopt.LevenbergMarquardt(objective_solve_for_eps_l_a, maxiter=100, tol=1e-4)
         # solution, info = opt.run(guess, l_0=l_0, m=m, phi_sat=phi_sat, R_c=params.R_c, a=params.a)
 
-        residual_fn = functools.partial(objective_solve_for_eps_l_a, max_iter=100, tol=1e-4,
-                                        l_0=l_0, m=m, R=params.R_c, a=params.a)
-        result = lsq_lma(guess, residual_fn, max_iter=100, tol=1e-4)
+        residual_fn = functools.partial(objective_solve_for_eps_l_a,
+                                        l_0=l_0, m=m, phi_sat = phi_sat, R_c=params.R_c, a=params.a)
+        result = lsq_lma(guess, residual_fn, max_iter=100, ftol=1e-4, ptol=1e-4, gtol=1e-4,)
         solution = result[-1]
         eps, l_a = solution[0], solution[1]
 
         # actual eps = l_a / l_0
         eps_actual = l_a / l_0 * eps
-        return phi_sat, eps_actual, True, {'m_crit': m_crit, 'error': info.error}
+
+        #NOTE: added with torch edition, as info has disappeared and can't inform error field
+        final_residual = residual_fn(solution)
+        final_error = torch.sum(final_residual[:2] ** 2)
+
+        return phi_sat, eps_actual, True, {'m_crit': m_crit, 'error': final_error}
 
     # phi, eps, is_sat, info = jax.lax.cond(m < m_crit,
     #                                       unsat_branch,
     #                                       sat_branch,
     #                                       (key, l_0, m))
     
+    key = "ignore" # no longer needed in torch version
     if m < m_crit:
-        phi, eps, is_sat, info = unsat_branch(key, l_0, m)
+        phi, eps, is_sat, info = unsat_branch(args = (key, l_0, m))
     else:
-        phi, eps, is_sat, info = sat_branch(key, l_0, m)
+        phi, eps, is_sat, info = sat_branch(args = (key, l_0, m))
     
     return phi, eps, is_sat, info

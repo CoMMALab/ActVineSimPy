@@ -18,7 +18,7 @@ import numpy as np
 # from flax.linen import initializers
 # import optax
 # import jaxopt
-from sPAM.ellip import F, E
+from sPAM.torch_ellip import F, E
 from sPAM.torch_spam import l_m_to_phi_eps, params
 import pandas as pd
 
@@ -30,8 +30,8 @@ from torch import optim
 # 1. Data Generation (from thesis_fig2.py)
 # --------------------------
 
-solve_inner_vmap = torch.vmap(l_m_to_phi_eps, in_dims=(None, 0, 0, None))    
-solve_inner_vmap = torch.compile(solve_inner_vmap)
+# solve_inner_vmap = torch.vmap(l_m_to_phi_eps, in_dims=(None, 0, 0, None))    
+# solve_inner_vmap = torch.compile(solve_inner_vmap)
 
 def generate_data(params):
     """Generates a dataset by solving for phi and m over a grid of eps and l_0 values."""
@@ -52,7 +52,25 @@ def generate_data(params):
     torch.manual_seed(base_seed)
 
     # Vectorize the solver over keys, eps, and l0.
-    phi, eps, is_sat, info = solve_inner_vmap(base_seed, l0_grid.ravel(), m_grid.ravel(), params)
+    
+    # phi, eps, is_sat, info = solve_inner_vmap(base_seed, l0_grid.ravel(), m_grid.ravel(), params)
+
+    l0_flat = l0_grid.ravel()
+    m_flat = m_grid.ravel()
+    phi_list, eps_list, is_sat_list, info_list = [], [], [], []
+
+    for l_0_i, m_i in zip(l0_flat, m_flat):
+        phi_i, eps_i, is_sat_i, info_i = l_m_to_phi_eps(base_seed, l_0_i, m_i, params)
+        phi_list.append(phi_i)
+        eps_list.append(eps_i)
+        is_sat_list.append(is_sat_i)
+        info_list.append(info_i)
+
+    phi = torch.stack(phi_list)
+    eps = torch.stack(eps_list)
+    is_sat = torch.stack(is_sat_list)
+    errors = torch.stack([info_i.error for info_i in info_list])
+
         
     # print('err min {}', torch.min(info['error']))
     # print('err 25th percentile {}', torch.quantile(info['error'], 25/100))
@@ -64,7 +82,9 @@ def generate_data(params):
     outputs_grid = torch.stack([phi, m_grid.ravel()], axis=1)
     
     # Filter by error < 3
-    valid_mask = info['error'] < 100
+    # valid_mask = info['error'] < 100
+
+    valid_mask = errors < 100
     inputs_grid = inputs_grid[valid_mask]
     outputs_grid = outputs_grid[valid_mask]
     is_sat = is_sat[valid_mask]
@@ -213,7 +233,13 @@ class Metrics:
 #     preds = state.apply_fn({'params': state.params}, x_batch)
 #     return state.metrics.update(preds, y_batch)
 
-def train_step(model, optimizer, metrics, x_batch, y_batch):
+def train_step(model, optimizer, metrics, x_batch, y_batch, device):
+    
+    x_batch = x_batch.to(device)
+    y_batch = y_batch.to(device)
+
+    model.train()
+    
     optimizer.zero_grad()
     preds = model(x_batch)
     loss = torch.mean((preds - y_batch) ** 2)
@@ -224,7 +250,12 @@ def train_step(model, optimizer, metrics, x_batch, y_batch):
     return metrics
 
 @torch.no_grad()
-def eval_step(model, metrics, x_batch, y_batch):
+def eval_step(model, metrics, x_batch, y_batch, device):
+    x_batch = x_batch.to(device)
+    y_batch = y_batch.to(device)
+    
+    model.eval()
+
     preds = model(x_batch)
     metrics.update(preds, y_batch)
     return metrics
@@ -239,14 +270,20 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256):
     - Checkpoint name is derived from `params`.
     - If no checkpoint, it generates data, trains, and saves plots/model.
     """
-    
+
     # Define checkpoint directory and name
     ckpt_dir = './sPAM'
     ckpt_name = f"model_a_{params.a}_Rc_{params.R_c}_R_act_max_{params.R_act_max}_l0_{params.min_l_0}-{params.max_l_0}"
     ckpt_path = os.path.join(ckpt_dir, ckpt_name)
     ckpt_path = os.path.abspath(ckpt_path)
-    
+
+    # Define model, optimizer, and device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print("USING THIS DEVICE:", device)
+
     model = MLP(num_outputs=2)
+    model = model.to(device)
+
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     
     # Try to load from checkpoint and only if scaling info exists
@@ -263,7 +300,7 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256):
 
         scaling_info = np.load(f'{ckpt_path}/scaling_info.npy', allow_pickle=True).item()
         print("Neural surrogate model loaded successfully.")
-        return state, scaling_info, model
+        return scaling_info, model, optimizer
 
     print(f"No checkpoint found {ckpt_path}. Starting new training run.")
     os.makedirs(ckpt_path, exist_ok=True)
@@ -334,7 +371,7 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256):
         train_metrics_agg = Metrics()
         perm = rng.permutation(train_count)
         for x_b, y_b in get_batches(x_train[perm], y_train[perm], batch_size):
-            train_step(model, optimizer, train_metrics_agg, x_b, y_b)
+            train_step(model, optimizer, train_metrics_agg, x_b, y_b, device)
         train_metrics = train_metrics_agg.compute()
 
         # Validation
@@ -345,7 +382,7 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256):
 
         model.eval()
         val_metrics_agg = Metrics()
-        for x_b, y_b in get_batches(x_test, y_test, batch_size):
+        for x_b, y_b in get_batches(x_test, y_test, batch_size, device):
             eval_step(model, val_metrics_agg, x_b, y_b)
         val_metrics = val_metrics_agg.compute()
         
@@ -360,7 +397,9 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256):
     # state_to_save = state.replace(metrics=Metrics.empty())
     # checkpoints.save_checkpoint(ckpt_dir=ckpt_path, target=state_to_save, step=epochs, overwrite=True)
     os.makedirs(ckpt_path, exist_ok=True)
-    torch.save(model.state_dict(), f'{ckpt_path}/checkpoint.pt')
+    torch.save({'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict()}, 
+                f'{ckpt_path}/checkpoint.pt')
     print(f"\nSaved final model checkpoint to {ckpt_path}")
 
     # 6. Save MSE plot
