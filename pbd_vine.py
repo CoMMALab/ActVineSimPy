@@ -330,7 +330,7 @@ def torch_cspace_to_positions(params: VineParams, cspace: torch.tensor,
     angles = cspace[:-1, -1]
 
     # Step 1: compute global angles for each segment center
-    global_angle_full = heading0 + torch.cumsum(angles)   # shape (n_bodies,)
+    global_angle_full = heading0 + torch.cumsum(angles, 0)   # shape (n_bodies,)
     
     # Step 2: compute the center of each segment
     #   For the i-th segment, the center is offset from the anchor by
@@ -644,9 +644,6 @@ def extend_cspace(params: VineParams, cspace: torch.tensor, dstate: torch.tensor
     last_i = n_bodies - 1
     penult_i = n_bodies - 2
 
-    #FIXME: attempt to address from DiffVine
-    cspace = torch.tensor(cspace)
-
     # Indices for each one in (n, 3) cspace
     x = 0
     y = 1
@@ -657,8 +654,17 @@ def extend_cspace(params: VineParams, cspace: torch.tensor, dstate: torch.tensor
     endingy = cspace[penult_i, y] + params.radius * torch.sin(cspace[penult_i, theta])   
 
     # Compute last body's distance
-    last_link_distance = ((cspace[last_i, x] - endingx)**2 + \
-                          (cspace[last_i, y] - endingy)**2).sqrt().squeeze(-1)
+
+    part_distance = ((cspace[last_i, x] - endingx)**2 + \
+                     (cspace[last_i, y] - endingy)**2).sqrt()
+    # print(part_distance)
+
+    if part_distance.dim() > 0:
+        # last_link_distance = ((cspace[last_i, x] - endingx)**2 + \
+        #                     (cspace[last_i, y] - endingy)**2).sqrt().squeeze(dim=-1)
+        last_link_distance = part_distance.squeeze(dim=-1)
+    else:
+        last_link_distance = part_distance
     
     # x2 to prevent 0-len segments
     extend_needed = last_link_distance > params.radius * 2
@@ -692,8 +698,8 @@ def extend_cspace(params: VineParams, cspace: torch.tensor, dstate: torch.tensor
     return cspace, n_bodies
 
 
-def cspace_sdf_measure(params: VineParams, 
-                   cspace: torch.tensor, 
+def cspace_sdf_measure(cspace: torch.tensor, 
+                   params: VineParams, 
                    n_bodies: int,
                    x0: float, y0:float, heading0: float):
     '''
@@ -707,7 +713,7 @@ def cspace_sdf_measure(params: VineParams,
     return sdfs_
 
 
-def dynamic_obj_sdf_measure(params: VineParams, dynamic_obj_positions: torch.tensor):
+def dynamic_obj_sdf_measure(dynamic_obj_positions: torch.tensor, params: VineParams):
     '''
     Measure of how much each dynamic obstacle intersects
     any other obstacle (whether dynamic or static)
@@ -764,10 +770,10 @@ def dynamic_obj_sdf_measure(params: VineParams, dynamic_obj_positions: torch.ten
     return dyn_obj_collision_measures
 
 
-def joint_measure(params: VineParams,
-                    c_space: torch.tensor,
-                    n_bodies: int,
-                    x0: float, y0: float):
+def joint_measure(c_space: torch.tensor,
+                  params: VineParams,
+                  n_bodies: int,
+                  x0: float, y0: float):
     '''
     Joints of the vine should be kept at fixed distance of each other
     '''
@@ -798,11 +804,11 @@ def joint_measure(params: VineParams,
     return constraints
 
 
-def proximity_measure(params: VineParams, 
-                         cspace: torch.tensor,
-                         dynamic_obj_positions: torch.tensor,
-                         n_bodies: int,
-                         x0: float, y0: float, heading0: float):
+def proximity_measure(cspace: torch.tensor,
+                      dynamic_obj_positions: torch.tensor,
+                      params: VineParams,
+                      n_bodies: int,
+                      x0: float, y0: float, heading0: float):
     '''
     The distance between any joint to any dynamic obj > 0 to prevent intersection
 
@@ -850,8 +856,8 @@ def proximity_measure(params: VineParams,
     return all_joint_depths
 
 
-def growth_measure(params: VineParams, cspace: torch.tensor,
-                   dstate: torch.tensor, n_bodies: int):
+def growth_measure(cspace: torch.tensor,
+                   dstate: torch.tensor, params: VineParams, n_bodies: int):
     '''
     Measure of how much the current growing segment is growing;
     Growth should be constrained such that the current segment should always be growing
@@ -918,36 +924,34 @@ def compute_jacobians(params: VineParams,
     '''
     Finds jacobians of the contraint equations used by the QP solver
     '''
-    #FIXME: convert c_space, dynamic_obj_positions to torch tensors elsewhere in code
     #NOTE: zero_out was not used in some parts, unlike DiffVine; might need to look into this
 
     cspace, n_bodies = extend_cspace(params, cspace, dstate, n_bodies)
 
-    cspace_sdf_jac = torch.func.jacrev(partial(cspace_sdf_measure,
-                                                    params=params,
-                                                    x0=x0, y0=y0, n_bodies=n_bodies, heading0=heading0),
-                                            )(c_space=cspace)
-    cspace_sdf_now = cspace_sdf_measure(params, cspace, n_bodies, x0, y0, heading0)
+    cspace_sdf_jac = torch.func.jacrev(partial(cspace_sdf_measure, params=params,
+                                                    x0=x0, y0=y0, n_bodies=n_bodies, heading0=heading0)
+                                            )(cspace)
+    cspace_sdf_now = cspace_sdf_measure(cspace, params, n_bodies, x0, y0, heading0)
 
-    dynamic_sdf_jac = torch.func.jacrev(partial(dynamic_obj_sdf_measure, params))(dynamic_obj_positions)
-    dynamic_sdf_now = dynamic_obj_sdf_measure(params, dynamic_obj_positions)
+    dynamic_sdf_jac = torch.func.jacrev(partial(dynamic_obj_sdf_measure, params=params))(dynamic_obj_positions)
+    dynamic_sdf_now = dynamic_obj_sdf_measure(dynamic_obj_positions, params)
 
     joint_jac = torch.func.jacrev(partial(joint_measure, params=params, n_bodies=n_bodies,
-                                          x0=x0, y0=y0))(cspace=cspace)
-    joint_now = joint_measure(params, cspace, n_bodies, x0, y0)
+                                          x0=x0, y0=y0))(cspace)
+    joint_now = joint_measure(cspace, params, n_bodies, x0, y0)
 
     proximity_jac = torch.func.jacrev(partial(proximity_measure, params=params,
                                               n_bodies=n_bodies, x0=x0, y0=y0, heading0=heading0))(
-                                                  cspace=cspace, dynamic_obj_positions=dynamic_obj_positions
+                                                  cspace, dynamic_obj_positions
                                               )
-    proximity_now = proximity_measure(params, cspace, dynamic_obj_positions, n_bodies,
+    proximity_now = proximity_measure(cspace, dynamic_obj_positions, params, n_bodies,
                                       x0, y0, heading0)
     
-    growth_wrt_state, growth_wrt_dstate = torch.func.jacrev(partial(growth_measure, params=params),
+    growth_wrt_state, growth_wrt_dstate = torch.func.jacrev(partial(growth_measure, params=params, n_bodies=n_bodies),
                                          argnums=(0, 1))(
-        cspace=cspace, dstate=dstate, n_bodies=n_bodies
+        cspace, dstate
     )
-    growth_now = growth_measure(params, cspace, dstate, n_bodies)
+    growth_now = growth_measure(cspace, dstate, params, n_bodies)
 
     # Find bend energy to minimize for the vine:
     bend_energy = get_bending_energy(params, cspace, bend_params, bend_energy_func)
@@ -977,7 +981,7 @@ def compute_jacobians(params: VineParams,
             joint_jac, joint_now, proximity_jac, proximity_now, \
             growth_wrt_state, growth_wrt_dstate, growth_now
 
-compute_jacobians_batched = torch.func.vmap(compute_jacobians, in_dims = (None, 0, 0, 0, 0, 0, 0, 0, None, None))
+# compute_jacobians_batched = torch.func.vmap(compute_jacobians, in_dims = (None, 0, 0, 0, None, 0, 0, 0, None, None))
 
 
 ######################################################
@@ -1154,7 +1158,7 @@ def SCS_step_vine(params: VineParams, cspace: torch.tensor, dstate: torch.tensor
     new_n_bodies, forces, cspace_sdf_jac, cspace_sdf_now, dynamic_sdf_jac, dynamic_sdf_now, \
     joint_jac, joint_now, proximity_jac, proximity_now, \
     growth_wrt_state, growth_wrt_dstate, growth_now = \
-    compute_jacobians_batched(params, cspace, dstate, dynamic_obj_positions, n_bodies,
+    compute_jacobians(params, cspace, dstate, dynamic_obj_positions, n_bodies,
                               x0, y0, heading0, bend_params, bend_energy_func)
     
     next_dstate_solution = SCS_solve(params, dstate, forces, cspace_sdf_jac, cspace_sdf_now,
@@ -1172,19 +1176,27 @@ def SCS_step_vine(params: VineParams, cspace: torch.tensor, dstate: torch.tensor
 
     return new_cspace, new_n_bodies, new_dynamic_obj_positions, next_dstate_solution
 
-def SCS_step_vine_batched(params: VineParams, dstates, cspaces: torch.tensor, dynamic_positions: torch.tensor,
+def SCS_step_vine_batched(params: VineParams, dstates: torch.tensor, cspaces: torch.tensor, dynamic_positions: torch.tensor,
                           n_bodies_list: torch.tensor, bend_params: torch.tensor,
                           x0_list: torch.tensor, y0_list: torch.tensor, heading0_list: torch.tensor,
                           bend_energy_func: Callable):
     '''
     Batched SCS_step_vine
     '''
+
+    # Convert to tensors first because state-tree uses numpy arrays:
+    cspaces = torch.tensor(cspaces)
+    dstates = torch.tensor(dstates)
+    dynamic_positions = torch.tensor(dynamic_positions)
+    n_bodies_list = torch.tensor(n_bodies_list)
+    bend_params = torch.tensor(bend_params)
     
     new_cspaces, new_n_bodies, new_dynamic_positions, next_dstate_solution = \
                                                 torch.vmap(SCS_step_vine, in_dims=(None, 0, 0, 0, 0, 0, None, None, None, None)) \
                                                 (params, cspaces, dstates, dynamic_positions, n_bodies_list, bend_params, 
                                                  x0_list, y0_list, heading0_list, bend_energy_func)
-    return new_cspaces, new_n_bodies, new_dynamic_positions, next_dstate_solution
+    return new_cspaces.numpy(), new_n_bodies.numpy(), \
+           new_dynamic_positions.numpy(), next_dstate_solution.numpy()
 
 ######################################################
 # Main "advance" for one simulation step
@@ -1244,194 +1256,5 @@ def step_vine_batched(params: VineParams,
     # out is ( (batch_cspaces), (batch_nb) )
     return new_cspaces, new_n_bodies, new_dynamic_positions
 
-jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
-jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0) 
-
-    
-# from pbd_render import *
-from render import _compute_vine_points, init_vis, draw_dead_state, draw_live_state, render
-
-
-if __name__ == "__main__":
-    # Buckling forcer
-    # obstacles = [
-    #     [40, -20, 70, 20],
-    #     [150, -20, 180, 80],
-    #     [10, 60, 450, 80],
-    #     [10, -60, 450, -40],
-    # ]
-
-    # Fig obs
-    obstacles = [
-        [-20, 20, 10, 80],
-        [40, -40, 70, 30],
-        [130, -20, 160, 80],
-        [220, -40, 250, 30],
-        
-        [10, 60, 450, 80],
-        [10, -60, 450, -40],
-    ]
-    
-    
-    # obstacles = [
-    #     # Left wall
-    #     [-20, 20, 10, 80],
-        
-    #     # First obstacle (from bottom to middle)
-    #     [80, -40, 110, 20],   
-        
-    #     # Second obstacle (from top to middle)
-    #     [190, 0, 220, 80],
-        
-    #     # Third obstacle (from bottom to middle)
-    #     [300, -40, 330, 20],
-        
-    #     # Fourth obstacle (from top to middle)
-    #     [410, 0, 440, 80],
-        
-    #     # Fifth obstacle (from bottom to middle)
-    #     [520, -40, 550, 20],
-        
-    #     # Sixth obstacle (from top to middle)
-    #     [630, 0, 660, 80],
-        
-    #     # Boundaries
-    #     [0, -60, 700, -40],   # Bottom boundary
-    #     [0, 80, 700, 100],    # Top boundary
-    # ]
-    
-    
-    # obstacles = [[50, 20, 90, 60], 
-    #              [150, 20, 190, 50], 
-    #              [300, 20, 340, 60], 
-    #              [520, 20, 560, 70],
-                 
-    #              [0, -60, 800, -40],
-    #              [0, 80, 800, 100],
-    #              ]
-    
-    obstacles = jnp.array(obstacles)
-
-    # Fast params
-    # params = VineParams(
-    #     max_bodies=80,
-    #     body_length=12.0,
-    #     radius=8.0,
-    #     dt=1/10,
-    #     grow_rate=30.0,
-    #     grow_force=30.0,
-    #     stiffness=20.0,
-    #     damping=50.0,
-    #     substeps=10, 
-    #     alpha=1e-2,
-    #     obstacle_rects=obstacles
-    # )
-    
-    params = VineParams(
-        max_bodies=250,
-        body_length=12.0,
-        radius=8.0,
-        dt=1/10,
-        grow_rate=20.0,
-        grow_force=5.0,
-        stiffness=12.0,
-        damping=50.0,
-        # Curiously, decreasing substeps helps prevent penetration bugs. But it doesn't fix the root problem
-        substeps=15, # FIXME THIS NUMBER CAN BE MUCH SMALLER IF WE DO LANGRANGE PROPERRLY
-        alpha=1e-2,
-        obstacle_rects=obstacles,
-    )
-
-
-    batch_size = 1
-    n_bodies_list = jnp.full((batch_size,), 1, dtype=jnp.int32)
-
-    x0_list = 0
-    y0_list = -30
-    heading0_list = 0.4
-    target_angles = jnp.full((batch_size, params.max_bodies,), -0.0)
-    
-    cspaces = jnp.zeros((batch_size, params.max_bodies+1))
-    cspaces = cspaces.at[:, 0].set(0.0)
-    cspaces = cspaces.at[:, params.max_bodies].set(params.body_length)
-    
-    
-    # Jit performance is ever so slightly faster than jit + compile
-    forward = jax.jit(step_vine_batched, static_argnames=['params'])
-
-    # step_vines_batched = step_vines_batched.lower(params, 
-    #                          cspaces,
-    #                          n_bodies_list,
-    #                          x0_list, y0_list, heading0_list
-    #                          ).compile()
-
-    # init_vis()
-    init_vis(figsize=(12,8), obstacles=obstacles)
-    
-    # time.sleep(8)
-    
-    times_list = []
-    
-    # with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
-    for step_i in range(870):
-        print('step', step_i)
-        
-        # Step the vines
-        start = time.time()
-        
-        if step_i == 1200:
-            params.stiffness = 40.0 # 50
-            params.grow_rate = 0.0
-            params.grow_force = 0.0
-            params.hash = 2
-            print('updated')
-            # Recreate the jitted function after parameter updates
-            forward = jax.jit(step_vine_batched, static_argnames=['params'])
-        
-        cspaces, n_bodies_list = \
-                forward(
-                    params,
-                    cspaces, 
-                    n_bodies_list, 
-                    target_angles,
-                    x0_list, 
-                    y0_list, 
-                    heading0_list)
-        
-        cspaces.block_until_ready()
-        end = time.time()
-        times_list.append(end - start)
-        
-        # Render
-        if step_i % 150 == 0:
-            # draw_vine_batched(params, cspaces, n_bodies_list, 
-            #             x0_list, y0_list, heading0_list, 
-            #             color='blue')
-        
-            # plt.title(f"Step {step_i}")
-            # plt.pause(0.01)
-            
-            draw_live_state(params, cspaces, n_bodies_list, x0_list, y0_list, heading0_list)
-            render()
-            
-            time.sleep(0.1)
-            
-        # Save the state
-        antitip_x, antitip_y, tip_x, tip_y, center_x, center_y, n_bodies = _compute_vine_points(params, cspaces, n_bodies_list, x0_list, y0_list, heading0_list)
-        center_x = center_x[0, :n_bodies[0]]
-        center_y = center_y[0, :n_bodies[0]]
-        
-        np.save('vine_center_x.npy', center_x)
-        np.save('vine_center_y.npy', center_y)
-        
-        # If any n_bodies >= max_bodies, we stop
-        if jnp.any(n_bodies_list >= params.max_bodies):
-            print("Reached max number of bodies - stopping.")
-            break
-        
-    # Remove first 5 times
-    times_list = times_list[5:]
-    print("Average time per step:", sum(times_list) / len(times_list))
-    print('Total steps:', len(times_list))
-    print('Steps per body:', len(times_list) / params.max_bodies)
-    # plt.show()
+# jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+# jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0) 

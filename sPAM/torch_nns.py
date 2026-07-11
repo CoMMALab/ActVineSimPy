@@ -530,42 +530,17 @@ def get_prediction_function(scaling_info, model):
         # Predict
         # preds_scaled = model.apply({'params': params}, scaled_inputs)
         
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         model.eval()
+
         with torch.no_grad():
+            scaled_inputs = scaled_inputs.to(torch.float32)      
+            scaled_inputs = scaled_inputs.to(device)      
             preds_scaled = model(scaled_inputs)
+
+            preds_scaled = preds_scaled.cpu()
 
         # Unscale outputs
         return unscale_outputs(preds_scaled, scaling_info)
 
     return lambda inputs: predict_fn(model.parameters(), inputs, model)
-
-
-# if __name__ == '__main__':
-#     # Configure JAX
-#     # jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
-#     jax.config.update("jax_enable_x64", False)
-    
-#     # This function will either load the checkpoint or run the full training process
-#     trained_state, scaling_info, model = get_or_train_model(params)
-
-#     # --- Example Usage ---
-#     print("\n--- Running Example Prediction ---")
-    
-#     # Get a callable prediction function
-#     predict = get_prediction_function(trained_state, scaling_info, model)
-    
-#     # Create some sample inputs (eps, l_0)
-#     # Ensure they are within the training range for best results
-#     sample_inputs = np.array([
-#         [0.1, 0.05],  # eps, l_0
-#         [0.2, 0.08],
-#         [0.3, 0.03],
-#     ])
-    
-#     # Get predictions
-#     predictions = predict(sample_inputs)
-    
-#     print("Sample Inputs (eps, l_0):")
-#     print(sample_inputs)
-#     print("\nPredicted Outputs (phi, m):")
-#     print(predictions)

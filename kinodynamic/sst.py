@@ -26,7 +26,7 @@ from sPAM.spam import paramstype, params as act_params
 from sPAM.torch_nns import get_or_train_model, get_prediction_function
 
 # from sPAM.nns_usage import solve as find_actuator_params, solve_fwd as actuator_params_fwd_
-from sPAM.nns_usage import torch_solve as find_actuator_params
+from sPAM.nns_usage import torch_solve as find_actuator_params, solve_fwd as actuator_params_fwd_
 
 scaling_info, model = get_or_train_model(act_params)
 predict = get_prediction_function(scaling_info, model)
@@ -35,19 +35,17 @@ predict = get_prediction_function(scaling_info, model)
 find_actuator_params = torch.vmap(find_actuator_params, in_dims=(None, None, 0))
 
 # find_actuator_params = jax.jit(find_actuator_params, static_argnames=('predict', 'params'))
-find_actuator_params = torch.compile(find_actuator_params)
+
+#FIXME: figure out why compile doesn't work, because you're missing out on optimizations
+# find_actuator_params = torch.compile(find_actuator_params)
 
 # actuator_params_fwd = jax.vmap(lambda a, b, c: actuator_params_fwd_(predict, act_params, a, b, c), 
 # #                                in_axes=(0, 0, 0))
-# actuator_params_fwd = torch.vmap(lambda a, b, c: actuator_params_fwd_(predict, act_params, a, b, c), 
-#                                in_dims=(0, 0, 0))
+actuator_params_fwd = torch.vmap(lambda a, b, c: actuator_params_fwd_(predict, act_params, a, b, c), 
+                               in_dims=(0, 0, 0))
 
-# Jax prints like this
-# jax.debug.print("penalty_grad {}", penalty_grad)
 
 tiebreak_factor = 0.0001 # FIXME put this somewhere better
-
-
 
 bending_controls_size = 2
 
@@ -486,7 +484,8 @@ class StatesStruct:
         return np.arange(to_add_slice.start, to_add_slice.stop, dtype=np.int32)
 
 # forward = jax.jit(step_vine_batched, static_argnames=['params', 'x0_list', 'y0_list', 'heading0_list', 'bend_energy_func']) 
-forward = torch.compile(SCS_step_vine_batched)
+# forward = torch.compile(SCS_step_vine_batched)
+forward = SCS_step_vine_batched
 
 def rollout(sst_params, simparams, batch_size, 
             time_to_evolve,
@@ -533,7 +532,7 @@ def rollout(sst_params, simparams, batch_size,
     for i in range(steps_to_iter):
         
         next_cspace, next_bodies, next_dynamic_positions, next_dstate_solution = forward(
-            simparams, cspace, dynamic_obj_positions, bodies, bending_control,
+            simparams, dstate, cspace, dynamic_obj_positions, bodies, bending_control,
             init_x, init_y, init_heading, actuator_params_fwd
         )
 
@@ -834,6 +833,9 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         # new_bend_angle = np.random.uniform(-125, 125, batch_size) # Shape (B,)
         p, l0 = find_actuator_params(predict, act_params, torch.tensor(new_bend_angle)) 
         
+        p = p.numpy()
+        l0 = l0.numpy()
+
         assert np.all(np.isfinite(p)), f"p: {p}, l0: {l0}"
         
         current_bending_controls = tree._bending_controls[propagate_origin_idx]
