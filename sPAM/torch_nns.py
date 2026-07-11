@@ -25,6 +25,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from torch import optim
+import csv
 
 # --------------------------
 # 1. Data Generation (from thesis_fig2.py)
@@ -103,18 +104,18 @@ def create_dataset_and_scale(inputs, outputs):
     # Scale inputs (eps, l0)
     in_min = inputs.min(axis=0)
     in_max = inputs.max(axis=0)
-    in_range = in_max - in_min
-    scaled_inputs = (inputs - in_min) / in_range
+    in_range = in_max[0] - in_min[0]
+    scaled_inputs = (inputs - in_min[0]) / in_range
     
     # Scale outputs (phi, m)
     out_min = outputs.min(axis=0)
     out_max = outputs.max(axis=0)
-    out_range = out_max - out_min
-    scaled_outputs = (outputs - out_min) / out_range
+    out_range = out_max[0] - out_min[0]
+    scaled_outputs = (outputs - out_min[0]) / out_range
     
     scaling_info = {
-        'in_min': in_min, 'in_range': in_range,
-        'out_min': out_min, 'out_range': out_range,
+        'in_min': in_min[0], 'in_range': in_range,
+        'out_min': out_min[0], 'out_range': out_range,
     }
     
     return scaled_inputs, scaled_outputs, scaling_info
@@ -287,7 +288,9 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256):
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     
     # Try to load from checkpoint and only if scaling info exists
-    if os.path.exists(ckpt_path) and os.path.exists(f'{ckpt_path}/scaling_info.npy'):
+    if os.path.exists(ckpt_path) and os.path.exists(f'{ckpt_path}/scaling_info.npy') \
+        and os.path.exists(f'{ckpt_path}/checkpoint.pt'):
+    
         print(f"Loading trained model from {ckpt_path}...")
         # Create a dummy state to restore into
         # key = jax.random.PRNGKey(0)
@@ -300,35 +303,63 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256):
 
         scaling_info = np.load(f'{ckpt_path}/scaling_info.npy', allow_pickle=True).item()
         print("Neural surrogate model loaded successfully.")
-        return scaling_info, model, optimizer
+        return scaling_info, model
 
     print(f"No checkpoint found {ckpt_path}. Starting new training run.")
     os.makedirs(ckpt_path, exist_ok=True)
     
+    # NOTE: don't do this, it's way too slow
     # 1. Generate and scale data
-    inputs, outputs, is_sat = generate_data(params)
+    # inputs, outputs, is_sat = generate_data(params) <= IGNORE THIS LINE
     
-    # Save inputs and outputs as one pandas csv file
-    data_dict = {
-        'm': outputs[:, 1],
-        'l0': inputs[:, 1],
-        'phi': outputs[:, 0],
-        'eps': inputs[:, 0],
-        'is_sat': is_sat,
-    }
-    df = pd.DataFrame(data_dict)
-    df.to_csv(f'{ckpt_path}/data.csv', index=False)
-    print(f'Saved generated data to {ckpt_path}/data.csv')
+    # # Save inputs and outputs as one pandas csv file
+    # data_dict = {
+    #     'm': outputs[:, 1],
+    #     'l0': inputs[:, 1],
+    #     'phi': outputs[:, 0],
+    #     'eps': inputs[:, 0],
+    #     'is_sat': is_sat,
+    # }
+    # df = pd.DataFrame(data_dict)
+    # df.to_csv(f'{ckpt_path}/data.csv', index=False)
+    # print(f'Saved generated data to {ckpt_path}/data.csv')
     
+
+    # 1. Load in saved data used for training
+    csv_path = f'{ckpt_path}/data.csv'
+
+    ms, phis, eps, l0s = [], [], [], []
+    with open(csv_path, encoding='utf-8-sig') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for record in reader:
+            ms.append(float(record['m']))
+            phis.append(float(record['phi']))
+            eps.append(float(record['eps']))
+            l0s.append(float(record['l0']))
+    
+    ms = torch.tensor(ms)
+    phis = torch.tensor(phis)
+    eps = torch.tensor(eps)
+    l0s = torch.tensor(l0s)
+
+    inputs = torch.stack((eps, l0s))
+    inputs = inputs.T
+
+    outputs = torch.stack((phis, ms))
+    outputs = outputs.T
+
+    print(inputs.shape, outputs.shape)
+
     # Filter out failed solver runs (NaNs)
     valid_mask = ~torch.isnan(outputs).any(dim=1)
-    print(f"Generated {len(inputs)} total samples, {torch.sum(valid_mask)} are valid.")
+
+    print("Successfully loaded data...")
+    # print(f"Generated {len(inputs)} total samples, {torch.sum(valid_mask)} are valid.")
     
     inputs = inputs[valid_mask]
     outputs = outputs[valid_mask]
     
     x_scaled, y_scaled, scaling_info = create_dataset_and_scale(inputs, outputs)
-    
     
     np.save(f'{ckpt_path}/scaling_info.npy', scaling_info)
     
@@ -371,6 +402,8 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256):
         train_metrics_agg = Metrics()
         perm = rng.permutation(train_count)
         for x_b, y_b in get_batches(x_train[perm], y_train[perm], batch_size):
+            # print(x_b.shape, y_b.shape)
+
             train_step(model, optimizer, train_metrics_agg, x_b, y_b, device)
         train_metrics = train_metrics_agg.compute()
 
@@ -382,8 +415,8 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256):
 
         model.eval()
         val_metrics_agg = Metrics()
-        for x_b, y_b in get_batches(x_test, y_test, batch_size, device):
-            eval_step(model, val_metrics_agg, x_b, y_b)
+        for x_b, y_b in get_batches(x_test, y_test, batch_size):
+            eval_step(model, val_metrics_agg, x_b, y_b, device)
         val_metrics = val_metrics_agg.compute()
         
         print(f"Epoch {epoch+1}/{epochs} | Train MSE: {train_metrics['mse']:.6f} | Val MSE: {val_metrics['mse']:.6f} | Time: {time.time() - epoch_start:.2f}s")
@@ -441,9 +474,13 @@ def plot_pca_comparison(model, x_test_scaled, y_test_scaled, scaling_info, save_
     # Get predicted outputs
 
     # pred_scaled_samp = state.apply_fn({'params': state.params}, x_samp)
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.eval()
-    with torch.no_grad():
+    with torch.no_grad():        
         x_samp_tensor = torch.as_tensor(x_samp, dtype=torch.float32)
+        x_samp_tensor = x_samp_tensor.to(device)
+
         pred_scaled_samp = model(x_samp_tensor).numpy()
 
     # Unscale for comparison
@@ -486,16 +523,17 @@ def get_prediction_function(scaling_info, model):
     
     def predict_fn(params, inputs_unscaled, model):
         # Scale inputs
-        print("")
-        print("TYPES:", type(scaling_info['in_min']), type(scaling_info['in_min']))
-        print("")
 
         in_min, in_rng = scaling_info['in_min'], scaling_info['in_range']
         scaled_inputs = (inputs_unscaled - in_min) / in_rng
         
         # Predict
-        preds_scaled = model.apply({'params': params}, scaled_inputs)
+        # preds_scaled = model.apply({'params': params}, scaled_inputs)
         
+        model.eval()
+        with torch.no_grad():
+            preds_scaled = model(scaled_inputs)
+
         # Unscale outputs
         return unscale_outputs(preds_scaled, scaling_info)
 
