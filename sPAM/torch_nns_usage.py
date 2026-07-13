@@ -129,8 +129,6 @@ def torch_solve(predict, params: paramstype, radius):
     return p_act[best_idx], radius_sign * l_0[best_idx] * 2.0 
 
 
-
-
 def solve_fwd(predict, params: paramstype, radius, p_act, l_0):
     l0_sign = torch.sign(l_0) # The direction the actuator is meant to curl
     l_0 = torch.abs(l_0)
@@ -145,7 +143,7 @@ def solve_fwd(predict, params: paramstype, radius, p_act, l_0):
     # The force of the vine
     force_vine = (torch.pi * params.P_beam * params.R_beam**3) / (2 * params.R_beam + params.R_act_max)
             
-    inputs = torch.tensor([eps, l_0])
+    inputs = torch.stack([eps, l_0])
     ouputs = predict(inputs)
     
     # Inputs are (eps, l_0) --> (phi, m)

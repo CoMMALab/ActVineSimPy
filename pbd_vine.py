@@ -283,6 +283,24 @@ def vine_collision_sdf(params: VineParams, body_xy: jnp.ndarray, n_bodies: int):
 # Torch Variants (used in QP solver)
 ######################################################
 
+def torch_get_from_1D(tensor: torch.tensor, index):
+    '''
+    Retrieves value from 1D tensor without upsetting jacrev or vmap:
+    '''
+    idx = torch.arange(tensor.shape[0])
+    mask = (idx == index)
+    return torch.where(mask, tensor, torch.zeros_like(tensor)).sum()
+
+def torch_set_in_1D(tensor: torch.tensor, index, value):
+    '''
+    The same as the following: tensor[index] = value, but does so without upsetting jacrev/vmap
+    '''
+
+    idx = torch.arange(tensor.shape[0])
+    mask = (idx == index)
+    return torch.where(mask, value, tensor)
+
+
 def torch_point_rect_sdf(px, py, rect):
     """
     Signed distance from a point (px,py) to axis-aligned rectangle [rx1,ry1, rx2,ry2].
@@ -295,7 +313,9 @@ def torch_point_rect_sdf(px, py, rect):
     If px in [rx1,rx2], dx=0. If py in [ry1,ry2], dy=0. 
     Then sign is negative if px is strictly inside in both x,y.
     """
+
     rx1, ry1, rx2, ry2 = rect
+
     dx = torch.where(px < rx1, rx1 - px, 0.0)
     dx = torch.where(px > rx2, px - rx2, dx)
     dy = torch.where(py < ry1, ry1 - py, 0.0)
@@ -305,7 +325,7 @@ def torch_point_rect_sdf(px, py, rect):
     inside = torch.logical_and( (px>=rx1)&(px<=rx2), (py>=ry1)&(py<=ry2))
     # If inside => negative distance, we approximate how negative by min distance to an edge
     # The distance to an edge is min( (px - rx1), (rx2 - px), (py - ry1), (ry2 - py) ), but we can do it carefully
-    if_inside_dist = torch.min(torch.tensor([px-rx1, rx2-px, py-ry1, ry2-py]))
+    if_inside_dist = torch.min(torch.stack([px-rx1, rx2-px, py-ry1, ry2-py]))
     dist_signed = torch.where(inside, -if_inside_dist, dist_out)
     return dist_signed
 
@@ -323,9 +343,6 @@ def torch_cspace_to_positions(params: VineParams, cspace: torch.tensor,
               plus potentially a final partial segment if n_bodies < max_bodies
     """
 
-    # angles = cspace[:-1]        # shape (n_bodies,)
-    # last_len = cspace[params.max_bodies] 
-
     last_len = cspace[params.max_bodies, -1]
     angles = cspace[:-1, -1]
 
@@ -342,12 +359,14 @@ def torch_cspace_to_positions(params: VineParams, cspace: torch.tensor,
     s_ = torch.sin(global_angle_full)
 
     # Prepare the lengths of each segment
-    full_lengths = torch.full((params.max_bodies,), params.body_length)
-    full_lengths[n_bodies-1] = last_len
+    part_full_lengths = torch.full((params.max_bodies,), params.body_length)
+    # full_lengths[n_bodies-1] = last_len
+    idx = torch.arange(params.max_bodies)
+    full_lengths = torch.where(idx == (n_bodies - 1), last_len, params.body_length)
 
     # Now we do a cumulative sum of to get the tip coords of each segment
-    tip_x = x0 + torch.cumsum(full_lengths * c_)
-    tip_y = y0 + torch.cumsum(full_lengths * s_)
+    tip_x = x0 + torch.cumsum(full_lengths * c_, 0)
+    tip_y = y0 + torch.cumsum(full_lengths * s_, 0)
         
     # Now we'll compute the center of each segment, by
     # subtracting 0.5*full_lengths from the tip coords
@@ -355,8 +374,18 @@ def torch_cspace_to_positions(params: VineParams, cspace: torch.tensor,
     center_y = tip_y - 0.5 * full_lengths * s_
     
     # Except, for the very last segment, the center position *is* the tip position
-    center_x[n_bodies-1] = tip_x[n_bodies-1]
-    center_y[n_bodies-1] = tip_y[n_bodies-1]
+    # center_x[n_bodies-1] = tip_x[n_bodies-1]
+    # center_y[n_bodies-1] = tip_y[n_bodies-1]
+    #NOTE: everything below is just above, avoiding in-place assignment/retrieval
+
+    idx2 = torch.arange(center_x.shape[0])
+    mask = (idx2 == (n_bodies - 1))
+
+    tip_x_val = torch_get_from_1D(tip_x, n_bodies-1)
+    tip_y_val = torch_get_from_1D(tip_y, n_bodies-1)
+
+    center_x =  torch.where(mask, tip_x_val, center_x)
+    center_y = torch.where(mask, tip_y_val, center_y)
 
     # Now, use a mask to zero out the segments past n_bodies
     mask = torch.arange(params.max_bodies) < n_bodies
@@ -382,7 +411,7 @@ def torch_vine_collision_sdf(params: VineParams, body_xy: torch.tensor, n_bodies
         all_rects = params.obstacle_rects
 
         # dists = vmap(point_rect_sdf, in_axes=(None, None, 0))(px, py, params.obstacle_rects)
-        dists = torch.vmap(point_rect_sdf, in_dims=(None, None, 0))(px, py, all_rects)
+        dists = torch.vmap(torch_point_rect_sdf, in_dims=(None, None, 0))(px, py, torch.tensor(all_rects))
 
         min_dist = torch.min(dists)  # min over all rects
         # Then we subtract radius
@@ -632,7 +661,12 @@ def multiply_vine(params: VineParams, cspace: jnp.ndarray, n_bodies: int):
 
 ######################################################
 # Splitting Cone Solver: constraints and minimization measures 
+# NOTE: most of the acutal params of really torch tensors (particularly non-static values);
+#       use the given types to infer tensor shape
 ######################################################
+
+
+
 
 def extend_cspace(params: VineParams, cspace: torch.tensor, dstate: torch.tensor, n_bodies:int):
     '''
@@ -721,17 +755,20 @@ def dynamic_obj_sdf_measure(dynamic_obj_positions: torch.tensor, params: VinePar
     #NOTE: assumes dynamic AND static objects to be rectangular
     '''
     
-    def obj_to_corners(coords: tuple[4]):
+    def obj_to_corners(coords: torch.tensor # shape: (4,), just like how stored in env file 
+                       ):
         '''
         Returns x,y's of given object's corners (matching indices => same corner across both arrays)
         '''
-        obj_corners = ((coords[0], coords[0]), # top left
-                       (coords[1], coords[1]), # bottom right
-                       (coords[0], coords[1]), # bottom left
-                       (coords[1], coords[0])  # top right
-                       )
-        xs = obj_corners[:, 0]
-        ys = obj_corners[:, 1]
+
+        left = torch_get_from_1D(coords, 0)
+        top = torch_get_from_1D(coords, 1)
+        right = torch_get_from_1D(coords, 2)
+        bottom = torch_get_from_1D(coords, 3)
+
+        xs = torch.stack([left, left, right, right])
+        ys = torch.stack([top, bottom, top, bottom])
+
         return xs, ys
 
     def check_obj_collision(coords: tuple[4], all_rects, is_recursive_call:bool = False):
@@ -743,10 +780,20 @@ def dynamic_obj_sdf_measure(dynamic_obj_positions: torch.tensor, params: VinePar
         Returns (4 * all_rects,) array, containing negative values where collisions were detected
         '''            
 
+        def check_one_corner(x, y, all_rects):
+            return torch.vmap(torch_point_rect_sdf, in_dims=(None, None, 0))(x, y, all_rects)
+
         # Check one way: given obj -> other objs
         xs, ys = obj_to_corners(coords)
 
-        dists = torch.vmap(torch_point_rect_sdf, in_dims=(0, 0, 0))(xs, ys, all_rects)
+        # for when doing "other objs -> current obj" (then all_rects is just coords of current obj)
+        if all_rects.dim() == 1:
+            dists = torch.vmap(torch_point_rect_sdf, in_dims=(0, 0, None))(xs, ys, all_rects)
+
+        # otherwise, all_rects really is a list of objs
+        else:
+            dists = torch.vmap(check_one_corner, in_dims=(0, 0, None))(xs, ys, all_rects)
+        
         dists = dists.flatten()
         dists = torch.where(dists > 0, 0, dists)
 
@@ -760,7 +807,7 @@ def dynamic_obj_sdf_measure(dynamic_obj_positions: torch.tensor, params: VinePar
 
         return torch.sum(dists) + torch.sum(other_dists)
     
-    all_rects = np.append(params.obstacle_rects, dynamic_obj_positions, axis=0)
+    all_rects = torch.cat([torch.tensor(params.obstacle_rects), dynamic_obj_positions], axis=0)
 
     dyn_obj_collision_measures = torch.vmap(check_obj_collision, in_dims=(0, None, None))(
         dynamic_obj_positions, all_rects, False
@@ -778,28 +825,78 @@ def joint_measure(c_space: torch.tensor,
     Joints of the vine should be kept at fixed distance of each other
     '''
 
-    constraints = torch.zeros(n_bodies * 2)
-    xs = c_space[:n_bodies, 0]
-    ys = c_space[:n_bodies, 1]
-    thetas = c_space[:n_bodies, 2]
+
+    # constraints = torch.zeros(n_bodies * 2)
+    constraints = torch.zeros(params.max_bodies * 2)
     
-    constraints[0] = (xs[0] - x0) - params.radius * torch.cos(thetas[0])
-    constraints[1] = (ys[0] - y0) - params.radius * torch.sin(thetas[0])
+    # xs = c_space[:n_bodies, 0]
+    # ys = c_space[:n_bodies, 1]
+    # thetas = c_space[:n_bodies, 2]
 
-    constraints[2::2] = (xs[1:] - xs[:-1]) - params.radius * torch.cos(thetas[1:]) \
-                                         - params.radius * torch.cos(thetas[:-1])
+    idx = torch.arange(c_space.shape[0])
+    mask = idx < n_bodies
 
-    constraints[3::2] = (ys[1:] - ys[:-1]) - params.radius * torch.sin(thetas[1:]) \
-                                         - params.radius * torch.sin(thetas[:-1])   
+    xs = torch.where(mask, c_space[:, 0], torch.zeros_like(c_space[:, 0]))
+    ys = torch.where(mask, c_space[:, 1], torch.zeros_like(c_space[:, 1]))
+    thetas = torch.where(mask, c_space[:, 2], torch.zeros_like(c_space[:, 2]))
+    
+    # constraints[0] = (xs[0] - x0) - params.radius * torch.cos(thetas[0])
+    # constraints[1] = (ys[0] - y0) - params.radius * torch.sin(thetas[0])
+    torch_set_in_1D(constraints, 0,
+                    (torch_get_from_1D(xs, 0) - x0) - params.radius * \
+                    torch.cos(torch_get_from_1D(thetas, 0)))
+    torch_set_in_1D(constraints, 1,
+                    (torch_get_from_1D(ys, 0) - x0) - params.radius * \
+                    torch.sin(torch_get_from_1D(thetas, 0)))
+
+
+    # constraints[2::2] = (xs[1:-1] - xs[:-2]) - params.radius * torch.cos(thetas[1:-1]) \
+    #                                      - params.radius * torch.cos(thetas[:-2])
+
+    
+    x_diff_values = (xs[1:-1] - xs[:-2]) - params.radius * torch.cos(thetas[1:-1]) - params.radius * torch.cos(thetas[:-2])
+    idx = torch.arange(constraints.shape[0])
+    target_mask = (idx >= 2) & ((idx - 2) % 2 == 0)
+    gather_pos = torch.clamp((idx - 2) // 2, 0, x_diff_values.shape[0] - 1)
+    gathered = x_diff_values[gather_pos]
+
+    constraints = torch.where(target_mask, gathered, constraints)
+
+    # constraints[3::2] = (ys[1:-1] - ys[:-2]) - params.radius * torch.sin(thetas[1:-1]) \
+    #                                      - params.radius * torch.sin(thetas[:-2])   
+
+    y_diff_values = (ys[1:-1] - ys[:-2]) - params.radius * torch.sin(thetas[1:-1]) - params.radius * torch.sin(thetas[:-2])
+    idx = torch.arange(constraints.shape[0])
+    target_mask = (idx >= 3) & ((idx - 3) % 2 == 0)
+    gather_pos = torch.clamp((idx - 3) // 2, 0, y_diff_values.shape[0] - 1)
+    gathered = y_diff_values[gather_pos]
+
+    constraints = torch.where(target_mask, gathered, constraints)
 
     #NOTE: do we also need to acknowledge special "last body", like in DiffVine?
-    endx = xs[n_bodies - 2] + params.radius * torch.cos(thetas[n_bodies - 2])
-    endy = ys[n_bodies - 2] + params.radius * torch.sin(thetas[n_bodies - 2])
+    # endx = xs[n_bodies - 2] + params.radius * torch.cos(thetas[n_bodies - 2])
+    # endy = ys[n_bodies - 2] + params.radius * torch.sin(thetas[n_bodies - 2])
 
-    angle_diff = torch.atan2(ys[n_bodies - 1] - endy, xs[n_bodies - 1] - endx - thetas[n_bodies - 1])
-    constraints[(n_bodies - 1) * 2] = angle_diff    
+    endx = torch_get_from_1D(xs, n_bodies - 2) + params.radius * torch.cos(torch_get_from_1D(thetas, n_bodies - 2))
+    endy = torch_get_from_1D(ys, n_bodies - 2) + params.radius * torch.sin(torch_get_from_1D(thetas, n_bodies - 2))
+
+    # angle_diff = torch.atan2(ys[n_bodies - 1] - endy, xs[n_bodies - 1] - endx - thetas[n_bodies - 1])
+
+    angle_diff = torch.atan2(torch_get_from_1D(ys, n_bodies-1) - endy, 
+                             torch_get_from_1D(xs, n_bodies-1) - endx - torch_get_from_1D(thetas, n_bodies-1))
+
+    # constraints[(n_bodies - 1) * 2] = angle_diff   
+
+    torch_set_in_1D(constraints, (n_bodies - 1) * 2, angle_diff) 
 
     #NOTE: is zero_out required here like from DiffVine?
+
+    #Create mask here to eliminate all calculations that go past N_BODIES
+
+    idx = torch.arange(constraints.shape[0])
+    mask = (idx // 2) < n_bodies
+
+    constraints = torch.where(mask, constraints, 0)
 
     return constraints
 
@@ -812,7 +909,7 @@ def proximity_measure(cspace: torch.tensor,
     '''
     The distance between any joint to any dynamic obj > 0 to prevent intersection
 
-    # NOTE: assumes that dynamic objects are rectnagular
+    # NOTE: assumes that dynamic objects are rectangular
     '''
     joint_centers = torch_cspace_to_positions(params, cspace, n_bodies, x0, y0, heading0)
     joint_radius = params.radius
@@ -822,20 +919,20 @@ def proximity_measure(cspace: torch.tensor,
         '''
         Checks to see if given joint is in collision with given dynamic object;
         Positive value indicates they're not in collision, 
-        negative value indicates otherwise
+        Negative value indicates otherwise
         '''
         center_x, center_y = joint_center_coords
         rect_left, rect_top, rect_right, rect_bottom = dynamic_obj_position
 
         # Find point on rectangle closest to joint center
-        closest_x = torch.clamp(torch.tensor(center_x), rect_left, rect_right)
-        closest_y = torch.clamp(torch.tensor(center_y), rect_bottom, rect_top)
+        closest_x = torch.clamp(center_x, rect_left, rect_right)
+        closest_y = torch.clamp(center_y, rect_bottom, rect_top)
 
         # Depth of rectangle's penetration:
         dist = torch.sqrt(torch.pow(closest_x - center_x, 2) + torch.pow(closest_y - center_y, 2))
         depth = torch.tensor(joint_radius) - dist
 
-        return depth.item() * -1 # flip sign so that penetration is negative
+        return depth * -1 # flip sign so that penetration is negative
     
     def overlap_over_all_objects(joint_center_coords: tuple[2], joint_radius: float,
                                  dynamic_obj_positions: torch.tensor):
@@ -863,20 +960,39 @@ def growth_measure(cspace: torch.tensor,
     Growth should be constrained such that the current segment should always be growing
     each time step
     '''
+
+    def torch_get_from_2D(tensor: torch.tensor, row_idx, col_idx):
+        '''
+        Similar to torch_get_from_1D, but for 2D tensors
+        '''
+        idx = torch.arange(tensor.shape[0])
+        mask = (idx == row_idx)
+        return torch.where(mask, tensor[:, col_idx], torch.zeros_like(tensor[:, col_idx])).sum()
+
     curr_id = n_bodies - 1
     prev_id = n_bodies - 2
 
     # Current growing segment info:
-    curr_x = cspace[curr_id, 0]
-    curr_y = cspace[curr_id, 1]
-    curr_velocity_x = dstate[curr_id, 0]
-    curr_velocity_y = dstate[curr_id, 1]
+    # curr_x = cspace[curr_id, 0]
+    # curr_y = cspace[curr_id, 1]
+    # curr_velocity_x = dstate[curr_id, 0]
+    # curr_velocity_y = dstate[curr_id, 1]
+
+    curr_x = torch_get_from_2D(cspace, curr_id, 0)
+    curr_y = torch_get_from_2D(cspace, curr_id, 1)
+    curr_velocity_x = torch_get_from_2D(dstate, curr_id, 0)
+    curr_velocity_y = torch_get_from_2D(dstate, curr_id, 1)
 
     # Previous segment info:
-    prev_x = cspace[prev_id, 0]
-    prev_y = cspace[prev_id, 1]
-    prev_velocity_x = dstate[prev_id, 0]
-    prev_velocity_y = dstate[prev_id, 1]
+    # prev_x = cspace[prev_id, 0]
+    # prev_y = cspace[prev_id, 1]
+    # prev_velocity_x = dstate[prev_id, 0]
+    # prev_velocity_y = dstate[prev_id, 1]
+    
+    prev_x = torch_get_from_2D(cspace, prev_id, 0)
+    prev_y = torch_get_from_2D(cspace, prev_id, 1)
+    prev_velocity_x = torch_get_from_2D(dstate, prev_id, 0)
+    prev_velocity_y = torch_get_from_2D(dstate, prev_id, 1)
 
     # Derivative of the distance in respect to time:
     growth = ((curr_x - prev_x) * (curr_velocity_x - prev_velocity_x) + 
@@ -911,7 +1027,16 @@ def get_object_motion(params: VineParams, dstate: torch.tensor, weight: float):
         ])
 
     # Shape: (# dynamic objs, 3)
-    return torch.vmap(compute_KE, in_dims=(None, 0, 0))(weight, params.dynamic_objs_mass, dstate)
+
+    print(dstate.shape)
+    print(torch.tensor(params.dynamic_objs_mass).shape)
+    print(params.dynamic_objs_mass)
+
+    dyn_obj_tensor = torch.tensor(params.dynamic_objs_mass)
+    if dyn_obj_tensor.dim() == 0: 
+        return torch.tensor(0) # assuming there are no dynamic objects
+
+    return torch.vmap(compute_KE, in_dims=(None, 0, 0))(weight, dyn_obj_tensor, dstate)
 
 
 def compute_jacobians(params: VineParams, 

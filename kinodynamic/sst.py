@@ -26,7 +26,7 @@ from sPAM.spam import paramstype, params as act_params
 from sPAM.torch_nns import get_or_train_model, get_prediction_function
 
 # from sPAM.nns_usage import solve as find_actuator_params, solve_fwd as actuator_params_fwd_
-from sPAM.nns_usage import torch_solve as find_actuator_params, solve_fwd as actuator_params_fwd_
+from sPAM.torch_nns_usage import torch_solve as find_actuator_params, solve_fwd as actuator_params_fwd_
 
 scaling_info, model = get_or_train_model(act_params)
 predict = get_prediction_function(scaling_info, model)
