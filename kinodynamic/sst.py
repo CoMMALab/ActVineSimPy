@@ -1204,8 +1204,7 @@ def sst_star(sst_params: SSTparams, sim_params: VineParams, callback=None):
         # we can do better
         
         tree.clean_states()
-
-        
+    
     
 if __name__ == "__main__":
     
@@ -1266,6 +1265,9 @@ if __name__ == "__main__":
         
     render()
 
+
+
+
     # Safe params
     sim_params = VineParams(
         max_bodies=70,
@@ -1282,6 +1284,8 @@ if __name__ == "__main__":
         obstacle_rects=cfg['obstacles'],
         dynamic_objects=cfg['dynamic_obstacles'],
         use_tube_obstacle=args.env=='envs/env_tube.txt',
+        dynamic_objs_mass=cfg['dynamic_object_masses'],
+        dynamic_objs_inertia=cfg['dynamic_object_inertias']
     )
 
     # SST params

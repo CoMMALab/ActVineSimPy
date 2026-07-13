@@ -63,10 +63,12 @@ class VineParams:
                         use_tube_obstacle, mass, inertia))
     else:
         self.hash = hash((max_bodies, body_length, radius, dt, grow_rate, grow_force,
-                        stiffness, damping, substeps, alpha, tuple(map(tuple, obstacle_rects)), 
+                        stiffness, damping, substeps, alpha, 
+                        tuple(map(tuple, obstacle_rects)), 
                         tuple(map(tuple, dynamic_objects)), 
                         use_tube_obstacle, 
-                        tuple(map(tuple, dynamic_objs_mass)), tuple(map(tuple, dynamic_objs_inertia)),
+                        tuple(map(tuple, dynamic_objs_mass)), 
+                        tuple(map(tuple, dynamic_objs_inertia)),
                         mass, inertia))
 
   def _tree_flatten(self):
@@ -1142,6 +1144,7 @@ def create_mass_matrix(params: VineParams, vine_inertia_weight: float, obj_inert
 # Something used within solve_layers:
 import scipy.linalg
 from torch.autograd import Function
+
 class MatrixSquareRoot(Function):
     """Square root of a positive definite matrix.
 
