@@ -1058,13 +1058,12 @@ def compute_jacobians(params: VineParams,
     Finds jacobians of the contraint equations used by the QP solver
     '''
 
-    # print(cspace.shape)
-    # print(dstate.shape)
-    # print(dynamic_obj_positions.shape)
-
     #NOTE: zero_out was not used in some parts, unlike DiffVine; might need to look into this
 
     cspace, n_bodies = extend_cspace(params, cspace, dstate, n_bodies)
+
+    # print("\nIn Compute Jacobians:")
+    # print(cspace.shape)
 
     cspace_sdf_jac = torch.func.jacrev(partial(cspace_sdf_measure, params=params,
                                                     x0=x0, y0=y0, n_bodies=n_bodies, heading0=heading0)
@@ -1147,7 +1146,13 @@ def compute_jacobians(params: VineParams,
 
 def create_mass_matrix(params: VineParams, vine_inertia_weight: float, obj_inertia_weight: float):
     '''
-    Creates combined mass/inertia matrix (stores mass/inertia for both vine and dynamic objs)
+    Creates combined mass/inertia matrix (stores mass/inertia for both vine and dynamic objs);
+    The idea is the same as in DiffVine:
+    Each vine body/dynamic obj's x, y is multiplied by the corresponding mass,
+    each of their theta multiplied by the corresponding inertia
+
+    The result is a (max_bodies + 1 + # dynamic_objects, max_bodies + 1 + # dynamic_objects)
+    diagonal matrix.
     '''
 
     vine_mass = torch.tensor(params.mass)
@@ -1160,7 +1165,7 @@ def create_mass_matrix(params: VineParams, vine_inertia_weight: float, obj_inert
 
     # Create mass matrix for vine:
     vine_diag_elements = torch.cat([vine_mass, vine_mass, 
-                                    vine_inertia * vine_inertia_weight]).repeat(max_bodies)
+                                    vine_inertia * vine_inertia_weight]).repeat(max_bodies + 1)
 
     concatentated_tensor = torch.cat([objs_mass, objs_mass, objs_inertia * obj_inertia_weight])
     obj_diag_elements = concatentated_tensor.repeat(num_objs)
@@ -1251,10 +1256,12 @@ def SCS_solve(params: VineParams, dstate, forces,
 
     # Transform force infomation (what to mimimize: bending and KE)
 
-    print(dstate.shape)
-    print(mass_inertia_diag.shape)
-    forces_info = forces * dt - torch.matmul(dstate, mass_inertia_diag)
-
+    # Last term: basically multiply every (x, y, theta) with corresponding (mass, mass, inertia)
+    # Do this for every vine body and every dynamic object (this also requires some reshaping)
+    forces_info = forces * dt - \
+                  (dstate.flatten(start_dim=1) @ mass_inertia_diag).reshape(
+                      dstate.shape[0], dstate.shape[1], 3)
+    
     # Combined Inequality constraints: cspace_sdf, dynamic_sdf, proximity
     cspace_sdf_step = -1 * cspace_sdf_jac * dt
     dynamic_sdf_step = -1 * dynamic_sdf_jac * dt
@@ -1262,8 +1269,22 @@ def SCS_solve(params: VineParams, dstate, forces,
 
     # Create diag-matrix so each batch can store info on cspace, dynamic, proximity info
 
-    inequality_step = torch.vmap(torch.block_diag)(cspace_sdf_step, dynamic_sdf_step, proximity_step)
-    inequality_now = torch.vmap(torch.block_diag)(cspace_sdf_now, dynamic_sdf_now, proximity_now)
+    print("\nIn Solve Step:")
+    print(cspace_sdf_step.shape)
+    print(cspace_sdf_now.shape)
+
+    print()
+    print(dynamic_sdf_step.shape)
+    print(dynamic_sdf_now.shape)
+
+    print()
+    print(proximity_step.shape)
+    print(proximity_now.shape)
+
+    inequality_step = torch.vmap(torch.block_diag, in_dims=(0, 0, 0)) \
+                        (cspace_sdf_step, dynamic_sdf_step, proximity_step)
+    inequality_now = torch.vmap(torch.block_diag, in_dims=(0, 0, 0)) \
+                        (cspace_sdf_now, dynamic_sdf_now, proximity_now)
     
     # Combined Equality constraints: growth, joint
     # NOTE: for now, is copied from DiffVine
@@ -1333,13 +1354,6 @@ def SCS_step_vine(params: VineParams, cspace: np.array, dstate: np.array,
     torch.vmap(compute_jacobians, in_dims=(None, 0, 0, 0, 0, None, None, None, 0, None)) \
                              (params, cspace, dstate, dynamic_obj_positions, n_bodies,
                               x0, y0, heading0, bend_params, bend_energy_func)
-    
-    # new_n_bodies, forces, cspace_sdf_jac, cspace_sdf_now, dynamic_sdf_jac, dynamic_sdf_now, \
-    # joint_jac, joint_now, proximity_jac, proximity_now, \
-    # growth_wrt_state, growth_wrt_dstate, growth_now = \
-    # compute_jacobians(params, cspace, dstate, dynamic_obj_positions, n_bodies,
-    #                           x0, y0, heading0, bend_params, bend_energy_func)
-    
     
     next_dstate_solution = SCS_solve(params, dstate, forces, cspace_sdf_jac, cspace_sdf_now,
                                      dynamic_sdf_jac, dynamic_sdf_now, joint_jac,

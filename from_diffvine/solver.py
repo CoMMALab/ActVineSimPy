@@ -34,6 +34,10 @@ def init_layers(sol_size, Q_size, p_size, G_size, h_size, A_size, b_size, vel_ca
 
     # print('Q size', Q_size, 'p size', p_size, 'G size', G_size, 'h size', h_size, 'A size', A_size, 'b size', b_size)
 
+    # Understanding the objective:
+    # cp.sum_squares(Q_sqrt @ next_dstate): convex quadratic penalty
+    
+
     objective = cp.Minimize(0.5 * cp.sum_squares(Q_sqrt @ next_dstate) + p @ next_dstate)
     # objective = cp.Minimize(0.5 * cp.quad_form(next_dstate, Q_sqrt) + p @ next_dstate)
 
