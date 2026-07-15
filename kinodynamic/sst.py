@@ -15,7 +15,7 @@ import numpy as np
 
 from render import *
 from kinodynamic.max_cover import max_cover
-from pbd_vine import VineParams, step_vine_batched, SCS_step_vine_batched
+from pbd_vine import VineParams, step_vine_batched, SCS_step_vine
 
 from geometric.biarc_rrtstar import main as geometric_plan
 from kinodynamic.nearest import distance, nearest_neighbor, nearest_neighbor_all
@@ -485,7 +485,9 @@ class StatesStruct:
 
 # forward = jax.jit(step_vine_batched, static_argnames=['params', 'x0_list', 'y0_list', 'heading0_list', 'bend_energy_func']) 
 # forward = torch.compile(SCS_step_vine_batched)
-forward = SCS_step_vine_batched
+
+forward = SCS_step_vine
+# forward = SCS_step_vine_batched
 
 def rollout(sst_params, simparams, batch_size, 
             time_to_evolve,
@@ -532,7 +534,7 @@ def rollout(sst_params, simparams, batch_size,
     for i in range(steps_to_iter):
         
         next_cspace, next_bodies, next_dynamic_positions, next_dstate_solution = forward(
-            simparams, dstate, cspace, dynamic_obj_positions, bodies, bending_control,
+            simparams, cspace, dstate, dynamic_obj_positions, bodies, bending_control,
             init_x, init_y, init_heading, actuator_params_fwd
         )
 

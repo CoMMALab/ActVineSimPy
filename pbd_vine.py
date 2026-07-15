@@ -1311,21 +1311,35 @@ def SCS_solve(params: VineParams, dstate, forces,
 # New simulation advance, using Splitting Cone Solver
 ######################################################
 
-def SCS_step_vine(params: VineParams, cspace: torch.tensor, dstate: torch.tensor,
-                  dynamic_obj_positions: torch.tensor, n_bodies: int, 
-                  bend_params: torch.tensor, x0: float, y0: float, heading0: float, 
+def SCS_step_vine(params: VineParams, cspace: np.array, dstate: np.array,
+                  dynamic_obj_positions: np.array, n_bodies: np.array, 
+                  bend_params: np.array, x0: float, y0: float, heading0: float, 
                   bend_energy_func: Callable):
     
     #FIXME: change how batches are handled to resemble DiffVine:
     # 1. compute jacobians: VMAPPED over batches to get info
     # 2. SCS_solve: takes all batched data and returns next_dstate_solution
     # Means that this function DOES NOT NEED TO BE BATCHED
-    
+
+    cspace = torch.tensor(cspace)
+    dstate = torch.tensor(dstate)
+    n_bodies = torch.tensor(n_bodies)
+    dynamic_obj_positions = torch.tensor(dynamic_obj_positions)
+    bend_params = torch.tensor(bend_params)
+
     new_n_bodies, forces, cspace_sdf_jac, cspace_sdf_now, dynamic_sdf_jac, dynamic_sdf_now, \
     joint_jac, joint_now, proximity_jac, proximity_now, \
     growth_wrt_state, growth_wrt_dstate, growth_now = \
-    compute_jacobians(params, cspace, dstate, dynamic_obj_positions, n_bodies,
+    torch.vmap(compute_jacobians, in_dims=(None, 0, 0, 0, 0, None, None, None, 0, None)) \
+                             (params, cspace, dstate, dynamic_obj_positions, n_bodies,
                               x0, y0, heading0, bend_params, bend_energy_func)
+    
+    # new_n_bodies, forces, cspace_sdf_jac, cspace_sdf_now, dynamic_sdf_jac, dynamic_sdf_now, \
+    # joint_jac, joint_now, proximity_jac, proximity_now, \
+    # growth_wrt_state, growth_wrt_dstate, growth_now = \
+    # compute_jacobians(params, cspace, dstate, dynamic_obj_positions, n_bodies,
+    #                           x0, y0, heading0, bend_params, bend_energy_func)
+    
     
     next_dstate_solution = SCS_solve(params, dstate, forces, cspace_sdf_jac, cspace_sdf_now,
                                      dynamic_sdf_jac, dynamic_sdf_now, joint_jac,
@@ -1343,27 +1357,27 @@ def SCS_step_vine(params: VineParams, cspace: torch.tensor, dstate: torch.tensor
     return new_cspace, new_n_bodies, new_dynamic_obj_positions, next_dstate_solution
 
 
-def SCS_step_vine_batched(params: VineParams, dstates: torch.tensor, cspaces: torch.tensor, dynamic_positions: torch.tensor,
-                          n_bodies_list: torch.tensor, bend_params: torch.tensor,
-                          x0_list: torch.tensor, y0_list: torch.tensor, heading0_list: torch.tensor,
-                          bend_energy_func: Callable):
-    '''
-    Batched SCS_step_vine
-    '''
+# def SCS_step_vine_batched(params: VineParams, dstates: torch.tensor, cspaces: torch.tensor, dynamic_positions: torch.tensor,
+#                           n_bodies_list: torch.tensor, bend_params: torch.tensor,
+#                           x0_list: torch.tensor, y0_list: torch.tensor, heading0_list: torch.tensor,
+#                           bend_energy_func: Callable):
+#     '''
+#     Batched SCS_step_vine
+#     '''
 
-    # Convert to tensors first because state-tree uses numpy arrays:
-    cspaces = torch.tensor(cspaces)
-    dstates = torch.tensor(dstates)
-    dynamic_positions = torch.tensor(dynamic_positions)
-    n_bodies_list = torch.tensor(n_bodies_list)
-    bend_params = torch.tensor(bend_params)
+#     # Convert to tensors first because state-tree uses numpy arrays:
+#     cspaces = torch.tensor(cspaces)
+#     dstates = torch.tensor(dstates)
+#     dynamic_positions = torch.tensor(dynamic_positions)
+#     n_bodies_list = torch.tensor(n_bodies_list)
+#     bend_params = torch.tensor(bend_params)
     
-    new_cspaces, new_n_bodies, new_dynamic_positions, next_dstate_solution = \
-                                                torch.vmap(SCS_step_vine, in_dims=(None, 0, 0, 0, 0, 0, None, None, None, None)) \
-                                                (params, cspaces, dstates, dynamic_positions, n_bodies_list, bend_params, 
-                                                 x0_list, y0_list, heading0_list, bend_energy_func)
-    return new_cspaces.numpy(), new_n_bodies.numpy(), \
-           new_dynamic_positions.numpy(), next_dstate_solution.numpy()
+#     new_cspaces, new_n_bodies, new_dynamic_positions, next_dstate_solution = \
+#                                                 torch.vmap(SCS_step_vine, in_dims=(None, 0, 0, 0, 0, 0, None, None, None, None)) \
+#                                                 (params, cspaces, dstates, dynamic_positions, n_bodies_list, bend_params, 
+#                                                  x0_list, y0_list, heading0_list, bend_energy_func)
+#     return new_cspaces.numpy(), new_n_bodies.numpy(), \
+#            new_dynamic_positions.numpy(), next_dstate_solution.numpy()
 
 ######################################################
 # Main "advance" for one simulation step
