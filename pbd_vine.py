@@ -668,8 +668,6 @@ def multiply_vine(params: VineParams, cspace: jnp.ndarray, n_bodies: int):
 ######################################################
 
 
-
-
 def extend_cspace(params: VineParams, cspace: torch.tensor, dstate: torch.tensor, n_bodies:int):
     '''
     Extends the cspace by one, if needed
@@ -1010,6 +1008,8 @@ def get_bending_energy(params: VineParams, cspace: torch.tensor, bend_params: to
     turning_radius = torch.where(torch.abs(cspace[:-1, -1]) < 1e-3, 0, params.body_length * 1e-3 / cspace[:-1, -1])
     bend_moment = -1 * bend_energy_func(turning_radius, bend_params[:, 0], bend_params[:, 1])
 
+    # Pad updates to forces vector works:
+    bend_moment = torch.nn.functional.pad(bend_moment, (0, 1 + params.dynamic_objs_mass.shape[0]))    
     return bend_moment
 
 
@@ -1022,23 +1022,29 @@ def get_object_motion(params: VineParams, dstate: torch.tensor, weight: float):
 
     #NOTE: weight is currently random and can be changed
     def compute_KE(weight: float, obj_mass: float, obj_velocities: tuple[3]):
-        return torch.tensor([
-            weight * obj_mass * obj_velocities[0], # x
-            weight * obj_mass * obj_velocities[1], # y
-            weight * obj_mass * obj_velocities[2], # theta
+       
+
+        obj_mass = obj_mass.squeeze()
+    
+        return torch.stack([
+            # weight * obj_mass * obj_velocities[0], # x
+            # weight * obj_mass * obj_velocities[1], # y
+            # weight * obj_mass * obj_velocities[2], # theta
+
+            weight * obj_mass * torch_get_from_1D(obj_velocities, 0), # x
+            weight * obj_mass * torch_get_from_1D(obj_velocities, 1), # y
+            weight * obj_mass * torch_get_from_1D(obj_velocities, 2)  # theta
         ])
 
-    # Shape: (# dynamic objs, 3)
 
-    print(dstate.shape)
-    print(torch.tensor(params.dynamic_objs_mass).shape)
-    print(params.dynamic_objs_mass)
+    # Pad the mass tensor so that it's the same length as the dstate
+    dyn_mass_tensor = torch.tensor(params.dynamic_objs_mass)
 
-    dyn_obj_tensor = torch.tensor(params.dynamic_objs_mass)
-    if dyn_obj_tensor.dim() == 0: 
-        return torch.tensor(0) # assuming there are no dynamic objects
-
-    return torch.vmap(compute_KE, in_dims=(None, 0, 0))(weight, dyn_obj_tensor, dstate)
+    padded_tensor = torch.nn.functional.pad(dyn_mass_tensor, (0, 0, params.max_bodies + 1, 0), value=0.00)
+    
+    # Shape: (params.max_bodies + 1 + # dynamic objs, 3);
+    # note that any parts not corresponding to dynamic objs all be 0
+    return torch.vmap(compute_KE, in_dims=(None, 0, 0))(weight, padded_tensor, dstate)
 
 
 def compute_jacobians(params: VineParams, 
@@ -1051,6 +1057,11 @@ def compute_jacobians(params: VineParams,
     '''
     Finds jacobians of the contraint equations used by the QP solver
     '''
+
+    # print(cspace.shape)
+    # print(dstate.shape)
+    # print(dynamic_obj_positions.shape)
+
     #NOTE: zero_out was not used in some parts, unlike DiffVine; might need to look into this
 
     cspace, n_bodies = extend_cspace(params, cspace, dstate, n_bodies)
@@ -1093,16 +1104,35 @@ def compute_jacobians(params: VineParams,
     forces = torch.zeros(cspace.shape[0] + dynamic_obj_positions.shape[0], 3)
     start_obj_idx = n_bodies + 1
 
-    forces[:n_bodies, 2] += -bend_energy
-    forces[:n_bodies - 1, 2] += bend_energy[1:]
+    # forces[:n_bodies, 2] += -bend_energy
+    # forces[:n_bodies - 1, 2] += bend_energy[1:]
 
-    forces[:n_bodies, 0] += dstate[:n_bodies, 0] # for x 
-    forces[:n_bodies, 1] += dstate[:n_bodies, 1] # for y
+    # forces[:n_bodies, 0] += dstate[:n_bodies, 0] # for x 
+    # forces[:n_bodies, 1] += dstate[:n_bodies, 1] # for y
+
+    idx = torch.arange(forces.shape[0])
+    mask_n = (idx < n_bodies)
+    mask_n1 = (idx < n_bodies - 1)
+
+    left_shifted_BE = torch.nn.functional.pad(bend_energy[1:], (0,1)) # to drop the first element in BE[1:]
+
+    dstate_x_update = mask_n * dstate[:, 0]
+    dstate_y_update = mask_n * dstate[:, 1]
+    BE_update = mask_n * -bend_energy + mask_n1 * left_shifted_BE
+
+    updates = torch.stack([dstate_x_update, 
+                           dstate_y_update,
+                           BE_update], dim=1)
+
+    forces = forces + updates
 
     # Add on movement energy of the objects for minimization        
     #FIXME: add ability to read in MASS and INERTIA for each dynamic object
 
-    forces[start_obj_idx:, :] += obj_motion[:, :]
+    # forces[start_obj_idx:, :] += obj_motion[:, :]
+    
+    # print(forces.shape, obj_motion.shape)
+    forces += obj_motion
 
     return n_bodies, forces, cspace_sdf_jac, cspace_sdf_now, dynamic_sdf_jac, dynamic_sdf_now, \
             joint_jac, joint_now, proximity_jac, proximity_now, \
@@ -1120,20 +1150,20 @@ def create_mass_matrix(params: VineParams, vine_inertia_weight: float, obj_inert
     Creates combined mass/inertia matrix (stores mass/inertia for both vine and dynamic objs)
     '''
 
-    vine_mass = params.mass
-    vine_inertia = params.inertia
+    vine_mass = torch.tensor(params.mass)
+    vine_inertia = torch.tensor(params.inertia)
     max_bodies = params.max_bodies
 
-    objs_mass = params.dynamic_objs_mass
-    objs_inertia = params.dynamic_objs_inertia
+    objs_mass = torch.tensor(params.dynamic_objs_mass).squeeze(0)
+    objs_inertia = torch.tensor(params.dynamic_objs_inertia).squeeze(0)
     num_objs = params.dynamic_objs_mass.size
 
     # Create mass matrix for vine:
     vine_diag_elements = torch.cat([vine_mass, vine_mass, 
                                     vine_inertia * vine_inertia_weight]).repeat(max_bodies)
-    
-    obj_diag_elements = torch.cat([objs_mass, objs_mass,
-                                   objs_inertia * obj_inertia_weight]).repeat(num_objs)
+
+    concatentated_tensor = torch.cat([objs_mass, objs_mass, objs_inertia * obj_inertia_weight])
+    obj_diag_elements = concatentated_tensor.repeat(num_objs)
     
     all_diag_elements = torch.cat([vine_diag_elements, obj_diag_elements])
 
@@ -1212,7 +1242,7 @@ def SCS_solve(params: VineParams, dstate, forces,
 
     # Configure constraints and matrices to be used by the solver
 
-    solution_size = (dstate.shape[1], dstate.shape[2]) # returns next_dstate, so keep the same shape (without batched part)
+    solution_size = (dstate.shape[0], dstate.shape[1]) # returns next_dstate, so keep the same shape (without batched part)
     dt = params.dt
 
     vine_inertia_weight = 100
@@ -1220,6 +1250,9 @@ def SCS_solve(params: VineParams, dstate, forces,
     mass_inertia_diag = create_mass_matrix(params, vine_inertia_weight, obj_inertia_weight)
 
     # Transform force infomation (what to mimimize: bending and KE)
+
+    print(dstate.shape)
+    print(mass_inertia_diag.shape)
     forces_info = forces * dt - torch.matmul(dstate, mass_inertia_diag)
 
     # Combined Inequality constraints: cspace_sdf, dynamic_sdf, proximity
@@ -1283,6 +1316,11 @@ def SCS_step_vine(params: VineParams, cspace: torch.tensor, dstate: torch.tensor
                   bend_params: torch.tensor, x0: float, y0: float, heading0: float, 
                   bend_energy_func: Callable):
     
+    #FIXME: change how batches are handled to resemble DiffVine:
+    # 1. compute jacobians: VMAPPED over batches to get info
+    # 2. SCS_solve: takes all batched data and returns next_dstate_solution
+    # Means that this function DOES NOT NEED TO BE BATCHED
+    
     new_n_bodies, forces, cspace_sdf_jac, cspace_sdf_now, dynamic_sdf_jac, dynamic_sdf_now, \
     joint_jac, joint_now, proximity_jac, proximity_now, \
     growth_wrt_state, growth_wrt_dstate, growth_now = \
@@ -1303,6 +1341,7 @@ def SCS_step_vine(params: VineParams, cspace: torch.tensor, dstate: torch.tensor
     new_dynamic_obj_positions = dynamic_obj_positions + next_dstate_solution[:, params.max_bodies + 1:, :].detach()
 
     return new_cspace, new_n_bodies, new_dynamic_obj_positions, next_dstate_solution
+
 
 def SCS_step_vine_batched(params: VineParams, dstates: torch.tensor, cspaces: torch.tensor, dynamic_positions: torch.tensor,
                           n_bodies_list: torch.tensor, bend_params: torch.tensor,
@@ -1383,6 +1422,3 @@ def step_vine_batched(params: VineParams,
                                 (params, cspaces, batched_dynamic_positions, n_bodies_list, bend_params, x0_list, y0_list, heading0_list, bend_energy_func)
     # out is ( (batch_cspaces), (batch_nb) )
     return new_cspaces, new_n_bodies, new_dynamic_positions
-
-# jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
-# jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0) 
