@@ -1139,10 +1139,9 @@ def create_mass_matrix(params: VineParams, vine_inertia_weight: float, obj_inert
     Creates combined mass/inertia matrix (stores mass/inertia for both vine and dynamic objs);
     The idea is the same as in DiffVine:
     Each vine body/dynamic obj's x, y is multiplied by the corresponding mass,
-    each of their theta multiplied by the corresponding inertia
+    each of their theta multiplied by the corresponding inertia (done when multiplied with dstate in SCS_solve)
 
-    The result is a (max_bodies + 1 + # dynamic_objects, max_bodies + 1 + # dynamic_objects)
-    diagonal matrix.
+    The result is a (max_bodies + 1 + # dynamic_objects, max_bodies + 1 + # dynamic_objects) shaped diag matrix
     '''
 
     vine_mass = torch.tensor(params.mass)
@@ -1222,7 +1221,6 @@ def SCS_solve_layers(mass_matrix, forces_info,
     solver_args_scs = {'acceleration_lookback': 40_000, 'verbose': False, 'max_iters': 10_000}
 
     # Perform same transforms as init step in SCS solve, if not done already
-
     if not first_call_after_init:        
         forces_info = forces_info.flatten(1)
         cspace_sdf_step = cspace_sdf_step.flatten(2)
@@ -1231,8 +1229,7 @@ def SCS_solve_layers(mass_matrix, forces_info,
         growth_step = growth_step.flatten(1)
         joint_step = joint_step.flatten(2)
 
-    # Convert to numpy before solving
-
+    # Move to cpu so that cvxpylayer can convert to numpy:
     mass_matrix_batched = mass_matrix_batched.cpu()
     forces_info = forces_info.cpu()
     cspace_sdf_step = cspace_sdf_step.cpu()
@@ -1246,7 +1243,7 @@ def SCS_solve_layers(mass_matrix, forces_info,
     joint_step = joint_step.cpu()
     joint_now = joint_now.cpu()
 
-    #NOTE: speed up could be achieved by using GPU-compatible cvxpy solver instead
+    #NOTE: speed up may be achieved by using GPU-compatible cvxpy solver instead
     solution = cvxpylayer(mass_matrix_batched, forces_info, 
                           cspace_sdf_step, dynamic_sdf_step,
                           proximity_step, growth_step, joint_step,
@@ -1304,17 +1301,14 @@ def SCS_solve(params: VineParams, dstate, forces,
     #     cspace_sdf_step = torch.cat([cspace_sdf_step, zeros], dim=2)
 
     # Equality parameters:
-
-
+                
     #FIXME: what the heck is this term actually for? what does it mean?
     # depending on intended meaning, changes will result in wrong stuff
 
-    # squeezed_growth = growth_now.squeeze(1) if growth_now.dim() >= 2 else growth_now
-    # growth_term = (
-    #     squeezed_growth - 1000 * params.grow_rate -
-    #     torch.bmm(growth_wrt_dstate, dstate.transpose(1, 2)).squeeze(2).squeeze(1)
-    # )
-
+    growth_con_term = (
+        growth_now - 1000 * params.grow_rate -
+        torch.bmm(growth_wrt_dstate.flatten(1).unsqueeze(1), dstate.flatten(1).unsqueeze(2)).squeeze(2).squeeze(1)
+    )
     
     if params.dynamic_objs_mass.size > 0:
         zeros = torch.zeros(100, params.dynamic_objs_mass.size, 3, dtype = growth_wrt_state.dtype)
@@ -1324,8 +1318,7 @@ def SCS_solve(params: VineParams, dstate, forces,
     joint_step = joint_jac * dt
 
     # Equality constraints:
-    # growth_con_term = -growth_term.unsqueeze(1)
-    growth_con_term = torch.full_like(growth_step, 1000) #NOTE: dumby term until I figure out what above does
+    growth_con_term = -growth_con_term.unsqueeze(1)
     
     joint_con_term = -joint_now
 
