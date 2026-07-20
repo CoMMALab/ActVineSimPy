@@ -17,7 +17,10 @@ from jax import grad, vmap
 import cvxpy as cp
 from cvxpylayers.torch import CvxpyLayer
 from functools import partial
+
 import torch
+if torch.cuda.is_available():
+    torch.set_default_device('cuda')
 
 cvxpylayer = None
 

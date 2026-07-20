@@ -10,6 +10,9 @@ from queue import PriorityQueue
 # import jax
 # import jax.numpy as jnp
 import torch
+if torch.cuda.is_available():
+    torch.set_default_device('cuda')
+
 from kinodynamic.env_loader import load_box_config
 import numpy as np
 
@@ -149,6 +152,8 @@ def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray,
     """
     assert cspace.shape == (batch_size, params.max_bodies + 1, 3), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
     assert n_bodies.shape == (batch_size,)
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     angles = cspace[:, :-1, -1]        # shape (n_bodies,)
     last_len = cspace[:, params.max_bodies, -1] 
