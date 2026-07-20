@@ -333,6 +333,11 @@ class StatesStruct:
         if self.num_states == self._c_spaces.shape[0]:
             self.extend_states()
         
+        
+        # Convert to cpu tensor before co
+        if torch.cuda.is_available():
+            tip = tip.cpu().numpy()
+
         idx = self.num_states
         
         self._isactive[idx] = isactive
@@ -840,8 +845,8 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         # new_bend_angle = np.random.uniform(-125, 125, batch_size) # Shape (B,)
         p, l0 = find_actuator_params(predict, act_params, torch.tensor(new_bend_angle)) 
         
-        p = p.numpy()
-        l0 = l0.numpy()
+        p = p.cpu().numpy()
+        l0 = l0.cpu().numpy()
 
         assert np.all(np.isfinite(p)), f"p: {p}, l0: {l0}"
         

@@ -23,6 +23,9 @@ from sPAM.torch_spam import l_m_to_phi_eps, params
 import pandas as pd
 
 import torch
+if torch.cuda.is_available():
+    torch.set_default_device('cuda')
+
 import torch.nn as nn
 from torch import optim
 import csv
@@ -122,7 +125,12 @@ def create_dataset_and_scale(inputs, outputs):
 
 def unscale_outputs(output_scaled, scaling_info):
     """Un-scale predicted outputs back to their original range."""
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
     out_min, out_rng = scaling_info['out_min'], scaling_info['out_range']
+    out_min = out_min.to(device)
+    out_rng = out_rng.to(device)
     return output_scaled * out_rng + out_min
 
 # --------------------------
@@ -525,20 +533,21 @@ def get_prediction_function(scaling_info, model):
         # Scale inputs
 
         in_min, in_rng = scaling_info['in_min'], scaling_info['in_range']
+
+        if in_min.device != inputs_unscaled.device:
+            in_min = in_min.to(inputs_unscaled.device)
+        if in_rng.device != inputs_unscaled.device:
+            in_rng = in_rng.to(inputs_unscaled.device)
+
         scaled_inputs = (inputs_unscaled - in_min) / in_rng
         
         # Predict
-        # preds_scaled = model.apply({'params': params}, scaled_inputs)
-        
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         model.eval()
 
         with torch.no_grad():
             scaled_inputs = scaled_inputs.to(torch.float32)      
-            scaled_inputs = scaled_inputs.to(device)      
+            # scaled_inputs = scaled_inputs.to(device)      
             preds_scaled = model(scaled_inputs)
-
-            preds_scaled = preds_scaled.cpu()
 
         # Unscale outputs
         return unscale_outputs(preds_scaled, scaling_info)
