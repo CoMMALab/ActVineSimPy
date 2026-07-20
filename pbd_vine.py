@@ -1295,21 +1295,7 @@ def SCS_solve(params: VineParams, dstate, forces,
     dynamic_sdf_con_term = dynamic_sdf_now
     proximity_con_term = proximity_now
 
-    # Pad so that it can be multiplied by next_dstate in solver constraints:
-    # if params.dynamic_objs_mass.size > 0:
-    #     zeros = torch.zeros(100, params.max_bodies, params.dynamic_objs_mass.size, 3, dtype = cspace_sdf_step.dtype)
-    #     cspace_sdf_step = torch.cat([cspace_sdf_step, zeros], dim=2)
-
     # Equality parameters:
-                
-    #FIXME: what the heck is this term actually for? what does it mean?
-    # depending on intended meaning, changes will result in wrong stuff
-
-    growth_con_term = (
-        growth_now - 1000 * params.grow_rate -
-        torch.bmm(growth_wrt_dstate.flatten(1).unsqueeze(1), dstate.flatten(1).unsqueeze(2)).squeeze(2).squeeze(1)
-    )
-    
     if params.dynamic_objs_mass.size > 0:
         zeros = torch.zeros(100, params.dynamic_objs_mass.size, 3, dtype = growth_wrt_state.dtype)
         growth_wrt_state = torch.cat([growth_wrt_state, zeros], dim=1)
@@ -1318,25 +1304,32 @@ def SCS_solve(params: VineParams, dstate, forces,
     joint_step = joint_jac * dt
 
     # Equality constraints:
+    growth_con_term = (
+        growth_now - 1000 * params.grow_rate -
+        torch.bmm(growth_wrt_dstate.flatten(1).unsqueeze(1), dstate.flatten(1).unsqueeze(2)).squeeze(2).squeeze(1)
+    )
     growth_con_term = -growth_con_term.unsqueeze(1)
     
     joint_con_term = -joint_now
 
     # Initialize layers, if need be:
-    # NOTE: shape[1:] drops batch dimension
-
     if cvxpylayer is None:
 
         ### Final transforms to make matrix multiplication ###
 
         num_dynamic_objs = int(params.dynamic_objs_mass.size)
 
-        forces_info = forces_info.flatten(1)
-        cspace_sdf_step = cspace_sdf_step.flatten(2)
-        dynamic_sdf_step = dynamic_sdf_step.flatten(2)
-        proximity_step = proximity_step.flatten(2)
-        growth_step = growth_step.flatten(1)
-        joint_step = joint_step.flatten(2)
+        forces_info = forces_info.flatten(1) # flatten so info is [x0, y0, theta0, ...]
+
+        cspace_sdf_step = cspace_sdf_step.flatten(2) # flatten jacrev dims to allow @ by dstate
+
+        dynamic_sdf_step = dynamic_sdf_step.flatten(2) # similar idea to above, though more complicated <---- FIXME
+
+        proximity_step = proximity_step.flatten(2)  # similar to cspace_sdf_step
+
+        growth_step = growth_step.flatten(1) # similar to cspace_sdf_step
+        
+        joint_step = joint_step.flatten(2) # similar to cspace_sdf_step
 
         ######################
 
@@ -1357,8 +1350,7 @@ def SCS_solve(params: VineParams, dstate, forces,
         growth_constraint = cp.Parameter(growth_con_term.shape[1:])
         joint_constraint = cp.Parameter(joint_con_term.shape[1:])
 
-        #NOTE: flatten is used repeatedly to allow matrix multiplication
-        #NOTE 2: next_dstate indexxing is mostly drop cspace or dynamic obstacle info where it's not needed (to make dims work)
+        #NOTE: next_dstate indexxing is mostly to drop cspace or dynamic obstacle info where it's not needed (to make dims work)
         #FIXME: MANY matrix ops done here just to make them valid (GO BACK AND FIGURE OUT HOW TO MAKE THEM MAKE SENSE LATER)
 
         objective = cp.Minimize(0.5 * cp.sum_squares(mass_matrix_sqrt @ next_dstate.flatten('C')) + 
