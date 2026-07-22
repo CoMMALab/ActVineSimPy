@@ -305,7 +305,7 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256):
         # dummy_state = create_train_state(key, model, learning_rate, input_shape=(1, 2))
         # state = checkpoints.restore_checkpoint(ckpt_dir=ckpt_path, target=dummy_state)
         
-        checkpoint = torch.load(f'{ckpt_path}/checkpoint.pt')
+        checkpoint = torch.load(f'{ckpt_path}/checkpoint.pt', map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 

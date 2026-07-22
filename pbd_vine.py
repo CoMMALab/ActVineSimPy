@@ -928,9 +928,9 @@ def proximity_measure(cspace: torch.tensor,
         center_x, center_y = joint_center_coords
         rect_left, rect_top, rect_right, rect_bottom = dynamic_obj_position
 
-        # Find point on rectangle closest to joint center
+        # Find point on rectangle closest to joint center.
         closest_x = torch.clamp(center_x, rect_left, rect_right)
-        closest_y = torch.clamp(center_y, rect_bottom, rect_top)
+        closest_y = torch.clamp(center_y, rect_top, rect_bottom)
 
         # Depth of rectangle's penetration:
         dist = torch.sqrt(torch.pow(closest_x - center_x, 2) + torch.pow(closest_y - center_y, 2))
@@ -1005,15 +1005,21 @@ def growth_measure(cspace: torch.tensor,
     return growth
 
 
-def get_bending_energy(params: VineParams, cspace: torch.tensor, bend_params: torch.tensor, bend_energy_func: Callable):
+def get_bending_energy(params: VineParams, cspace: torch.tensor, dstate: torch.tensor,
+                       bend_params: torch.tensor, bend_energy_func: Callable):
 
-    #NOTE: vine stiffness and damping are NOT utilized
-
+    # Elastic bending moment from the sPAM model (kept as-is -- this is the ActVine design model).
     turning_radius = torch.where(torch.abs(cspace[:-1, -1]) < 1e-3, 0, params.body_length * 1e-3 / cspace[:-1, -1])
     bend_moment = -1 * bend_energy_func(turning_radius, bend_params[:, 0], bend_params[:, 1])
 
+    # Angular velocity damping, ported from DiffVine's bending_energy
+    dtheta = dstate[:params.max_bodies, 2]
+    dtheta_rel = torch.cat([dtheta[:1], dtheta[1:] - dtheta[:-1]])
+    damping = torch.as_tensor(params.damping, dtype=bend_moment.dtype)
+    bend_moment = bend_moment - torch.abs(damping) * dtheta_rel
+
     # Pad updates to forces vector works:
-    bend_moment = torch.nn.functional.pad(bend_moment, (0, 1 + params.dynamic_objs_mass.shape[0]))    
+    bend_moment = torch.nn.functional.pad(bend_moment, (0, 1 + params.dynamic_objs_mass.shape[0]))
     return bend_moment
 
 
@@ -1075,11 +1081,11 @@ def compute_jacobians(params: VineParams,
                                           x0=x0, y0=y0))(cspace)
     joint_now = joint_measure(cspace, params, n_bodies, x0, y0)
 
-    #NOTE: shouldn't we also take info for wrt to dynamic_obj_poses? here only wrt cspace is taken...
-    proximity_jac = torch.func.jacrev(partial(proximity_measure, params=params,
-                                              n_bodies=n_bodies, x0=x0, y0=y0, heading0=heading0))(
-                                                  cspace, dynamic_obj_positions
-                                              )
+    # Two-sided contact: differentiate proximity w.r.t. BOTH the vine config and the object poses.
+    proximity_jac, proximity_obj_jac = torch.func.jacrev(
+        partial(proximity_measure, params=params,
+                n_bodies=n_bodies, x0=x0, y0=y0, heading0=heading0),
+        argnums=(0, 1))(cspace, dynamic_obj_positions)
     proximity_now = proximity_measure(cspace, dynamic_obj_positions, params, n_bodies,
                                       x0, y0, heading0)
     
@@ -1090,7 +1096,7 @@ def compute_jacobians(params: VineParams,
     growth_now = growth_measure(cspace, dstate, n_bodies)
 
     # Find bend energy to minimize for the vine:
-    bend_energy = get_bending_energy(params, cspace, bend_params, bend_energy_func)
+    bend_energy = get_bending_energy(params, cspace, dstate, bend_params, bend_energy_func)
 
     # Find motion info for dynamic objects:
     
@@ -1127,7 +1133,7 @@ def compute_jacobians(params: VineParams,
     forces += obj_motion
 
     return n_bodies, forces, cspace_sdf_jac, cspace_sdf_now, dynamic_sdf_jac, dynamic_sdf_now, \
-            joint_jac, joint_now, proximity_jac, proximity_now, \
+            joint_jac, joint_now, proximity_jac, proximity_now, proximity_obj_jac, \
             growth_wrt_state, growth_wrt_dstate, growth_now
 
 ######################################################
@@ -1204,7 +1210,7 @@ sqrtm_module = MatrixSquareRoot()
 def SCS_solve_layers(mass_matrix, forces_info,
                      cspace_sdf_step, cspace_sdf_now,
                      dynamic_sdf_step, dynamic_sdf_now,
-                     proximity_step, proximity_now,
+                     proximity_step, proximity_obj_step, proximity_now,
                      growth_step, growth_now,
                      joint_step, joint_now,
                      first_call_after_init = False):
@@ -1226,6 +1232,7 @@ def SCS_solve_layers(mass_matrix, forces_info,
         cspace_sdf_step = cspace_sdf_step.flatten(2)
         dynamic_sdf_step = dynamic_sdf_step.flatten(2)        
         proximity_step = proximity_step.flatten(2)
+        proximity_obj_step = proximity_obj_step.flatten(2)
         growth_step = growth_step.flatten(1)
         joint_step = joint_step.flatten(2)
 
@@ -1237,6 +1244,7 @@ def SCS_solve_layers(mass_matrix, forces_info,
     dynamic_sdf_step = dynamic_sdf_step.cpu()
     dynamic_sdf_now = dynamic_sdf_now.cpu()
     proximity_step = proximity_step.cpu()
+    proximity_obj_step = proximity_obj_step.cpu()
     proximity_now = proximity_now.cpu()
     growth_step = growth_step.cpu()
     growth_now = growth_now.cpu()
@@ -1244,9 +1252,9 @@ def SCS_solve_layers(mass_matrix, forces_info,
     joint_now = joint_now.cpu()
 
     #NOTE: speed up may be achieved by using GPU-compatible cvxpy solver instead
-    solution = cvxpylayer(mass_matrix_batched, forces_info, 
+    solution = cvxpylayer(mass_matrix_batched, forces_info,
                           cspace_sdf_step, dynamic_sdf_step,
-                          proximity_step, growth_step, joint_step,
+                          proximity_step, proximity_obj_step, growth_step, joint_step,
                           cspace_sdf_now, dynamic_sdf_now,
                           proximity_now, growth_now, joint_now,
                           solver_args = solver_args_scs)
@@ -1258,7 +1266,7 @@ def SCS_solve(params: VineParams, dstate, forces,
               cspace_sdf_jac, cspace_sdf_now,
               dynamic_sdf_jac, dynamic_sdf_now,
               joint_jac, joint_now,
-              proximity_jac, proximity_now,
+              proximity_jac, proximity_now, proximity_obj_jac,
               growth_wrt_state, growth_wrt_dstate, growth_now,
               first_call_after_init):
     
@@ -1290,14 +1298,25 @@ def SCS_solve(params: VineParams, dstate, forces,
     dynamic_sdf_step = -1 * dynamic_sdf_jac * dt
     proximity_step = -1 * proximity_jac * dt
 
+    # Two-sided contact: object-velocity contribution to the proximity constraint.
+    # proximity_obj_jac: (B, n_joints, n_objs_measure, n_objs_pose, 4-rect). Off-diagonal
+    # object terms are zero (each joint-object proximity depends only on its own object).
+    prox_obj_diag = torch.diagonal(proximity_obj_jac, dim1=2, dim2=3).movedim(-1, 2)  # (B, n_joints, n_objs, 4)
+    prox_obj_vx = prox_obj_diag[..., 0] + prox_obj_diag[..., 2]
+    prox_obj_vy = prox_obj_diag[..., 1] + prox_obj_diag[..., 3]
+    prox_obj_vth = torch.zeros_like(prox_obj_vx)
+    proximity_obj_vel_jac = torch.stack([prox_obj_vx, prox_obj_vy, prox_obj_vth], dim=-1)  # (B, n_joints, n_objs, 3)
+    proximity_obj_step = -1 * proximity_obj_vel_jac * dt
+
     # Inequality constraint:
     cspace_sdf_con_term = cspace_sdf_now
     dynamic_sdf_con_term = dynamic_sdf_now
-    proximity_con_term = proximity_now
+    # Flatten the trailing object axis so each joint yields exactly one constraint row.
+    proximity_con_term = proximity_now.flatten(1)
 
     # Equality parameters:
     if params.dynamic_objs_mass.size > 0:
-        zeros = torch.zeros(100, params.dynamic_objs_mass.size, 3, dtype = growth_wrt_state.dtype)
+        zeros = torch.zeros(growth_wrt_state.shape[0], params.dynamic_objs_mass.size, 3, dtype = growth_wrt_state.dtype)
         growth_wrt_state = torch.cat([growth_wrt_state, zeros], dim=1)
 
     growth_step = (growth_wrt_state * dt + growth_wrt_dstate)
@@ -1305,7 +1324,7 @@ def SCS_solve(params: VineParams, dstate, forces,
 
     # Equality constraints:
     growth_con_term = (
-        growth_now - 1000 * params.grow_rate -
+        growth_now - params.grow_rate -
         torch.bmm(growth_wrt_dstate.flatten(1).unsqueeze(1), dstate.flatten(1).unsqueeze(2)).squeeze(2).squeeze(1)
     )
     growth_con_term = -growth_con_term.unsqueeze(1)
@@ -1326,6 +1345,7 @@ def SCS_solve(params: VineParams, dstate, forces,
         dynamic_sdf_step = dynamic_sdf_step.flatten(2) # similar idea to above, though more complicated <---- FIXME
 
         proximity_step = proximity_step.flatten(2)  # similar to cspace_sdf_step
+        proximity_obj_step = proximity_obj_step.flatten(2)  # object-velocity coupling
 
         growth_step = growth_step.flatten(1) # similar to cspace_sdf_step
         
@@ -1341,6 +1361,7 @@ def SCS_solve(params: VineParams, dstate, forces,
         cspace_sdf_param = cp.Parameter(cspace_sdf_step.shape[1:])
         dynamic_sdf_param = cp.Parameter(dynamic_sdf_step.shape[1:])
         proximity_param = cp.Parameter(proximity_step.shape[1:])
+        proximity_obj_param = cp.Parameter(proximity_obj_step.shape[1:])
         growth_param = cp.Parameter(growth_step.shape[1:])
         joint_param = cp.Parameter(joint_step.shape[1:])
 
@@ -1361,8 +1382,12 @@ def SCS_solve(params: VineParams, dstate, forces,
                        dynamic_sdf_param.T @ next_dstate[(next_dstate.shape[0] - num_dynamic_objs if num_dynamic_objs != 0 else 0):,
                                                           :] <= dynamic_sdf_constraint, #NOTE: transpose for dynamic_sdf_param
                        
-                       proximity_param @ next_dstate[:-num_dynamic_objs, :].flatten('C') <= proximity_constraint,
-                       
+                       # Two-sided contact: the vine velocity term AND the object velocity term
+                       # together must keep next-step proximity >= 0, so the QP can satisfy contact
+                       # by moving the object (momentum transfer) instead of only stopping the vine.
+                       proximity_param @ next_dstate[:-num_dynamic_objs, :].flatten('C')
+                           + proximity_obj_param @ next_dstate[-num_dynamic_objs:, :].flatten('C') <= proximity_constraint,
+
                        growth_param @ next_dstate.flatten('C') == growth_constraint,
                        
                        joint_param @ next_dstate[:-num_dynamic_objs, :].flatten('C') == joint_constraint]
@@ -1372,14 +1397,14 @@ def SCS_solve(params: VineParams, dstate, forces,
 
         cvxpylayer = CvxpyLayer(problem, parameters = [
             mass_matrix_sqrt, forces_param, cspace_sdf_param, dynamic_sdf_param,
-            proximity_param, growth_param, joint_param, cspace_sdf_constraint,
+            proximity_param, proximity_obj_param, growth_param, joint_param, cspace_sdf_constraint,
             dynamic_sdf_constraint, proximity_constraint, growth_constraint, joint_constraint
         ], variables = [next_dstate])
 
-    next_dstate_solution = SCS_solve_layers(mass_inertia_diag, forces_info, 
+    next_dstate_solution = SCS_solve_layers(mass_inertia_diag, forces_info,
                                             cspace_sdf_step, cspace_sdf_con_term,
                                             dynamic_sdf_step, dynamic_sdf_con_term,
-                                            proximity_step, proximity_con_term,
+                                            proximity_step, proximity_obj_step, proximity_con_term,
                                             growth_step, growth_con_term,
                                             joint_step, joint_con_term,
                                             first_call_after_init)
@@ -1410,15 +1435,15 @@ def SCS_step_vine(params: VineParams, cspace: np.array, dstate: np.array,
     bend_params = torch.tensor(bend_params, device=device)
 
     new_n_bodies, forces, cspace_sdf_jac, cspace_sdf_now, dynamic_sdf_jac, dynamic_sdf_now, \
-    joint_jac, joint_now, proximity_jac, proximity_now, \
+    joint_jac, joint_now, proximity_jac, proximity_now, proximity_obj_jac, \
     growth_wrt_state, growth_wrt_dstate, growth_now = \
     torch.vmap(compute_jacobians, in_dims=(None, 0, 0, 0, 0, None, None, None, 0, None)) \
                              (params, cspace, dstate, dynamic_obj_positions, n_bodies,
                               x0, y0, heading0, bend_params, bend_energy_func)
-    
+
     next_dstate_solution = SCS_solve(params, dstate, forces, cspace_sdf_jac, cspace_sdf_now,
                                      dynamic_sdf_jac, dynamic_sdf_now, joint_jac,
-                                     joint_now, proximity_jac, proximity_now,
+                                     joint_now, proximity_jac, proximity_now, proximity_obj_jac,
                                      growth_wrt_state, growth_wrt_dstate, growth_now,
                                      first_call_after_init = first_call_after_init)
     
@@ -1436,18 +1461,18 @@ def SCS_step_vine(params: VineParams, cspace: np.array, dstate: np.array,
     if next_dstate_dynamic_objs.dim() < 3:
         next_dstate_dynamic_objs = next_dstate_dynamic_objs.unsqueeze(1)
 
-    # Update cspace
-
-    new_cspace = cspace + next_dstate_cspace
+    # Update cspace, integrate with an explicit dt
+    dt = params.dt
+    new_cspace = cspace + dt * next_dstate_cspace
 
     # Update dynamic object coords (# NOTE: for now, we ignore theta information)
     new_dynamic_obj_positions = dynamic_obj_positions
 
-    new_dynamic_obj_positions[:, :, 0] += next_dstate_dynamic_objs[:, :, 0] # update x
-    new_dynamic_obj_positions[:, :, 2] += next_dstate_dynamic_objs[:, :, 0]
+    new_dynamic_obj_positions[:, :, 0] += dt * next_dstate_dynamic_objs[:, :, 0] # update x
+    new_dynamic_obj_positions[:, :, 2] += dt * next_dstate_dynamic_objs[:, :, 0]
 
-    new_dynamic_obj_positions[:, :, 1] += next_dstate_dynamic_objs[:, :, 1] # update y
-    new_dynamic_obj_positions[:, :, 3] += next_dstate_dynamic_objs[:, :, 1]
+    new_dynamic_obj_positions[:, :, 1] += dt * next_dstate_dynamic_objs[:, :, 1] # update y
+    new_dynamic_obj_positions[:, :, 3] += dt * next_dstate_dynamic_objs[:, :, 1]
 
     return new_cspace.cpu(), new_n_bodies.cpu(), new_dynamic_obj_positions.cpu(), next_dstate_solution.cpu()
 
