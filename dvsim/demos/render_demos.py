@@ -1,3 +1,11 @@
+"""Render the dvsim dynamic-obstacle demo GIFs (vine pushing / object-wall / object-object /
+spin / sPAM curve). Everything is specified in SI (meters, kg, m/s) via the dvsim.si layer;
+the sim runs in internal non-dim units and the plots are drawn in millimeters.
+
+Run with the project's env, from anywhere:
+    /home/zak/micromamba/envs/vine/bin/python dvsim/demos/render_demos.py
+GIFs are written next to this script (dvsim/demos/*.gif).
+"""
 import os, sys, math
 import torch
 
@@ -7,46 +15,45 @@ sys.path.insert(0, REPO)
 
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle, Circle, Polygon
+from matplotlib.patches import Circle, Polygon
 from PIL import Image
 from functools import partial
 import dvsim.solver as solver
-from dvsim.vine import (VineParams, create_state_batched, init_state_batched,
-                        forward_batched_part, solve)
+from dvsim.vine import create_state_batched, init_state_batched, forward_batched_part, solve
 from dvsim.dynamic_vine import dynamic_step
+from dvsim import si
+
+MM = lambda x: si.len_to_mm(x)          # internal length -> mm (for display)
 
 
-def _obb_corners(cx, cy, th, hw, hh):
+def _obb_corners_mm(cx, cy, th, hw, hh):
     c, s = math.cos(th), math.sin(th)
-    return [(cx + c * lx - s * ly, cy + s * lx + c * ly)
+    return [(MM(cx + c * lx - s * ly), MM(cy + s * lx + c * ly))
             for lx, ly in ((-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh))]
 
 
-def render(name, gifname, obstacles, objs, masses, frames, xlim, ylim=(-45, 45)):
+def render(name, gifname, objs_m, masses_kg, frames, xlim_mm, ylim_mm=(-45, 45),
+           obstacles_m=None, grow_rate_mps=0.3):
+    """objs_m: AABB boxes [x1,y1,x2,y2] in METERS; masses_kg in kg; obstacles_m: static walls
+    (AABB, meters) or None; grow_rate_mps in m/s. Plot limits are in mm."""
     solver.cvxpylayer = None                       # reset cached QP layer (shapes differ per scene)
-    mb = 40
-    params = VineParams(max_bodies=mb, obstacles=[list(map(float, o)) for o in obstacles],
-                        grow_rate=0.3, stiffness_mode='linear')
-    n_obj = len(objs)
-    # scene objects are given as AABB specs [x1,y1,x2,y2]; convert to oriented-box pose + extents
-    aabb = torch.tensor(objs, dtype=torch.float32)
-    obj_pose = torch.stack([(aabb[:, 0] + aabb[:, 2]) / 2,
-                            (aabb[:, 1] + aabb[:, 3]) / 2,
-                            torch.zeros(n_obj)], dim=1)[None]         # (1, n_obj, 3) = (cx,cy,theta)
-    params.obj_hw = (aabb[:, 2] - aabb[:, 0]) / 2
-    params.obj_hh = (aabb[:, 3] - aabb[:, 1]) / 2
-    params.obj_mass = torch.tensor(masses)          # inertia is derived physically from mass+size
-    params.obj_damp = 0.2                           # viscous friction
-    params.obj_vel_cap = 600.0                      # linear velocity cap
+    params = si.vine_params_si(max_bodies=40, obstacles_m=obstacles_m, grow_rate_mps=grow_rate_mps)
+    obj_pose = si.set_objects_si(params, objs_m, masses_kg)   # sets obj_hw/hh/mass, returns pose (internal)
+    n_obj = len(objs_m)
+    params.obj_damp = 0.2                           # viscous friction (dimensionless decay)
     params.obj_ang_vel_cap = 5.0                    # angular velocity cap (rad/s)
 
     B = 1
     ih = torch.zeros(B, 1); ix = torch.zeros(B, 1); iy = torch.zeros(B, 1)
-    state, dstate = create_state_batched(B, mb); bodies = torch.full((B, 1), 2)
+    state, dstate = create_state_batched(B, 40); bodies = torch.full((B, 1), 2)
     init_state_batched(params, state, bodies, ih)
     obj_dstate = torch.zeros(B, n_obj, 3)
-    R = float(params.radius)
-    walls = [o for o in obstacles if o[0] < 1e3]
+    R_mm = MM(float(params.radius))
+    # Walls are oriented boxes too (params.obstacle_*); drawn as OBB polygons like the movable
+    # objects. The far "no obstacles" dummy is offscreen and simply clipped by the plot limits.
+    walls_obb = [([float(v) for v in params.obstacle_pose[k]],
+                  float(params.obstacle_hw[k]), float(params.obstacle_hh[k]))
+                 for k in range(params.obstacle_pose.shape[0])]
 
     fdir = os.path.join(HERE, "_frames"); os.makedirs(fdir, exist_ok=True)
     for f in os.listdir(fdir):
@@ -55,19 +62,21 @@ def render(name, gifname, obstacles, objs, masses, frames, xlim, ylim=(-45, 45))
 
     def draw(i):
         fig, ax = plt.subplots(figsize=(8, 3.0))
-        for (x1, y1, x2, y2) in walls:
-            ax.add_patch(Rectangle((x1, y1), x2 - x1, y2 - y1, facecolor=(1, .89, .71), edgecolor="k", zorder=1))
+        for (pose, hw, hh) in walls_obb:
+            corners = _obb_corners_mm(pose[0], pose[1], pose[2], hw, hh)
+            ax.add_patch(Polygon(corners, closed=True, facecolor=(1, .89, .71), edgecolor="k", zorder=1))
         for k in range(n_obj):
             cx, cy, th = [float(v) for v in obj_pose[0, k]]
-            corners = _obb_corners(cx, cy, th, float(params.obj_hw[k]), float(params.obj_hh[k]))
+            corners = _obb_corners_mm(cx, cy, th, float(params.obj_hw[k]), float(params.obj_hh[k]))
             ax.add_patch(Polygon(corners, closed=True, facecolor=(.55, .8, .95), edgecolor="b", lw=2, zorder=3))
         n = int(bodies[0])
-        xs = [float(state[0, 3 * j]) for j in range(n)]; ys = [float(state[0, 3 * j + 1]) for j in range(n)]
+        xs = [MM(float(state[0, 3 * j])) for j in range(n)]; ys = [MM(float(state[0, 3 * j + 1])) for j in range(n)]
         ax.plot(xs, ys, "-", color=(.15, .3, .8), lw=2, zorder=5)
         for x, y in zip(xs, ys):
-            ax.add_patch(Circle((x, y), R, facecolor=(.3, .5, .95, .4), edgecolor=(.1, .2, .6), zorder=4))
+            ax.add_patch(Circle((x, y), R_mm, facecolor=(.3, .5, .95, .4), edgecolor=(.1, .2, .6), zorder=4))
         ax.plot([0], [0], "g^", ms=9, zorder=6)
-        ax.set_xlim(*xlim); ax.set_ylim(*ylim); ax.set_aspect("equal"); ax.set_title(f"{name}  frame {i}")
+        ax.set_xlim(*xlim_mm); ax.set_ylim(*ylim_mm); ax.set_aspect("equal")
+        ax.set_xlabel("mm"); ax.set_title(f"{name}  frame {i}")
         fig.savefig(os.path.join(fdir, f"f{i:04d}.png"), dpi=70, bbox_inches="tight"); plt.close(fig)
 
     i = 0
@@ -89,32 +98,33 @@ def render(name, gifname, obstacles, objs, masses, frames, xlim, ylim=(-45, 45))
     print("wrote", out, f"({len(imgs)} frames)")
 
 
-_MOMENT_FN = None   # lazily-loaded sPAM surrogate (shared across curve renders)
+_MOMENT_FN = None   # lazily-loaded sPAM surrogate
 
 
-def render_vine_spam(name, gifname, p, l0, scale, frames=45, xlim=(-15, 160), ylim=(-15, 95)):
-    """A vine with NO obstacles that CURVES under sPAM actuation (the ActVine design model).
-    `l0` sign sets curl direction; `scale` is the sPAM-moment visualization knob (see vine.py)."""
+def render_vine_spam(name, gifname, p, l0, scale, frames=45, xlim_mm=(-15, 160), ylim_mm=(-15, 95),
+                     grow_rate_mps=0.3):
+    """A vine with no obstacles that CURVES under sPAM actuation (the ActVine design model).
+    `l0` sign sets curl direction; `scale` is the sPAM-moment visualization knob (pending sysid)."""
     global _MOMENT_FN
     if _MOMENT_FN is None:
         from dvsim.spam import make_moment_fn
         _MOMENT_FN = make_moment_fn()
     solver.cvxpylayer = None
     mb = 40
-    params = VineParams(max_bodies=mb, obstacles=[[1e4, -1, 1e4 + 1, 1]], grow_rate=0.3, stiffness_mode='linear')
+    params = si.vine_params_si(max_bodies=mb, grow_rate_mps=grow_rate_mps)
     params.stiffness_mode = 'spam'
-    params.bend_length_scale = torch.tensor(0.018)
+    params.bend_length_scale = torch.tensor(0.018)        # segment length in METERS (sPAM input)
     params.spam_moment_fn = _MOMENT_FN
     params.spam_moment_scale = scale
-    params.spam_p = torch.full((mb,), float(p))       # actuator pressure (per body)
-    params.spam_l0 = torch.full((mb,), float(l0))     # rest length; sign = curl direction
+    params.spam_p = torch.full((mb,), float(p))           # actuator pressure (Pa)
+    params.spam_l0 = torch.full((mb,), float(l0))         # rest length (m); sign = curl direction
 
     B = 1
     ih = torch.zeros(B, 1); ix = torch.zeros(B, 1); iy = torch.zeros(B, 1)
     state, dstate = create_state_batched(B, mb); bodies = torch.full((B, 1), 2)
     init_state_batched(params, state, bodies, ih)
     fwd = torch.func.vmap(partial(forward_batched_part, params))
-    R = float(params.radius)
+    R_mm = MM(float(params.radius))
 
     fdir = os.path.join(HERE, "_frames"); os.makedirs(fdir, exist_ok=True)
     for f in os.listdir(fdir):
@@ -124,12 +134,13 @@ def render_vine_spam(name, gifname, p, l0, scale, frames=45, xlim=(-15, 160), yl
     def draw(i):
         fig, ax = plt.subplots(figsize=(6, 4.2))
         n = int(bodies[0])
-        xs = [float(state[0, 3 * j]) for j in range(n)]; ys = [float(state[0, 3 * j + 1]) for j in range(n)]
+        xs = [MM(float(state[0, 3 * j])) for j in range(n)]; ys = [MM(float(state[0, 3 * j + 1])) for j in range(n)]
         ax.plot(xs, ys, "-", color=(.15, .3, .8), lw=2, zorder=5)
         for x, y in zip(xs, ys):
-            ax.add_patch(Circle((x, y), R, facecolor=(.9, .6, .3, .45), edgecolor=(.6, .35, .1), zorder=4))
+            ax.add_patch(Circle((x, y), R_mm, facecolor=(.9, .6, .3, .45), edgecolor=(.6, .35, .1), zorder=4))
         ax.plot([0], [0], "g^", ms=9, zorder=6)
-        ax.set_xlim(*xlim); ax.set_ylim(*ylim); ax.set_aspect("equal"); ax.set_title(f"{name}  frame {i}")
+        ax.set_xlim(*xlim_mm); ax.set_ylim(*ylim_mm); ax.set_aspect("equal")
+        ax.set_xlabel("mm"); ax.set_title(f"{name}  frame {i}")
         fig.savefig(os.path.join(fdir, f"f{i:04d}.png"), dpi=70, bbox_inches="tight"); plt.close(fig)
 
     i = 0
@@ -141,6 +152,8 @@ def render_vine_spam(name, gifname, p, l0, scale, frames=45, xlim=(-15, 160), yl
             nds = solve(params, dstate, forces, growth, sdf_now, dev, L, J, gws, gwd).detach().float()
         except Exception as e:
             print(f"  {name}: stopped at frame {i} ({type(e).__name__})"); break
+        vvc = 1.5 * 1000.0 * float(params.grow_rate)          # vine velocity cap (free-growth stability)
+        nds = nds.clamp(-vvc, vvc)
         state = state + nds * params.dt; dstate = nds
         if not torch.isfinite(state).all():
             break
@@ -153,18 +166,18 @@ def render_vine_spam(name, gifname, p, l0, scale, frames=45, xlim=(-15, 160), yl
 
 
 if __name__ == "__main__":
+    # All geometry in METERS, masses in kg, growth in m/s. Plot windows in mm.
     render_vine_spam("vine curves (sPAM actuation)", "vine_spam_curve.gif",
                      p=8000.0, l0=-0.04, scale=20.0, frames=45)
     render("vine pushes box", "vine_pushes_box.gif",
-           obstacles=[[1e4, -1, 1e4 + 1, 1]], objs=[[45, -14, 73, 14]], masses=[0.05],
-           frames=46, xlim=(-15, 230))
+           objs_m=[[0.045, -0.014, 0.073, 0.014]], masses_kg=[0.05], frames=46, xlim_mm=(-15, 230))
     render("object stops at wall", "obj_wall.gif",
-           obstacles=[[200, -45, 220, 45]], objs=[[45, -14, 73, 14]], masses=[0.05],
-           frames=34, xlim=(-15, 245))
+           obstacles_m=[[0.200, -0.045, 0.220, 0.045]],
+           objs_m=[[0.045, -0.014, 0.073, 0.014]], masses_kg=[0.05], frames=34, xlim_mm=(-15, 245))
     render("object pushes object", "obj_obj.gif",
-           obstacles=[[1e4, -1, 1e4 + 1, 1]], objs=[[45, -14, 73, 14], [120, -14, 148, 14]],
-           masses=[0.05, 0.05], frames=50, xlim=(-15, 290))
+           objs_m=[[0.045, -0.014, 0.073, 0.014], [0.120, -0.014, 0.148, 0.014]],
+           masses_kg=[0.05, 0.05], frames=50, xlim_mm=(-15, 290))
     render("vine spins a box (off-center push)", "obj_spin.gif",
-           obstacles=[[1e4, -1, 1e4 + 1, 1]], objs=[[41, -2, 69, 26]], masses=[0.05],
-           frames=40, xlim=(-15, 150), ylim=(-30, 60))
+           objs_m=[[0.041, -0.002, 0.069, 0.026]], masses_kg=[0.05],
+           frames=40, xlim_mm=(-15, 150), ylim_mm=(-30, 60))
     print("done")

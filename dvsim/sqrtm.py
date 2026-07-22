@@ -33,19 +33,3 @@ class MatrixSquareRoot(Function):
 
             grad_input = torch.from_numpy(grad_sqrtm).to(grad_output)
         return grad_input
-
-
-sqrtm = MatrixSquareRoot.apply
-
-
-def main():
-    from torch.autograd import gradcheck
-    k = torch.randn(20, 10).double()
-    # Create a positive definite matrix
-    pd_mat = (k.t().matmul(k)).requires_grad_()
-    test = gradcheck(sqrtm, (pd_mat,))
-    print(test)
-
-
-if __name__ == '__main__':
-    main()

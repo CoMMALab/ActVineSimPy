@@ -21,54 +21,11 @@ fitted values (do not "physicalize" them -- they are calibrated to real vine dat
 """
 import torch
 from functools import partial
-from .vine import StateTensor, create_M, forward_batched_part
+from .vine import StateTensor, create_M, forward_batched_part, point_obb_gap, obb_obb_sep, box_inertia
 from .solver import init_layers, solve_layers
 
 
-# ------------------------------------------------------------------ geometry (oriented boxes)
-def point_obb_gap(px, py, pose, hw, hh, radius):
-    """Signed gap between a circle (center (px,py), radius) and an oriented box.
-    pose = (cx, cy, theta). >0 separated, <0 penetrating."""
-    cx, cy, th = pose[0], pose[1], pose[2]
-    c, s = torch.cos(th), torch.sin(th)
-    dx, dy = px - cx, py - cy
-    lx = c * dx + s * dy          # world -> box-local (rotate by -theta)
-    ly = -s * dx + c * dy
-    qx = lx - torch.clamp(lx, -hw, hw)
-    qy = ly - torch.clamp(ly, -hh, hh)
-    return torch.sqrt(qx * qx + qy * qy + 1e-9) - radius
-
-
-def obb_obb_sep(poseA, hwA, hhA, poseB, hwB, hhB):
-    """2D separating-axis separation between two oriented boxes.
-    >=0 separated (gap on the max-separating axis); <0 penetration depth."""
-    dx = poseB[0] - poseA[0]
-    dy = poseB[1] - poseA[1]
-    cA, sA = torch.cos(poseA[2]), torch.sin(poseA[2])
-    cB, sB = torch.cos(poseB[2]), torch.sin(poseB[2])
-
-    def gap(nx, ny):   # projection gap along unit axis (nx, ny)
-        d = torch.abs(dx * nx + dy * ny)
-        rA = hwA * torch.abs(cA * nx + sA * ny) + hhA * torch.abs(-sA * nx + cA * ny)
-        rB = hwB * torch.abs(cB * nx + sB * ny) + hhB * torch.abs(-sB * nx + cB * ny)
-        return d - rA - rB
-
-    # candidate separating axes = the 4 face normals (2 per box)
-    return torch.stack([gap(cA, sA), gap(-sA, cA), gap(cB, sB), gap(-sB, cB)]).max()
-
-
-def box_mass(density, hw, hh):
-    """Mass of a solid rectangle from an areal density (mass per unit area) and half-extents.
-    Lets object mass scale physically with size (a 2x box is 4x heavier)."""
-    return density * 4.0 * hw * hh
-
-
-def box_inertia(mass, hw, hh):
-    """Physical 2D moment of inertia of a uniform rectangle about its center:
-    m*(w^2 + h^2)/12 with w=2hw, h=2hh  ->  m*(hw^2 + hh^2)/3."""
-    return mass * (hw ** 2 + hh ** 2) / 3.0
-
-
+# ------------------------------------------------------------------ object mass
 def create_M_obj(obj_mass, obj_hw, obj_hh):
     """Block-diagonal object mass matrix [m, m, I] per object, with the rotational inertia I
     DERIVED PHYSICALLY from the object's mass and size (uniform rectangle) -- so bigger/heavier
@@ -93,17 +50,10 @@ def proximity_measure(params, state, obj_pose, bodies):
     return torch.where(idx >= bodies, torch.full_like(gaps, 1e3), gaps)
 
 
-def _wall_obbs(params):
-    """Static walls (AABBs) as oriented boxes with theta=0."""
-    w = params.obstacles.float()                                   # (n_walls, 4)
-    z = torch.zeros_like(w[:, 0])
-    pose = torch.stack([(w[:, 0] + w[:, 2]) / 2, (w[:, 1] + w[:, 3]) / 2, z], dim=1)
-    return pose, (w[:, 2] - w[:, 0]) / 2, (w[:, 3] - w[:, 1]) / 2   # pose(n_walls,3), hw, hh
-
-
 def object_env_constraints(params, obj_pose):
-    """Per-batch object<->wall and object<->object separations + Jacobians w.r.t. pose."""
-    wall_pose, wall_hw, wall_hh = _wall_obbs(params)
+    """Per-batch object<->wall and object<->object separations + Jacobians w.r.t. pose.
+    Walls are the same oriented boxes the vine collides with (params.obstacle_*)."""
+    wall_pose, wall_hw, wall_hh = params.obstacle_pose, params.obstacle_hw, params.obstacle_hh
 
     def owall(pose):                                               # (n_obj, n_walls)
         def one(p, hw, hh):
@@ -207,7 +157,11 @@ def dynamic_step(params, init_heading, init_x, init_y, state, dstate, bodies, ob
 
     B = sol.shape[0]
     Nv = params.max_bodies * 3
-    v_vine = sol[:, :Nv]
+    # Cap vine velocities: fast FREE growth (no contact to regularize) drives the sliding tip
+    # joint unstable above ~1.5x the growth target; clamping to a growth-relative bound catches
+    # that spike without limiting normal growth (same technique as DiffVine's solve_layers_new).
+    vvc = getattr(params, 'vine_vel_cap', 1.5 * 1000.0 * float(params.grow_rate))
+    v_vine = sol[:, :Nv].clamp(-vvc, vvc)
     v_obj = sol[:, Nv:].reshape(B, -1, 3)                         # (B, n_obj, 3) = (vx, vy, vtheta)
     # Clamp linear (vx,vy) and angular (vtheta) velocities SEPARATELY -- they have different
     # units/scales, and the promotion spike must be capped for both (a shared cap of ~600 would
