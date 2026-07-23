@@ -17,10 +17,9 @@ import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Polygon
 from PIL import Image
-from functools import partial
 import dvsim.solver as solver
-from dvsim.vine import create_state_batched, init_state_batched, forward_batched_part, solve
-from dvsim.dynamic_vine import dynamic_step
+from dvsim.vine import create_state_batched, init_state_batched
+from dvsim.dynamic_vine import step
 from dvsim import si
 
 MM = lambda x: si.len_to_mm(x)          # internal length -> mm (for display)
@@ -40,8 +39,7 @@ def render(name, gifname, objs_m, masses_kg, frames, xlim_mm, ylim_mm=(-45, 45),
     params = si.vine_params_si(max_bodies=40, obstacles_m=obstacles_m, grow_rate_mps=grow_rate_mps)
     obj_pose = si.set_objects_si(params, objs_m, masses_kg)   # sets obj_hw/hh/mass, returns pose (internal)
     n_obj = len(objs_m)
-    params.obj_damp = 0.2                           # viscous friction (dimensionless decay)
-    params.obj_ang_vel_cap = 5.0                    # angular velocity cap (rad/s)
+    # obj_damp / velocity caps now come from VineParams defaults; override params.* here to tune.
 
     B = 1
     ih = torch.zeros(B, 1); ix = torch.zeros(B, 1); iy = torch.zeros(B, 1)
@@ -84,7 +82,7 @@ def render(name, gifname, objs_m, masses_kg, frames, xlim_mm, ylim_mm=(-45, 45),
         if i % 2 == 0:
             draw(i); saved.append(i)
         try:
-            state, dstate, bodies, obj_pose, obj_dstate = dynamic_step(
+            state, dstate, bodies, obj_pose, obj_dstate = step(
                 params, ih, ix, iy, state, dstate, bodies, obj_pose, obj_dstate)
         except Exception as e:
             print(f"  {name}: stopped at frame {i} ({type(e).__name__})"); break
@@ -123,7 +121,6 @@ def render_vine_spam(name, gifname, p, l0, scale, frames=45, xlim_mm=(-15, 160),
     ih = torch.zeros(B, 1); ix = torch.zeros(B, 1); iy = torch.zeros(B, 1)
     state, dstate = create_state_batched(B, mb); bodies = torch.full((B, 1), 2)
     init_state_batched(params, state, bodies, ih)
-    fwd = torch.func.vmap(partial(forward_batched_part, params))
     R_mm = MM(float(params.radius))
 
     fdir = os.path.join(HERE, "_frames"); os.makedirs(fdir, exist_ok=True)
@@ -148,13 +145,10 @@ def render_vine_spam(name, gifname, p, l0, scale, frames=45, xlim_mm=(-15, 160),
         if i % 2 == 0:
             draw(i); saved.append(i)
         try:
-            bodies, forces, growth, sdf_now, dev, L, J, gws, gwd = fwd(ih, ix, iy, state, dstate, bodies)
-            nds = solve(params, dstate, forces, growth, sdf_now, dev, L, J, gws, gwd).detach().float()
+            # vine-only: no objects, so step() runs the same QP degraded to zero object DOFs
+            state, dstate, bodies, _, _ = step(params, ih, ix, iy, state, dstate, bodies)
         except Exception as e:
             print(f"  {name}: stopped at frame {i} ({type(e).__name__})"); break
-        vvc = 1.5 * 1000.0 * float(params.grow_rate)          # vine velocity cap (free-growth stability)
-        nds = nds.clamp(-vvc, vvc)
-        state = state + nds * params.dt; dstate = nds
         if not torch.isfinite(state).all():
             break
     draw(i); saved.append(i)

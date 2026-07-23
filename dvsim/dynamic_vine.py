@@ -21,7 +21,8 @@ fitted values (do not "physicalize" them -- they are calibrated to real vine dat
 """
 import torch
 from functools import partial
-from .vine import StateTensor, create_M, forward_batched_part, point_obb_gap, obb_obb_sep, box_inertia
+from .vine import (StateTensor, create_M, forward_batched_part,
+                   point_obb_gap, obb_obb_sep, box_inertia, GROW_FACTOR)
 from .solver import init_layers, solve_layers
 
 
@@ -52,7 +53,13 @@ def proximity_measure(params, state, obj_pose, bodies):
 
 def object_env_constraints(params, obj_pose):
     """Per-batch object<->wall and object<->object separations + Jacobians w.r.t. pose.
-    Walls are the same oriented boxes the vine collides with (params.obstacle_*)."""
+    Walls are the same oriented boxes the vine collides with (params.obstacle_*). Returns empty
+    (zero-object) tensors when there are no objects (see dynamic_forward_part on why n_obj==0
+    is handled explicitly rather than via vmap)."""
+    n_obj, n_walls = obj_pose.shape[0], params.obstacle_pose.shape[0]
+    if n_obj == 0:
+        z = obj_pose.new_zeros
+        return z((0, n_walls)), z((0, n_walls, 0, 3)), z((0, 0)), z((0, 0, 0, 3))
     wall_pose, wall_hw, wall_hh = params.obstacle_pose, params.obstacle_hw, params.obstacle_hh
 
     def owall(pose):                                               # (n_obj, n_walls)
@@ -72,12 +79,20 @@ def object_env_constraints(params, obj_pose):
 
 def dynamic_forward_part(params, init_heading, init_x, init_y, state, dstate, bodies, obj_pose):
     """Per-batch vine measures + vine<->object proximity measures/Jacobians (jacrev w.r.t. pose
-    gives the object velocity coupling directly, torque included)."""
+    gives the object velocity coupling directly, torque included). Degrades to vine-only when
+    there are no objects (n_obj == 0): torch.vmap can't map over a zero-length object axis, so
+    the empty proximity tensors are built directly instead of via vmap/jacrev."""
     bodies, forces, growth, sdf_now, dev_now, L, J, gws, gwd = \
         forward_batched_part(params, init_heading, init_x, init_y, state, dstate, bodies)
-    prox_now = proximity_measure(params, state, obj_pose, bodies)
-    prox_J_state = torch.func.jacrev(lambda s: proximity_measure(params, s, obj_pose, bodies))(state)
-    prox_J_pose = torch.func.jacrev(lambda o: proximity_measure(params, state, o, bodies))(obj_pose)
+    n_obj, mb = obj_pose.shape[0], params.max_bodies
+    if n_obj == 0:
+        prox_now = state.new_full((mb, 0), 1e3)
+        prox_J_state = state.new_zeros((mb, 0, state.shape[0]))
+        prox_J_pose = state.new_zeros((mb, 0, 0, 3))
+    else:
+        prox_now = proximity_measure(params, state, obj_pose, bodies)
+        prox_J_state = torch.func.jacrev(lambda s: proximity_measure(params, s, obj_pose, bodies))(state)
+        prox_J_pose = torch.func.jacrev(lambda o: proximity_measure(params, state, o, bodies))(obj_pose)
     return bodies, forces, growth, sdf_now, dev_now, L, J, gws, gwd, prox_now, prox_J_state, prox_J_pose
 
 
@@ -99,9 +114,8 @@ def dynamic_solve(params, dstate, obj_dstate, forces, growth, sdf_now, dev_now, 
     Mv = create_M(params.m.abs(), params.I.abs(), mb)
     Mo = create_M_obj(params.obj_mass.abs(), params.obj_hw, params.obj_hh)
     M = torch.block_diag(Mv, Mo)
-    obj_damp = getattr(params, 'obj_damp', 0.2)   # viscous friction (free objects decay to rest)
     p = torch.cat([forces * dt - torch.matmul(dstate, Mv),
-                   -obj_damp * torch.matmul(obj_dstate.reshape(B, No), Mo)], dim=1)
+                   -params.obj_damp * torch.matmul(obj_dstate.reshape(B, No), Mo)], dim=1)
 
     Gs, hs = [], []
     # vine self-collision sdf (object cols zero)
@@ -130,7 +144,7 @@ def dynamic_solve(params, dstate, obj_dstate, forces, growth, sdf_now, dev_now, 
 
     # equalities A v == b (vine only; object cols zero)
     A_joint = torch.cat([J * dt, torch.zeros(B, J.shape[1], No)], dim=2)
-    g_con = (growth.squeeze(1) - 1000 * params.grow_rate -
+    g_con = (growth.squeeze(1) - GROW_FACTOR * params.grow_rate -
              torch.bmm(gwd, dstate.unsqueeze(2)).squeeze(2).squeeze(1))
     A_growth = torch.cat([gws * dt + gwd, torch.zeros(B, 1, No)], dim=2)
     A = torch.cat([A_joint, A_growth], dim=1)
@@ -140,9 +154,19 @@ def dynamic_solve(params, dstate, obj_dstate, forces, growth, sdf_now, dev_now, 
     return solve_layers(M, p, G, h, A, b)
 
 
-def dynamic_step(params, init_heading, init_x, init_y, state, dstate, bodies, obj_pose, obj_dstate):
-    """One full step. Returns (new_state, new_dstate, bodies, new_obj_pose, new_obj_dstate).
-    obj_pose is (B, n_obj, 3) = (cx, cy, theta); obj_dstate is (B, n_obj, 3) = (vx, vy, vtheta)."""
+def step(params, init_heading, init_x, init_y, state, dstate, bodies, obj_pose=None, obj_dstate=None):
+    """One full physics step for the vine plus any movable objects -- the sim's single entry point.
+    obj_pose is (B, n_obj, 3) = (cx, cy, theta); obj_dstate is (B, n_obj, 3) = (vx, vy, vtheta).
+    Both default to the params' object count at zero pose/velocity, so a vine with NO objects is
+    just step(params, ih, ix, iy, state, dstate, bodies) and everything downstream degrades to the
+    vine-only QP. Returns (new_state, new_dstate, bodies, new_obj_pose, new_obj_dstate)."""
+    B = state.shape[0]
+    n_obj = int(params.obj_mass.shape[0])
+    if obj_pose is None:
+        obj_pose = torch.zeros(B, n_obj, 3)
+    if obj_dstate is None:
+        obj_dstate = torch.zeros(B, n_obj, 3)
+
     fwd = torch.func.vmap(partial(dynamic_forward_part, params), in_dims=(0, 0, 0, 0, 0, 0, 0))
     bodies, forces, growth, sdf_now, dev_now, L, J, gws, gwd, prox_now, pjs, pjp = \
         fwd(init_heading, init_x, init_y, state, dstate, bodies, obj_pose)
@@ -155,19 +179,16 @@ def dynamic_step(params, init_heading, init_x, init_y, state, dstate, bodies, ob
         # rather than crash, so a planner rollout survives. (A softer growth model would buckle.)
         return state, torch.zeros_like(dstate), bodies, obj_pose, torch.zeros_like(obj_dstate)
 
-    B = sol.shape[0]
     Nv = params.max_bodies * 3
     # Cap vine velocities: fast FREE growth (no contact to regularize) drives the sliding tip
     # joint unstable above ~1.5x the growth target; clamping to a growth-relative bound catches
     # that spike without limiting normal growth (same technique as DiffVine's solve_layers_new).
-    vvc = getattr(params, 'vine_vel_cap', 1.5 * 1000.0 * float(params.grow_rate))
-    v_vine = sol[:, :Nv].clamp(-vvc, vvc)
+    v_vine = sol[:, :Nv].clamp(-params.vine_vel_cap, params.vine_vel_cap)
     v_obj = sol[:, Nv:].reshape(B, -1, 3)                         # (B, n_obj, 3) = (vx, vy, vtheta)
     # Clamp linear (vx,vy) and angular (vtheta) velocities SEPARATELY -- they have different
     # units/scales, and the promotion spike must be capped for both (a shared cap of ~600 would
     # allow ~600 rad/s of spin). These caps only bite on spikes; normal contact stays well under.
-    vc = getattr(params, 'obj_vel_cap', 2.0 * 1000.0 * float(params.grow_rate))   # linear
-    va = getattr(params, 'obj_ang_vel_cap', 5.0)                                  # angular (rad/s)
+    vc, va = params.obj_vel_cap, params.obj_ang_vel_cap           # linear, angular (rad/s)
     v_obj = torch.cat([v_obj[..., :2].clamp(-vc, vc), v_obj[..., 2:3].clamp(-va, va)], dim=-1)
     new_state = state + v_vine * params.dt
     new_pose = obj_pose + v_obj * params.dt                       # integrate all 3 DOFs (incl. theta)

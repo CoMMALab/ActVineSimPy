@@ -1,12 +1,14 @@
-import math
 import torch
-# import functorch  # unused; removed for torch 2.x compat
-from torch.autograd.functional import jacobian
-import cvxpy as cp
-import numpy as np
 from functools import partial
 
-from .solver import init_layers, solve_layers
+# DiffVine's baked-in ad-hoc unit factors. They keep the QP well-conditioned in the base's native
+# units; dvsim.si absorbs them into the stored non-dim parameter values. Named here so vine.py,
+# dynamic_vine.py and si.py share ONE definition instead of duplicating the bare literals (which
+# previously had to be kept in sync by hand -- a latent desync bug).
+GROW_FACTOR = 1000.0      # growth equality target = GROW_FACTOR * grow_rate
+I_FACTOR = 100.0          # create_M scales moment of inertia by I_FACTOR
+DAMP_FACTOR = 100.0       # bending_energy scales angular damping by DAMP_FACTOR
+STIFF_FACTOR = 100_000.0  # bending_energy 'linear' elastic stiffness scale
 
 
 def finite_changes(h, init_val):
@@ -17,146 +19,66 @@ def finite_changes(h, init_val):
     return h_rel
 
 
-def generate_segments_from_rectangles(obstacles):
-    '''
-    obstacles: tensor of shape (num_rectangles, 4), each row is [x1, y1, x2, y2]
-    Returns:
-        segments: tensor of shape (num_rectangles * 4, 4), each row is [x_start, y_start, x_end, y_end]
-    '''
-    x1 = obstacles[:, 0]
-    y1 = obstacles[:, 1]
-    x2 = obstacles[:, 2]
-    y2 = obstacles[:, 3]
-
-    # Side 1: bottom edge
-    starts1 = torch.stack([x1, y1], dim = 1)
-    ends1 = torch.stack([x2, y1], dim = 1)
-
-    # Side 2: right edge
-    starts2 = torch.stack([x2, y1], dim = 1)
-    ends2 = torch.stack([x2, y2], dim = 1)
-
-    # Side 3: top edge
-    starts3 = torch.stack([x2, y2], dim = 1)
-    ends3 = torch.stack([x1, y2], dim = 1)
-
-    # Side 4: left edge
-    starts4 = torch.stack([x1, y2], dim = 1)
-    ends4 = torch.stack([x1, y1], dim = 1)
-
-    # Stack all starts and ends
-    starts = torch.cat([starts1, starts2, starts3, starts4], dim = 0) # shape (num_rectangles * 4, 2)
-    ends = torch.cat([ends1, ends2, ends3, ends4], dim = 0)           # shape (num_rectangles * 4, 2)
-
-    # Combine starts and ends into segments
-    segments = torch.cat([starts, ends], dim = 1)  # shape (num_rectangles * 4, 4)
-
-    return segments
-
-def generate_segments_from_rectangles(obstacles):
-    '''
-    obstacles: tensor of shape (num_lines, 2, 2), each row is start, end, with (x, y)
-    Returns:
-        segments: tensor of shape (num_lines, 4), each row is [x_start, y_start, x_end, y_end]
-    '''
-    x1 = obstacles[:, 0]
-    y1 = obstacles[:, 1]
-    x2 = obstacles[:, 2]
-    y2 = obstacles[:, 3]
-
-    # Side 1: bottom edge
-    starts1 = torch.stack([x1, y1], dim = 1)
-    ends1 = torch.stack([x2, y1], dim = 1)
-
-    # Side 2: right edge
-    starts2 = torch.stack([x2, y1], dim = 1)
-    ends2 = torch.stack([x2, y2], dim = 1)
-
-    # Side 3: top edge
-    starts3 = torch.stack([x2, y2], dim = 1)
-    ends3 = torch.stack([x1, y2], dim = 1)
-
-    # Side 4: left edge
-    starts4 = torch.stack([x1, y2], dim = 1)
-    ends4 = torch.stack([x1, y1], dim = 1)
-
-    # Stack all starts and ends
-    starts = torch.cat([starts1, starts2, starts3, starts4], dim = 0) # shape (num_rectangles * 4, 2)
-    ends = torch.cat([ends1, ends2, ends3, ends4], dim = 0)           # shape (num_rectangles * 4, 2)
-
-    # Combine starts and ends into segments
-    segments = torch.cat([starts, ends], dim = 1)  # shape (num_rectangles * 4, 4)
-
-    return segments
-
-def dist2segments(points, segments):
-    '''
-    points: tensor of shape (num_points, 2)
-    segments: tensor of shape (num_segments, 4)
-    Returns:
-        min_distances: tensor of shape (num_points,)
-        closest_points: tensor of shape (num_points, 2)
-        min_indices: tensor of shape (num_points,)  # indices of the closest segments
-    '''
-    # Extract starts and ends
-    starts = segments[:, :2]               # (num_segments, 2)
-    ends = segments[:, 2:]                 # (num_segments, 2)
-    AB = ends - starts                     # (num_segments, 2)
-    AB_dot = torch.sum(AB * AB, dim = 1)   # (num_segments,)
-
-    # Expand dimensions for broadcasting
-    points_expanded = points[:, None, :]   # (num_points, 1, 2)
-    starts_expanded = starts[None, :, :]   # (1, num_segments, 2)
-    AB_expanded = AB[None, :, :]           # (1, num_segments, 2)
-    AB_dot_expanded = AB_dot[None, :]      # (1, num_segments)
-
-    # Compute AP
-    AP = points_expanded - starts_expanded     # (num_points, num_segments, 2)
-
-    # Compute numerator: AP ⋅ AB
-    numerator = torch.sum(AP * AB_expanded, dim = 2) # (num_points, num_segments)
-
-    # Compute t
-    t = numerator / AB_dot_expanded    # (num_points, num_segments)
-    t_clamped = torch.clamp(t, 0.0, 1.0)
-
-    # Compute closest points
-    C = starts_expanded + t_clamped[..., None] * AB_expanded # (num_points, num_segments, 2)
-
-    # Compute distance vectors
-    distance_vectors = C - points_expanded            # (num_points, num_segments, 2)
-    distances = torch.norm(distance_vectors, dim = 2) # (num_points, num_segments)
-
-    # Find minimum distances and indices
-    min_distances, min_indices = torch.min(distances, dim = 1)        # (num_points,)
-    closest_points = C[torch.arange(points.shape[0]), min_indices, :] # (num_points, 2)
-
-    return min_distances, closest_points
+# ------------------------------------------------------------------ geometry (oriented boxes)
+# Everything collidable -- static walls AND movable objects -- is an oriented box (OBB), so these
+# two primitives are the ONLY collision geometry in the sim. point_obb_gap handles vine<->box
+# (the vine bodies are circles); obb_obb_sep handles box<->box (object<->wall, object<->object).
+def point_obb_gap(px, py, pose, hw, hh, radius):
+    """Signed gap between a circle (center (px,py), radius) and an oriented box.
+    pose = (cx, cy, theta). >0 separated, <0 penetrating."""
+    cx, cy, th = pose[0], pose[1], pose[2]
+    c, s = torch.cos(th), torch.sin(th)
+    dx, dy = px - cx, py - cy
+    lx = c * dx + s * dy          # world -> box-local (rotate by -theta)
+    ly = -s * dx + c * dy
+    qx = lx - torch.clamp(lx, -hw, hw)
+    qy = ly - torch.clamp(ly, -hh, hh)
+    return torch.sqrt(qx * qx + qy * qy + 1e-9) - radius
 
 
-def isinside(points, obstacles):
-    '''
-    Determines if each point is inside any of the given rectangular obstacles.
-    Args:
-        points (torch.Tensor): A tensor of shape (N, 2) representing N points with (x, y) coordinates.
-        obstacles (torch.Tensor): A tensor of shape (M, 4) representing M rectangular obstacles with 
-                                  (x_min, y_min, x_max, y_max) coordinates.
-    Returns:
-        torch.Tensor: A boolean tensor of shape (N,) where each element is True if the corresponding 
-                      point is inside any of the obstacles, and False otherwise.    
-    '''
-    x_min = obstacles[:, 0].unsqueeze(0)   # (1, M)
-    y_min = obstacles[:, 1].unsqueeze(0)   # (1, M)
-    x_max = obstacles[:, 2].unsqueeze(0)   # (1, M)
-    y_max = obstacles[:, 3].unsqueeze(0)   # (1, M)
+def obb_obb_sep(poseA, hwA, hhA, poseB, hwB, hhB):
+    """2D separating-axis separation between two oriented boxes.
+    >=0 separated (gap on the max-separating axis); <0 penetration depth."""
+    dx = poseB[0] - poseA[0]
+    dy = poseB[1] - poseA[1]
+    cA, sA = torch.cos(poseA[2]), torch.sin(poseA[2])
+    cB, sB = torch.cos(poseB[2]), torch.sin(poseB[2])
 
-    point_x = points[:, 0].unsqueeze(1)    # (N, 1)
-    point_y = points[:, 1].unsqueeze(1)    # (N, 1)
+    def gap(nx, ny):   # projection gap along unit axis (nx, ny)
+        d = torch.abs(dx * nx + dy * ny)
+        rA = hwA * torch.abs(cA * nx + sA * ny) + hhA * torch.abs(-sA * nx + cA * ny)
+        rB = hwB * torch.abs(cB * nx + sB * ny) + hhB * torch.abs(-sB * nx + cB * ny)
+        return d - rA - rB
 
-    # Check if points are within the bounds of any obstacle (batched comparison)
-    inside = (point_x <= x_max) & (point_x >= x_min) & (point_y <= y_max) & (point_y >= y_min) # (N, M)
+    # candidate separating axes = the 4 face normals (2 per box)
+    return torch.stack([gap(cA, sA), gap(-sA, cA), gap(cB, sB), gap(-sB, cB)]).max()
 
-    return inside.any(dim = 1)     # (N,), True if inside any obstacle
+
+def box_mass(density, hw, hh):
+    """Mass of a solid rectangle from an areal density (mass per unit area) and half-extents.
+    Lets object mass scale physically with size (a 2x box is 4x heavier)."""
+    return density * 4.0 * hw * hh
+
+
+def box_inertia(mass, hw, hh):
+    """Physical 2D moment of inertia of a uniform rectangle about its center:
+    m*(w^2 + h^2)/12 with w=2hw, h=2hh  ->  m*(hw^2 + hh^2)/3."""
+    return mass * (hw ** 2 + hh ** 2) / 3.0
+
+
+def _obstacle_to_obb(o):
+    """Normalize one obstacle spec to (cx, cy, theta, hw, hh). Accepts either an axis-aligned
+    box [x1, y1, x2, y2] (theta=0) or an oriented box [cx, cy, theta, hw, hh]."""
+    if len(o) == 5:
+        return list(o)
+    if len(o) == 4:
+        x1, y1, x2, y2 = o
+        if x1 > x2:
+            x1, x2 = x2, x1
+        if y1 > y2:
+            y1, y2 = y2, y1
+        return [(x1 + x2) / 2, (y1 + y2) / 2, 0.0, (x2 - x1) / 2, (y2 - y1) / 2]
+    raise ValueError(f"obstacle must be [x1,y1,x2,y2] or [cx,cy,theta,hw,hh], got {o}")
 
 
 class StateTensor:
@@ -187,12 +109,6 @@ class StateTensor:
         return self.tensor[..., 2::3]
 
 
-class AbsLayer(torch.nn.Module):
-
-    def forward(self, x):
-        return torch.abs(x)
-
-
 class VineParams:
     '''
     Time indepedent parameters.
@@ -216,100 +132,62 @@ class VineParams:
         self.m = torch.tensor([0.02], dtype=torch.float32)  # 0.002  # Mass of each body
         self.I = torch.tensor([10.0 / 100], dtype=torch.float32)    # Moment of inertia of each body
         self.half_len = torch.tensor(9.0, dtype=torch.float32)
-        self.sicheng = torch.tensor(1, dtype=torch.float32)
-        self.sicheng2 = torch.tensor(1, dtype=torch.float32)
         # Stiffness and damping coefficients
-        self.damping = torch.tensor(50.0 / 100, dtype=torch.float32)        # Damping coefficient (too large is instable!)
-        self.vel_damping = torch.tensor(0.1, dtype=torch.float32)     # Damping coefficient for velocity (too large is instable!)
+        self.damping = torch.tensor(50.0 / 100, dtype=torch.float32)        # angular damping (too large is unstable!)
+        self.vel_damping = torch.tensor(0.1, dtype=torch.float32)           # linear velocity damping
 
         if stiffness_val is None:
-            stiffness_val = torch.tensor(30_000.0 / 100_000.0, dtype=torch.float32)
-        self.stiffness_mode = stiffness_mode
+            stiffness_val = torch.tensor(30_000.0 / STIFF_FACTOR, dtype=torch.float32)
+        self.stiffness_mode = stiffness_mode   # 'linear' (uses stiffness_val) or 'spam' (sPAM model, set externally)
         self.stiffness_val = stiffness_val
 
-        # Init stiffness function
-        if self.stiffness_mode == 'linear':
-            self.stiffness_func = lambda theta_rel: self.stiffness_val.abs() * theta_rel
-        elif self.stiffness_mode == 'nonlinear':
-            # Declare a 2-layer MLP for stiffness
-            # Takes 1 scalar input and outputs 1 scalar output
-            self.stiffness_func = torch.nn.Sequential(
-                torch.nn.Linear(1, 10), torch.nn.Tanh(), torch.nn.Linear(10, 1), AbsLayer()
-                )
+        # Environment obstacles, stored as ORIENTED boxes (the sim's one collision geometry).
+        # Each input spec is either an axis-aligned box [x1,y1,x2,y2] or an oriented box
+        # [cx,cy,theta,hw,hh]; both normalize to a pose (cx,cy,theta) + half-extents (hw,hh).
+        obbs = [_obstacle_to_obb(o) for o in obstacles]
+        t = torch.tensor(obbs, dtype=torch.float32).reshape(-1, 5)
+        self.obstacle_pose = t[:, :3].contiguous()   # (n_obs, 3) = (cx, cy, theta)
+        self.obstacle_hw = t[:, 3].contiguous()      # (n_obs,)
+        self.obstacle_hh = t[:, 4].contiguous()      # (n_obs,)
 
-            # Initialize the weights with xavier normal
-            for layer in self.stiffness_func:
-                if isinstance(layer, torch.nn.Linear):
-                    torch.nn.init.xavier_normal_(layer.weight)
-                    torch.nn.init.zeros_(layer.bias)
-        elif self.stiffness_mode == 'real':
-            pass
-        # Environment obstacles (rects only for now)
-        self.obstacles = obstacles
+        # --- Movable objects (oriented boxes). Empty by default = "no objects"; set via
+        #     dvsim.si.set_objects_si. Inertia is derived physically downstream (create_M_obj). ---
+        self.obj_hw = torch.zeros(0)                 # (n_obj,) half-width  per object
+        self.obj_hh = torch.zeros(0)                 # (n_obj,) half-height per object
+        self.obj_mass = torch.zeros(0)               # (n_obj,) mass        per object
 
-        # Make sure x < x2 y < y2 for rectangles
-        for i in range(len(self.obstacles)):
-            # Swap x
-            if self.obstacles[i][0] > self.obstacles[i][2]:
-                self.obstacles[i][0], self.obstacles[i][2] = self.obstacles[i][2], self.obstacles[i][0]
-            # Swap y
-            if self.obstacles[i][1] > self.obstacles[i][3]:
-                self.obstacles[i][1], self.obstacles[i][3] = self.obstacles[i][3], self.obstacles[i][1]
+        # --- Post-solve velocity regularization (see step()). Caps derived from grow_rate; the
+        #     factors are tuned to catch the body-promotion / free-growth spikes only. ---
+        gr = float(self.grow_rate)
+        self.vine_vel_cap = 1.5 * GROW_FACTOR * gr   # per-component vine velocity cap
+        self.obj_vel_cap = 2.0 * GROW_FACTOR * gr    # object linear (vx, vy) velocity cap
+        self.obj_ang_vel_cap = 5.0                   # object angular (vtheta) cap [rad/s]
+        self.obj_damp = 0.2                          # object viscous friction (free objects -> rest)
 
-        # Make a tensor containing a flattened list of segments of shape  4NxN
-        self.obstacles = torch.tensor(self.obstacles)
-        self.segments = generate_segments_from_rectangles(self.obstacles)
-    
+        # --- sPAM actuation (only used when stiffness_mode == 'spam'; set via the demo / si). ---
+        self.spam_moment_fn = None                   # callable(radius, pressure, l0) -> moment
+        self.spam_p = None                           # (max_bodies,) actuator pressure [Pa]
+        self.spam_l0 = None                          # (max_bodies,) rest length [m] (sign = curl dir)
+        self.spam_moment_scale = 1.0                 # SI->non-dim moment knob (pending sysid)
+        self.bend_length_scale = None                # segment length [m] for the sPAM bend radius
+        self.promote_factor = 2.0                    # tip-link length (in half_len) that triggers growth
+
+        self.si: dict | None = None                  # dvsim.si scale record (set by vine_params_si)
+
     def requires_grad_(self):
-        if self.stiffness_mode == 'linear':
-            self.m.requires_grad_()
-            self.I.requires_grad_()
-            self.damping.requires_grad_()
-            self.grow_rate.requires_grad_()
-            self.stiffness_val.requires_grad_()
-        elif self.stiffness_mode == 'nonlinear':
-            self.m.requires_grad_()
-            self.I.requires_grad_()
-            self.damping.requires_grad_()
-            self.grow_rate.requires_grad_()
-        elif self.stiffness_mode == 'real':
-            self.m.requires_grad_()
-            self.I.requires_grad_()
-            self.damping.requires_grad_()
-            self.grow_rate.requires_grad_()
-            self.sicheng.requires_grad_()
-            self.sicheng2.requires_grad_()
-                    
+        """Mark the fittable physical parameters as differentiable (for system identification)."""
+        for t in (self.m, self.I, self.damping, self.vel_damping, self.grow_rate, self.stiffness_val):
+            t.requires_grad_()
+
     def opt_params(self):
-        params = []
-        
-        if self.stiffness_mode == 'linear':
-            params.append({'params': 
-                    [self.m, self.I, self.damping, self.grow_rate, self.stiffness_val], 
-                    'weight_decay': 0}
-            )
-        elif self.stiffness_mode == 'nonlinear':
-            params.append({'params': 
-                    [self.m, self.I, self.damping, self.grow_rate], 
-                    'weight_decay': 0}
-            )
-                    
-            params.append({'params': 
-                    self.stiffness_func.parameters(), 
-                    'weight_decay': 0}
-            )
-        elif self.stiffness_mode == 'real':
-            params.append({'params': 
-                    [self.m, self.I, self.damping, self.grow_rate, self.sicheng, self.sicheng2], 
-                    'weight_decay': 0}
-            )
-            
-        return params
+        """Fittable physical parameters as an optimizer param-group (for system identification)."""
+        return [{'params': [self.m, self.I, self.damping, self.vel_damping, self.grow_rate,
+                            self.stiffness_val], 'weight_decay': 0}]
 
 
 def create_M(m, I, max_bodies):
     # Update mass matrix M (block diagonal)
-    diagonal_elements = torch.cat([m, m, I * 100.0]).repeat(max_bodies)
+    diagonal_elements = torch.cat([m, m, I * I_FACTOR]).repeat(max_bodies)
     return torch.diag(diagonal_elements)   # Shape: (nq, nq))
 
 
@@ -367,34 +245,24 @@ def zero_out_custom(state, bodies):
 
 
 def sdf(params: VineParams, state, bodies):
-    """
-    Computes the signed distance function (SDF) for given points and obstacles.
+    """Signed gap from each vine body collider to the nearest obstacle (oriented box).
     Args:
-        params:
-        state: vine state N
-        bodies: num bodies per batch item
+        state: vine state (max_bodies*3,)
+        bodies: num active bodies
     Returns:
-        tuple: 
-            - min_dist (torch.Tensor): N distance from body collider to nearest obstacle
-            - contact_forces (torch.Tensor): Nx2 tensor of forces accounting for squishiness of the vine
+        min_dist (torch.Tensor): (max_bodies,) gap to nearest obstacle, minus body radius
+            (negative when the incompressible body would penetrate). Inactive bodies zeroed.
     """
+    st = StateTensor(state)
 
-    state = StateTensor(state)
+    def body_gap(px, py):   # min gap of one body circle over all obstacle boxes
+        gaps = torch.vmap(lambda pose, hw, hh: point_obb_gap(px, py, pose, hw, hh, params.radius))(
+            params.obstacle_pose, params.obstacle_hw, params.obstacle_hh)
+        return gaps.min()
 
-    points = torch.stack((state.x, state.y), dim = -1)
-    min_dist, min_contactpts = dist2segments(points, params.segments)
-    
-    # FiXME disabled because we dont have rects for now
-    # inside_points = isinside(points, params.obstacles)
-
-    # min_dist = torch.where(inside_points, -min_dist, min_dist)
-
-    # Make sdf_now negative when uncompressible body penetrates
-    min_dist -= params.radius
-
+    min_dist = torch.vmap(body_gap)(st.x, st.y)
     zero_out_custom(min_dist, bodies)
-    
-    return min_dist, min_contactpts
+    return min_dist
 
 
 def joint_deviation(params: VineParams, init_x, init_y, state: torch.Tensor, bodies):
@@ -434,163 +302,28 @@ def joint_deviation(params: VineParams, init_x, init_y, state: torch.Tensor, bod
 
     return constraints
 
-# next 3 are sicheng's model
-import torch
-
-def predict_moment(params, turning_angle):
-    """
-    Given a vector of turning angles in radians, pressure in the robot, and radius of the robot,
-    compute the bending moment for each angle.
-    """
-    # Ensure that P and R are tensors
-    P = params.sicheng
-    R = 1
-
-    full_moment = torch.pi * P * R**3  # Constant-moment model prediction at full wrinkling
-    phiTrans = eval_phi_trans(P) # eval_phi_trans(P)       # Transition angle from linear to wrinkling-based model
-    eps_crit = eval_eps(P)             # Critical strain leading to wrinkling
-
-    # Separate angles based on whether they are in the wrinkling regime or linear regime
-    wrinkling_mask = turning_angle > phiTrans
-    
-    # Initialize alp tensor for all angles
-    alp = torch.zeros_like(turning_angle)
-    
-    # Wrinkling-based model for angles greater than phiTrans
-    phi2_wrinkling = turning_angle / 2
-    the_0_wrinkling = torch.arccos(2 * eps_crit / torch.sin(phi2_wrinkling) - 1)
-    alp_wrikle = (torch.sin(2 * the_0_wrinkling) + 2 * torch.pi - 2 * the_0_wrinkling) / \
-                          (4 * (torch.sin(the_0_wrinkling) + torch.cos(the_0_wrinkling) * (torch.pi - the_0_wrinkling)))
-    
-    # Linear elastic model for angles less than or equal to phiTrans
-    phi2_linear = phiTrans / 2
-    the_0_linear = torch.arccos(2 * eps_crit / torch.sin(phi2_linear) - 1)
-    alp_trans = (torch.sin(2 * the_0_linear) + 2 * torch.pi - 2 * the_0_linear) / \
-                (4 * (torch.sin(the_0_linear) + torch.cos(the_0_linear) * (torch.pi - the_0_linear)))
-    alp_nowrinkle = alp_trans / phiTrans * turning_angle
-    
-    alp = torch.where(wrinkling_mask, alp_wrikle, alp_nowrinkle)
-    
-    # Calculate the bending moment for each angle
-    M = alp * full_moment *params.sicheng2
-    return M
-
-def eval_eps(P):
-    """
-    Calculate critical strain that causes wrinkling at different pressures.
-    """
-    P_scaled = (P - 6167) / 5836
-    eps_crit = (0.002077863400343 * P_scaled**3 +
-                0.009091543113141 * P_scaled**2 +
-                0.014512785114617 * P_scaled +
-                0.007656015122415)
-    return torch.tensor(eps_crit, dtype=torch.float32)
-    
-
-def eval_phi_trans(P):
-    """
-    Calculate the bending angle that sees the transition from the linear model to the wrinkling-based model.
-    """
-    P_scaled = (P - 8957) / 5149
-    phiTrans = (0.003180574067535 * P_scaled**3 +
-                0.020924128997619 * P_scaled**2 +
-                0.048366932757916 * P_scaled +
-                0.037544481890778)
-    return torch.tensor(phiTrans, dtype=torch.float32)
-
-def predict_momentf(params, turning_angle):
-    """
-    Given the turning angle in radians, pressure in the robot, and radius of the robot,
-    compute the bending moment at the turning point.
-    """
-    P = 1
-    R = 1
-    full_moment = np.pi * P * R**3  # Constant-moment model prediction at full wrinkling
-    phiTrans = eval_phi_trans(P)     # Transition angle from linear to wrinkling-based model
-    eps_crit = eval_eps(P)           # Critical strain leading to wrinkling
-
-    if turning_angle > phiTrans:
-        # Wrinkling-based model
-        phi2 = turning_angle / 2
-        the_0 = np.arccos(2 * eps_crit / np.sin(phi2) - 1)
-        alp = (np.sin(2 * the_0) + 2 * np.pi - 2 * the_0) / (4 * (np.sin(the_0) + np.cos(the_0) * (np.pi - the_0)))
-    else:
-        # Linear elastic model
-        phi2 = phiTrans / 2
-        the_0 = np.arccos(2 * eps_crit / np.sin(phi2) - 1)
-        alp_trans = (np.sin(2 * the_0) + 2 * np.pi - 2 * the_0) / (4 * (np.sin(the_0) + np.cos(the_0) * (np.pi - the_0)))
-        alp = alp_trans / phiTrans * turning_angle
-
-    M = alp * full_moment * params.sicheng
-    return M
-
-def eval_epsf(P):
-    """
-    Calculate critical strain that causes wrinkling at different pressures.
-    """
-    P_scaled = (P - 6167) / 5836
-    eps_crit = (0.002077863400343 * P_scaled**3 +
-                0.009091543113141 * P_scaled**2 +
-                0.014512785114617 * P_scaled +
-                0.007656015122415)
-    return eps_crit
-
-def eval_phi_transf(P):
-    """
-    Calculate the bending angle that sees the transition from the linear model to the wrinkling-based model.
-    """
-    P_scaled = (P - 8957) / 5149
-    phiTrans = (0.003180574067535 * P_scaled**3 +
-                0.020924128997619 * P_scaled**2 +
-                0.048366932757916 * P_scaled +
-                0.037544481890778)
-    return phiTrans
 def bending_energy(params: VineParams, theta_rel, dtheta_rel, bodies):
-    # Compute the response (like potential energy of bending)
-    # Can think of the system as always wanting to get rid of potential
-    # Generally, \tau = - stiffness * benderino - damping * d_benderino
-
-    # FIXME Stiffness gets a constant so the grads are balanced with the rest of the parameters
-    # bend = -1 * 100_000 * params.stiffness.abs() * theta_rel - 100 * params.damping.abs() * dtheta_rel
-
-    # buckling bending
-    # FIXME Comment out to switch bending modes
-
-    # bend = -1 * 100_000 * params.stiffness_func(theta_rel.unsqueeze(-1)).squeeze() - params.damping.abs() * dtheta_rel
-    
-    # sPAM elastic + actuation moment (the ActVine design model). Reuses the branch author's
-    # convention: turning_radius(m) = bend_length_scale / theta_rel, moment = -1*solve_fwd(r,p,l0).
-    # Keeps DiffVine's angular velocity damping (-100*damping*dtheta_rel).
+    """Bending torque per joint = elastic restoring moment + angular velocity damping.
+    theta_rel / dtheta_rel are the per-joint relative angle / angular velocity."""
     if params.stiffness_mode == 'spam':
+        # sPAM elastic + actuation moment (the ActVine design model): turning_radius(m) =
+        # bend_length_scale / theta_rel, moment = solve_fwd(radius, pressure, l0). spam_moment_scale
+        # is a units knob until the sPAM moment is calibrated to SI (see dvsim.si.spam_moment_to_nd).
         turning_radius = torch.where(theta_rel.abs() < 1e-3,
                                      torch.zeros_like(theta_rel),
                                      params.bend_length_scale / theta_rel)
-        moment = params.spam_moment_fn(turning_radius, params.spam_p, params.spam_l0)  # per-joint
+        moment = params.spam_moment_fn(turning_radius, params.spam_p, params.spam_l0)
         zero_out_custom(moment, bodies)
-        # spam_moment_scale: visualization/units knob until the sPAM moment is physically
-        # calibrated to dvsim's length units (the raw moment is ~10-200x weaker than needed).
-        bend = -1 * getattr(params, 'spam_moment_scale', 1.0) * moment - 100 * params.damping.abs() * dtheta_rel
+        bend = -params.spam_moment_scale * moment - DAMP_FACTOR * params.damping.abs() * dtheta_rel
         zero_out_custom(bend, bodies)
         return bend
 
-    # Symmetric function, take abs of input
-    if params.stiffness_mode == 'nonlinear':
-        stiffness_response = params.stiffness_func(theta_rel.abs().unsqueeze(-1)).squeeze()/10
-    elif params.stiffness_mode == 'linear':
-        stiffness_response = params.stiffness_val.abs() * theta_rel.abs()
-    elif params.stiffness_mode == 'real':
-        stiffness_response = predict_moment(params, torch.abs(theta_rel)) * 0.0002
+    # 'linear' elastic stiffness + angular velocity damping
+    stiffness_response = params.stiffness_val.abs() * theta_rel.abs()
     zero_out_custom(stiffness_response, bodies)
-    #print('stiff', stiffness_response)
-    bend = -1 * 100_000 * theta_rel.sign() * stiffness_response - 100 * params.damping.abs() * dtheta_rel
-
-    # bend = -1 * theta_rel.sign() * params.stiffness * (0.5 - (1.5 * theta_rel.abs() - 0.7)**2) - params.damping * dtheta_rel
-    # bend = -1 * theta_rel.sign() * 1 * params.stiffness * torch.log(theta_rel.abs()*2 + 1) - params.damping * dtheta_rel
+    bend = -STIFF_FACTOR * theta_rel.sign() * stiffness_response - DAMP_FACTOR * params.damping.abs() * dtheta_rel
     zero_out_custom(bend, bodies)
-
     return bend
-    # return -self.stiffness * torch.where(torch.abs(theta) < 0.3, theta * 2, theta * 0.5) - self.damping * dtheta
-    # return torch.sign(theta) * -(torch.sin((torch.abs(theta) + 0.1) / 0.3) + 1.4)
 
 
 def extend(params: VineParams, state, dstate, bodies):
@@ -610,7 +343,7 @@ def extend(params: VineParams, state, dstate, bodies):
                           (state.y[last_i] - endingy)**2).sqrt().squeeze(-1)
 
     # x2 to prevent 0-len segments
-    extend_needed = last_link_distance > params.half_len * 2
+    extend_needed = last_link_distance > params.half_len * params.promote_factor
 
     # Compute location of new seg
     last_link_theta = torch.atan2(state.y[last_i] - state.y[penult_i], state.x[last_i] - state.x[penult_i])
@@ -689,8 +422,8 @@ def forward_batched_part(params: VineParams, init_heading, init_x, init_y, state
     bodies = extend(params, state, dstate, bodies)
 
     # Jacobian of SDF with respect to x and y
-    L, contact_forces = torch.func.jacrev(partial(sdf, params), has_aux = True)(state, bodies)
-    sdf_now, contact_forces = sdf(params, state, bodies)
+    L = torch.func.jacrev(partial(sdf, params))(state, bodies)
+    sdf_now = sdf(params, state, bodies)
 
     # Jacobian of joint deviation wrt state
     J = torch.func.jacrev(partial(joint_deviation, params, init_x, init_y))(state, bodies)
@@ -730,77 +463,3 @@ def forward_batched_part(params: VineParams, init_heading, init_x, init_y, state
     forces = forces.tensor
 
     return bodies, forces, growth, sdf_now, deviation_now, L, J, growth_wrt_state, growth_wrt_dstate
-
-
-forward_batched = torch.func.vmap(forward_batched_part, in_dims = (None, 0, 0, 0, 0, 0, 0))
-
-
-def solve(
-        params: VineParams,
-        dstate,
-        forces,
-        growth,
-        sdf_now,
-        deviation_now,
-        L,
-        J,
-        growth_wrt_state,
-        growth_wrt_dstate
-    ):
-    '''
-    Given some physics data (batched) about the current vine state, find the next state by reexpressing the problem as a QP
-    '''
-    # Convert the values to a shape that qpth can understand
-    N = params.max_bodies * 3
-    dt = params.dt
-    M = create_M(params.m.abs(), params.I.abs(), params.max_bodies)
-
-    # Compute c
-    p = forces * dt - torch.matmul(dstate, M)
-
-    # Expand Q to [batch_size, N, N]
-    Q = M
-    # Q = params.M.unsqueeze(0).expand(batch_size, -1, -1)
-
-    # Inequality constraints
-    G = -L * dt
-    h = sdf_now
-
-    # Equality constraints
-    # Compute growth constraint components
-    g_con = (
-        growth.squeeze(1) - 1000 * params.grow_rate -
-        torch.bmm(growth_wrt_dstate, dstate.unsqueeze(2)).squeeze(2).squeeze(1)
-        )
-    g_coeff = (growth_wrt_state * dt + growth_wrt_dstate)
-    
-    # Prepare equality constraints
-    A = torch.cat([J * dt, g_coeff], dim = 1)
-    b = torch.cat([-deviation_now, -g_con.unsqueeze(1)], dim = 1) # [batch_size, N]
-
-    init_layers(N, Q.shape, p.shape[1:], G.shape[1:], h.shape[1:], A.shape[1:], b.shape[1:])
-    next_dstate_solution = solve_layers(Q, p, G, h, A, b)
-
-    return next_dstate_solution
-
-
-def forward(params: VineParams, init_headings, init_x, init_y, state, dstate, bodies):
-    '''
-    Convenience function that takes an batched input state/dstate, and returns the next state/dstate (also batched)
-    '''
-    # Assert all types are float32
-    assert state.dtype == torch.float32
-    assert dstate.dtype == torch.float32
-
-    bodies, forces, growth, sdf_now, deviation_now, L, J, growth_wrt_state, growth_wrt_dstate \
-        = forward_batched(params, init_headings, init_x, init_y, state, dstate, bodies)
-
-    next_dstate_solution = solve(
-        params, dstate, forces, growth, sdf_now, deviation_now, L, J, growth_wrt_state, growth_wrt_dstate
-        )
-
-    # Update state and dstate
-    new_state = state + next_dstate_solution * params.dt
-    new_dstate = next_dstate_solution
-
-    return new_state, new_dstate, bodies

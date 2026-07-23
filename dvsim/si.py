@@ -13,7 +13,7 @@ solver is used UNCHANGED. Defaults reproduce the DiffVine base's proven-stable r
 in SI -- system identification will replace the placeholder values with fitted ones.
 """
 import torch
-from .vine import VineParams
+from .vine import VineParams, GROW_FACTOR, I_FACTOR, DAMP_FACTOR
 
 # ---- characteristic scales (SI). internal (non-dim) value = SI value / scale ----
 L0 = 1.0e-3     # length : 1 mm   (keeps internal lengths O(1..1e3): the DiffVine proven range)
@@ -25,10 +25,9 @@ F0 = M0 * L0 / T0 ** 2      # force     (N)
 TAU0 = M0 * L0 ** 2 / T0 ** 2   # torque (N*m)
 J0 = M0 * L0 ** 2           # moment of inertia (kg*m^2)
 
-# DiffVine base's baked-in ad-hoc unit constants (see vine.py create_M / solve / bending_energy)
-_GROW_FACTOR = 1000.0       # growth constraint uses 1000 * grow_rate
-_I_FACTOR = 100.0           # create_M uses I * 100
-_DAMP_FACTOR = 100.0        # bending_energy uses 100 * damping
+# DiffVine base's baked-in ad-hoc unit constants (GROW_FACTOR, I_FACTOR, DAMP_FACTOR) are defined
+# ONCE in vine.py and imported here, so the SI<->non-dim conversions below can never drift out of
+# sync with the values the solver actually uses.
 
 
 # ---- SI <-> non-dimensional converters ----
@@ -54,15 +53,15 @@ def vine_params_si(max_bodies=40, obstacles_m=None,
     # magnitude so it doesn't blow up the QP's constraint scaling (a 1e6 m dummy -> 1e9 internal did).
     obs_nd = [_obstacle_to_nd(o) for o in (obstacles_m or [[10.0, -0.01, 10.01, 0.01]])]
     p = VineParams(max_bodies=max_bodies, obstacles=obs_nd,
-                   grow_rate=grow_rate_mps * T0 / (L0 * _GROW_FACTOR),
+                   grow_rate=grow_rate_mps * T0 / (L0 * GROW_FACTOR),
                    stiffness_mode=stiffness_mode)
     # override the DiffVine-hardcoded geometry/inertia with the SI-derived non-dim values
     p.dt = dt_s / T0
     p.radius = radius_m / L0
     p.half_len = torch.tensor(seg_len_m / (2.0 * L0), dtype=torch.float32)
     p.m = torch.tensor([seg_mass_kg / M0], dtype=torch.float32)
-    p.I = torch.tensor([seg_inertia_kgm2 / (J0 * _I_FACTOR)], dtype=torch.float32)
-    p.damping = torch.tensor(ang_damp * T0 / (J0 * _DAMP_FACTOR), dtype=torch.float32)
+    p.I = torch.tensor([seg_inertia_kgm2 / (J0 * I_FACTOR)], dtype=torch.float32)
+    p.damping = torch.tensor(ang_damp * T0 / (J0 * DAMP_FACTOR), dtype=torch.float32)
     p.vel_damping = torch.tensor(lin_damp * T0 / M0, dtype=torch.float32)
     p.si = dict(L0=L0, M0=M0, T0=T0, V0=V0, F0=F0, TAU0=TAU0, J0=J0)
     return p
