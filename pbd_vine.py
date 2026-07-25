@@ -1097,7 +1097,7 @@ def compute_jacobians(params: VineParams,
     kinetic_energy_weight = 0.5
     obj_motion = get_object_motion(params, dstate, kinetic_energy_weight)
 
-    #NOTE: forces shape: (cpsace + dyn_obj len, 3)
+    #NOTE: forces shape: (cpsace + len(dyn_obj), 3)
 
     forces = torch.zeros(cspace.shape[0] + dynamic_obj_positions.shape[0], 3)
 
@@ -1113,8 +1113,8 @@ def compute_jacobians(params: VineParams,
 
     left_shifted_BE = torch.nn.functional.pad(bend_energy[1:], (0,1)) # to drop the first element in BE[1:]
 
-    dstate_x_update = mask_n * dstate[:, 0]
-    dstate_y_update = mask_n * dstate[:, 1]
+    dstate_x_update = mask_n * (dstate[:, 0] * params.damping)
+    dstate_y_update = mask_n * (dstate[:, 1] * params.damping)
     BE_update = mask_n * -bend_energy + mask_n1 * left_shifted_BE
 
     updates = torch.stack([dstate_x_update, 
@@ -1269,8 +1269,7 @@ def SCS_solve(params: VineParams, dstate, forces,
     global cvxpylayer
 
     # Configure constraints and matrices to be used by the solver
-
-    solution_size = (dstate.shape[1:]) # returns next_dstate, so keep the same shape (without batched part)
+    solution_size = (dstate.shape[1:]) 
     dt = params.dt
 
     vine_inertia_weight = 100
