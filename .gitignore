@@ -1,3 +1,4 @@
 *.pyc
 __pycache__/
 dvsim/demos/_frames/
+*.gif

@@ -1,3 +1,4 @@
+import math
 import torch
 from functools import partial
 
@@ -138,8 +139,9 @@ class VineParams:
 
         if stiffness_val is None:
             stiffness_val = torch.tensor(30_000.0 / STIFF_FACTOR, dtype=torch.float32)
-        self.stiffness_mode = stiffness_mode   # 'linear' (uses stiffness_val) or 'spam' (sPAM model, set externally)
         self.stiffness_val = stiffness_val
+        # stiffness_mode is set at the END of __init__ (its setter auto-loads spam_moment_fn, which
+        # needs the spam.* fields below to exist first).
 
         # Environment obstacles, stored as ORIENTED boxes (the sim's one collision geometry).
         # Each input spec is either an axis-aligned box [x1,y1,x2,y2] or an oriented box
@@ -164,15 +166,38 @@ class VineParams:
         self.obj_ang_vel_cap = 5.0                   # object angular (vtheta) cap [rad/s]
         self.obj_damp = 0.2                          # object viscous friction (free objects -> rest)
 
-        # --- sPAM actuation (only used when stiffness_mode == 'spam'; set via the demo / si). ---
-        self.spam_moment_fn = None                   # callable(radius, pressure, l0) -> moment
+        # --- sPAM model (Gao et al. 2025), used when stiffness_mode == 'spam'; set via the demo / si.
+        #     Net per-joint moment M_tot(theta) = M_act - M_vine(theta) [Eq. 3b]: a ~constant actuation
+        #     moment M_act (Eq. 1d) minus the curvature-dependent vine wrinkling restoring M_vine (Eq. 2),
+        #     which balances the actuation at a stable equilibrium curl. spam_moment_scale /
+        #     spam_restore_scale are the SI->non-dim calibration knobs (pending sysid). ---
+        self.spam_moment_fn = None                   # callable(radius, pressure, l0) -> M_act (F_t*arm, Eq. 1d)
         self.spam_p = None                           # (max_bodies,) actuator pressure [Pa]
         self.spam_l0 = None                          # (max_bodies,) rest length [m] (sign = curl dir)
-        self.spam_moment_scale = 1.0                 # SI->non-dim moment knob (pending sysid)
+        self.spam_moment_scale = 1.0                 # actuation moment SI->non-dim scale
+        self.spam_restore_scale = 9000.0             # wrinkling restoring moment SI->non-dim scale
+        self.spam_eps_critical = 0.01                # critical wrinkling strain (Eq. 2b), from reference/spam.py
         self.bend_length_scale = None                # segment length [m] for the sPAM bend radius
         self.promote_factor = 2.0                    # tip-link length (in half_len) that triggers growth
 
         self.si: dict | None = None                  # dvsim.si scale record (set by vine_params_si)
+
+        self.stiffness_mode = stiffness_mode         # last: setter auto-loads spam_moment_fn if 'spam'
+
+    @property
+    def stiffness_mode(self):
+        return self._stiffness_mode
+
+    @stiffness_mode.setter
+    def stiffness_mode(self, mode):
+        """'linear' (elastic, uses stiffness_val) or 'spam' (the sPAM actuation model). Setting 'spam'
+        AUTO-LOADS the actuation moment fn (dvsim.spam.make_actuation_fn; the surrogate load is cached)
+        so callers can't forget it and hit a None call in bending_energy. The actuation INPUTS
+        (spam_p, spam_l0, bend_length_scale, spam_moment_scale) are still supplied per design."""
+        self._stiffness_mode = mode
+        if mode == 'spam' and self.spam_moment_fn is None:
+            from dvsim.spam import make_actuation_fn
+            self.spam_moment_fn = make_actuation_fn()
 
     def requires_grad_(self):
         """Mark the fittable physical parameters as differentiable (for system identification)."""
@@ -302,19 +327,41 @@ def joint_deviation(params: VineParams, init_x, init_y, state: torch.Tensor, bod
 
     return constraints
 
+def vine_wrinkle_moment(theta_abs, eps_crit):
+    """Vine wrinkling restoring-moment SHAPE, ported from the paper (Gao et al. 2025, Eq. 2) /
+    reference/spam.py:vine_bending_moment, normalized to a dimensionless factor. It is linear below
+    the wrinkling onset theta_min = 2*asin(eps_crit) and follows the wrinkling form above; the factor
+    rises with curl (0 -> ~1, peaking near ~15 deg). This curvature dependence is what makes the
+    actuation self-limiting: the restoring grows with the joint's curl until it balances the ~constant
+    actuator moment at a stable equilibrium (paper Eq. 3b), instead of a constant torque running away."""
+    theta_min = 2.0 * math.asin(eps_crit)
+    divisor = torch.sin(theta_abs / 2.0).clamp_min(1e-6)
+    g0 = torch.arccos(torch.clamp(2.0 * eps_crit / divisor - 1.0, -1.0, 1.0))
+    wrinkle = (torch.sin(2 * g0) + 2 * math.pi - 2 * g0) / \
+              (4.0 * (torch.sin(g0) + (math.pi - g0) * torch.cos(g0)))
+    linear = 0.5 * theta_abs / theta_min
+    return torch.where(theta_abs > theta_min, wrinkle, linear)
+
+
 def bending_energy(params: VineParams, theta_rel, dtheta_rel, bodies):
     """Bending torque per joint = elastic restoring moment + angular velocity damping.
     theta_rel / dtheta_rel are the per-joint relative angle / angular velocity."""
     if params.stiffness_mode == 'spam':
-        # sPAM elastic + actuation moment (the ActVine design model): turning_radius(m) =
-        # bend_length_scale / theta_rel, moment = solve_fwd(radius, pressure, l0). spam_moment_scale
-        # is a units knob until the sPAM moment is calibrated to SI (see dvsim.si.spam_moment_to_nd).
-        turning_radius = torch.where(theta_rel.abs() < 1e-3,
-                                     torch.zeros_like(theta_rel),
+        # sPAM model (Gao et al. 2025): net per-joint moment M_tot(theta) = M_act - M_vine(theta)  [Eq. 3b].
+        #   * M_act = sPAM actuation moment F_t*(2R_vine+R_act) [Eq. 1d], ~constant for a given pressure
+        #     (spam_moment_fn = dvsim.spam.make_actuation_fn), signed by the actuator curl direction.
+        #   * M_vine(theta) = the vine's CURVATURE-DEPENDENT wrinkling restoring moment [Eq. 2].
+        # The restoring grows with curl and balances the actuation at a stable equilibrium curvature, so
+        # the vine settles into a uniform curl instead of a constant torque winding up unbounded (which
+        # buckled the base). spam_moment_scale / spam_restore_scale are the SI->non-dim calibration knobs.
+        turning_radius = torch.where(theta_rel.abs() < 1e-3,          # (unused by make_actuation_fn; F_t
+                                     torch.zeros_like(theta_rel),      #  is ~constant, so it ignores r)
                                      params.bend_length_scale / theta_rel)
-        moment = params.spam_moment_fn(turning_radius, params.spam_p, params.spam_l0)
-        zero_out_custom(moment, bodies)
-        bend = -params.spam_moment_scale * moment - DAMP_FACTOR * params.damping.abs() * dtheta_rel
+        m_act = params.spam_moment_fn(turning_radius, params.spam_p, params.spam_l0)  # F_t*arm (Eq. 1d), signed
+        act = params.spam_moment_scale * m_act                                        # actuation (SI->nd scale)
+        m_vine = params.spam_restore_scale * theta_rel.sign() * \
+            vine_wrinkle_moment(theta_rel.abs(), params.spam_eps_critical)             # wrinkling restoring (Eq. 2)
+        bend = act - m_vine - DAMP_FACTOR * params.damping.abs() * dtheta_rel          # Eq. 3b
         zero_out_custom(bend, bodies)
         return bend
 

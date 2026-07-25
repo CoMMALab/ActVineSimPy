@@ -8,7 +8,6 @@ import functools
 from collections import namedtuple
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
-from sPAM.dataset import generate_data_from_csv
 import numpy as np
 # import jax
 # import jax.numpy as jnp
@@ -23,8 +22,10 @@ from sPAM.torch_spam import l_m_to_phi_eps, params
 import pandas as pd
 
 import torch
-if torch.cuda.is_available():
-    torch.set_default_device('cuda')
+# NOTE: deliberately do NOT call torch.set_default_device('cuda') here. This module is imported as a
+# library (dvsim/spam.py -> the vine sim), and flipping the *global* default device forces the whole
+# cpu-native dvsim sim onto CUDA, where its growth path stalls. The sPAM MLP is tiny; it runs on the
+# caller's device (get_or_train_model(device=...), default cpu to match the sim).
 
 import torch.nn as nn
 from torch import optim
@@ -124,13 +125,11 @@ def create_dataset_and_scale(inputs, outputs):
     return scaled_inputs, scaled_outputs, scaling_info
 
 def unscale_outputs(output_scaled, scaling_info):
-    """Un-scale predicted outputs back to their original range."""
-
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
+    """Un-scale predicted outputs back to their original range. Follow the model output's device
+    (the saved scaling_info tensors may be on a different device than the loaded model)."""
     out_min, out_rng = scaling_info['out_min'], scaling_info['out_range']
-    out_min = out_min.to(device)
-    out_rng = out_rng.to(device)
+    out_min = out_min.to(output_scaled.device)
+    out_rng = out_rng.to(output_scaled.device)
     return output_scaled * out_rng + out_min
 
 # --------------------------
@@ -273,11 +272,13 @@ def eval_step(model, metrics, x_batch, y_batch, device):
 # 6. Main Orchestration
 # ------------------------
 
-def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256):
+def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256, device='cpu'):
     """
     Main function to load a pre-trained model or train a new one.
     - Checkpoint name is derived from `params`.
     - If no checkpoint, it generates data, trains, and saves plots/model.
+    - device: where to place the model. Defaults to 'cpu' so the surrogate matches dvsim's
+      cpu-native sim (the caller can pass 'cuda' for standalone GPU training/inference).
     """
 
     # Define checkpoint directory and name
@@ -287,7 +288,7 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256):
     ckpt_path = os.path.abspath(ckpt_path)
 
     # Define model, optimizer, and device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device(device)
     print("USING THIS DEVICE:", device)
 
     model = MLP(num_outputs=2)

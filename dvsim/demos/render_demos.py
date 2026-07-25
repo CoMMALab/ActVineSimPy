@@ -96,23 +96,16 @@ def render(name, gifname, objs_m, masses_kg, frames, xlim_mm, ylim_mm=(-45, 45),
     print("wrote", out, f"({len(imgs)} frames)")
 
 
-_MOMENT_FN = None   # lazily-loaded sPAM surrogate
-
-
 def render_vine_spam(name, gifname, p, l0, scale, frames=45, xlim_mm=(-15, 160), ylim_mm=(-15, 95),
                      grow_rate_mps=0.3):
-    """A vine with no obstacles that CURVES under sPAM actuation (the ActVine design model).
-    `l0` sign sets curl direction; `scale` is the sPAM-moment visualization knob (pending sysid)."""
-    global _MOMENT_FN
-    if _MOMENT_FN is None:
-        from dvsim.spam import make_moment_fn
-        _MOMENT_FN = make_moment_fn()
+    """A vine with no obstacles that CURVES under sPAM actuation (the ActVine design model, Gao et al.
+    2025). `l0` sign sets the curl direction; `scale` is the actuation-moment SI->non-dim knob
+    (spam_moment_scale, pending sysid) -- its ratio to spam_restore_scale sets the equilibrium curl."""
     solver.cvxpylayer = None
     mb = 40
     params = si.vine_params_si(max_bodies=mb, grow_rate_mps=grow_rate_mps)
-    params.stiffness_mode = 'spam'
+    params.stiffness_mode = 'spam'                        # auto-loads params.spam_moment_fn (Eq. 1d actuation)
     params.bend_length_scale = torch.tensor(0.018)        # segment length in METERS (sPAM input)
-    params.spam_moment_fn = _MOMENT_FN
     params.spam_moment_scale = scale
     params.spam_p = torch.full((mb,), float(p))           # actuator pressure (Pa)
     params.spam_l0 = torch.full((mb,), float(l0))         # rest length (m); sign = curl direction
@@ -162,7 +155,7 @@ def render_vine_spam(name, gifname, p, l0, scale, frames=45, xlim_mm=(-15, 160),
 if __name__ == "__main__":
     # All geometry in METERS, masses in kg, growth in m/s. Plot windows in mm.
     render_vine_spam("vine curves (sPAM actuation)", "vine_spam_curve.gif",
-                     p=8000.0, l0=-0.04, scale=20.0, frames=45)
+                     p=8000.0, l0=-0.04, scale=22000.0, frames=45)
     render("vine pushes box", "vine_pushes_box.gif",
            objs_m=[[0.045, -0.014, 0.073, 0.014]], masses_kg=[0.05], frames=46, xlim_mm=(-15, 230))
     render("object stops at wall", "obj_wall.gif",

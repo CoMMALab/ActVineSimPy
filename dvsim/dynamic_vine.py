@@ -97,7 +97,7 @@ def dynamic_forward_part(params, init_heading, init_x, init_y, state, dstate, bo
 
 
 # ------------------------------------------------------------------ solve
-def dynamic_solve(params, dstate, obj_dstate, forces, growth, sdf_now, dev_now, L, J, gws, gwd,
+def dynamic_solve(params, bodies, dstate, obj_dstate, forces, growth, sdf_now, dev_now, L, J, gws, gwd,
                   prox_now, prox_J_state, prox_J_pose, ow_now, ow_J, oo_now, oo_J):
     B = forces.shape[0]
     dt = params.dt
@@ -144,6 +144,16 @@ def dynamic_solve(params, dstate, obj_dstate, forces, growth, sdf_now, dev_now, 
 
     # equalities A v == b (vine only; object cols zero)
     A_joint = torch.cat([J * dt, torch.zeros(B, J.shape[1], No)], dim=2)
+    # Reformulate the max_bodies padding so A is full ROW-rank in EVERY batch element
+    bodies_i = bodies.reshape(B, 1).long()
+    empty = A_joint.abs().amax(-1) < 1e-12                 # (B, 2*mb) all-zero joint rows
+    rank = torch.cumsum(empty.long(), dim=1) - 1           # k-th empty row of the element (0-indexed)
+    pin_var = 3 * bodies_i + rank                          # -> the k-th inactive vine velocity var
+    valid = empty & (pin_var < Nv)                         # (rare) if the vine fills max_bodies, leave
+    A_joint = A_joint.clone()                              #        the lone remainder to the KKT reg
+    A_joint[valid] = 0.0
+    ei, ki = valid.nonzero(as_tuple=True)
+    A_joint[ei, ki, pin_var[ei, ki]] = 1.0
     g_con = (growth.squeeze(1) - GROW_FACTOR * params.grow_rate -
              torch.bmm(gwd, dstate.unsqueeze(2)).squeeze(2).squeeze(1))
     A_growth = torch.cat([gws * dt + gwd, torch.zeros(B, 1, No)], dim=2)
@@ -172,7 +182,7 @@ def step(params, init_heading, init_x, init_y, state, dstate, bodies, obj_pose=N
         fwd(init_heading, init_x, init_y, state, dstate, bodies, obj_pose)
     ow_now, ow_J, oo_now, oo_J = torch.func.vmap(partial(object_env_constraints, params))(obj_pose)
     try:
-        sol = dynamic_solve(params, dstate, obj_dstate, forces, growth, sdf_now, dev_now,
+        sol = dynamic_solve(params, bodies, dstate, obj_dstate, forces, growth, sdf_now, dev_now,
                             L, J, gws, gwd, prox_now, pjs, pjp, ow_now, ow_J, oo_now, oo_J)
     except Exception:
         # QP infeasible (vine fully blocked, hard growth equality unmeetable): freeze this step
