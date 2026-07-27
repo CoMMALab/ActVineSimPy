@@ -34,6 +34,7 @@ def main(B=64, frames=44, use_qpth=True):
 
     angles = torch.linspace(-math.pi/4, math.pi/4, B).unsqueeze(1)      # (B,1) launch headings
     ih, ix, iy = angles, torch.zeros(B, 1), torch.zeros(B, 1)
+    
     state, dstate = create_state_batched(B, 40)
     bodies = torch.full((B, 1), 2)
     init_state_batched(params, state, bodies, ih)

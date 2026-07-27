@@ -47,6 +47,7 @@ def render(name, gifname, objs_m, masses_kg, frames, xlim_mm, ylim_mm=(-45, 45),
     init_state_batched(params, state, bodies, ih)
     obj_dstate = torch.zeros(B, n_obj, 3)
     R_mm = MM(float(params.radius))
+    
     # Walls are oriented boxes too (params.obstacle_*); drawn as OBB polygons like the movable
     # objects. The far "no obstacles" dummy is offscreen and simply clipped by the plot limits.
     walls_obb = [([float(v) for v in params.obstacle_pose[k]],

@@ -1,3 +1,0 @@
-        My ToDos:
-        - make switch to maximal coordinate system using code from velocity-based sim
-                - test it out, then see if it still works afterwards
