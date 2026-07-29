@@ -133,6 +133,7 @@ class VineParams:
         self.m = torch.tensor([0.02], dtype=torch.float32)  # 0.002  # Mass of each body
         self.I = torch.tensor([10.0 / 100], dtype=torch.float32)    # Moment of inertia of each body
         self.half_len = torch.tensor(9.0, dtype=torch.float32)
+        self.body_length = self.half_len * 2
         # Stiffness and damping coefficients
         self.damping = torch.tensor(50.0 / 100, dtype=torch.float32)        # angular damping (too large is unstable!)
         self.vel_damping = torch.tensor(0.1, dtype=torch.float32)           # linear velocity damping

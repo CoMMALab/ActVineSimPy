@@ -19,17 +19,14 @@ import numpy as np
 
 from render import *
 from kinodynamic.max_cover import max_cover
-from pbd_vine import VineParams, step_vine_batched, SCS_step_vine
+from .vine import VineParams
 
 from geometric.biarc_rrtstar import main as geometric_plan
 from kinodynamic.nearest import distance, nearest_neighbor, nearest_neighbor_all
 
-from sPAM.spam import paramstype, params as act_params
+from .spam import make_actuation_fn
 
-from sPAM.torch_nns import get_or_train_model, get_prediction_function
-
-from sPAM.torch_nns_usage import torch_solve as find_actuator_params, solve_fwd as actuator_params_fwd_
-
+from .dynamic_vine import step as forward
 
 #------------------------------------------ global defs (variable/function defs)
 
@@ -392,16 +389,397 @@ class StatesStruct:
         
         return np.arange(to_add_slice.start, to_add_slice.stop, dtype=np.int32)
 
-
 #------------------------------------------ sst helpers (not including rollout)
+'''
+NOTE's:
+- assumed params.body_length == params.half_len * 2
+- for finding the length for the last body for cspace_to_tip,
+  simple geometric distance formula was used between x,y's of last and second to last body
+'''
+
+def get_last_body_length(cspace: np.ndarray, n_bodies: int):
+    '''
+    New method for getting length of last body now that cspace is shaped (b, max_bodies * 3)
+    NOTE: this is NOT batched, needs to be vmapped
+    '''
+
+    last = n_bodies - 1
+    prev_last = n_bodies - 2
+
+    last_x = cspace[:, last * 3 + 0]
+    prev_x = cspace[:, prev_last * 3 + 0]
+
+    last_y = cspace[:, last * 3 + 1]
+    prev_y = cspace[:, prev_last * 3 + 1]
+
+    return torch.sqrt((last_x - prev_x).pow(2) + (last_y - prev_y).pow(2))
+
+
+def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray, 
+                       n_bodies: int, 
+                       x0: float, y0: float, heading0: float):
+    """
+    Convert a batch of c-space -> global center coordinates of tip
+      cspace has shape (batch, N+1,) but we only use the first n_bodies angles (plus last_length).
+    We also incorporate an initial anchor (x0, y0) and heading0 for the first segment.
+
+    Returns:
+        Shape (batch, 3) with the tip coordinates (x, y, theta)
+
+    FIXME: before changing this to be compatible with new cspace representation, answer: WHAT DOES THIS EVEN DO?
+            (where is it used and does it still need to be used?)
+    """
+    assert cspace.shape == (batch_size, params.max_bodies * 3), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
+    assert n_bodies.shape == (batch_size,)
+    
+    angles = cspace[:, 2::3]        # shape (n_bodies,)
+    last_len = torch.vmap(get_last_body_length, in_dims=(0, 0))(cspace, n_bodies)
+
+    assert last_len.shape == (batch_size, 1)
+    
+    # Step 1: compute global angles for each segment center
+    global_angle_full = heading0 + torch.cumsum(torch.tensor(angles), dim=1)
+        
+    # Step 2: compute the center of each segment
+    #   For the i-th segment, the center is offset from the anchor by
+    #        sum_{k=0..i-1} [ L*cos(global_angle_full[k]), L*sin(global_angle_full[k]) ]
+    #   But we can do that more efficiently. We'll build an array of cos/sin, then do a cumsum.
+
+    # Cosines and sines of each segment angle:
+    c_ = torch.cos(global_angle_full)
+
+    s_ = torch.sin(global_angle_full)
+
+    # Prepare the lengths of each segment
+    full_lengths = torch.full((batch_size, params.max_bodies), fill_value=params.body_length)
+
+    arange = torch.arange(batch_size)
+
+    full_lengths[arange, n_bodies-1] = torch.tensor(last_len, dtype=torch.float32)
+    
+    
+    # Now we do a cumulative sum of to get the tip coords of each segment
+    tip_x = x0 + torch.cumsum(full_lengths * c_, dim=1)
+
+    tip_y = y0 + torch.cumsum(full_lengths * s_, dim=1)
+            
+    # Return the tip coordinates for each segment as (N, 3)
+    arange = torch.arange(batch_size)
+
+    ret = torch.stack([tip_x[arange, n_bodies-1],
+                       tip_y[arange, n_bodies-1],
+                       global_angle_full[arange, n_bodies-1]
+                       ]).transpose(0, 1)
+        
+    assert ret.shape == (batch_size, 3), f"ret shape: {ret.shape}"
+    
+    return ret
+
+
+def length(params: VineParams, cspace: np.ndarray, n_bodies: np.ndarray):
+    """
+    Compute the total arc length of a batch of vines
+    
+    Args:
+        params: VineParams structure with body_length and other parameters
+        cspace: Configuration space tensor of shape (batch_size, max_bodies + 1)
+        n_bodies: Array of shape (batch_size,) with the number of bodies for each vine
+    
+    Returns:
+        Array of shape (batch_size,) with the total length of each vine
+    """
+    
+    batch_size = cspace.shape[0]
+    assert cspace.shape == (batch_size, params.max_bodies * 3), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
+    assert n_bodies.shape == (batch_size,)
+    
+    # Standard bodies (all except the last one) have fixed length
+    fixed_length_bodies = (n_bodies - 1) * params.body_length
+    
+    # Last body has variable length from the cspace
+    last_body_length = torch.vmap(get_last_body_length, in_dims=(0, 0))(cspace, n_bodies)
+    
+    # Total length is the sum
+    total_lengths = fixed_length_bodies + last_body_length
+    
+    assert total_lengths.shape == (batch_size,)
+        
+    return total_lengths
+
+
+def length_unbatched(params: VineParams, cspace: np.ndarray, n_bodies: int):
+    return length(params, cspace[None, ...], np.array([n_bodies]))[0]
+
+
+def sample_3D_state(params: SSTparams, batch_size):
+    """
+    Sample a random 2D state in the range defined by SSTparams.
+    Returns (N, 2)
+    """
+    
+    x = np.random.uniform(params.min_x, params.max_x, batch_size)
+    y = np.random.uniform(params.min_y, params.max_y, batch_size)
+    theta = np.random.uniform(-np.pi, np.pi, batch_size)
+    
+    return np.stack([x, y, theta], axis=1)
+
+
+def best_first_selection_sst(
+        params: SSTparams,
+        active: np.ndarray,
+        active_costs: np.ndarray,
+        batch_size: int
+    ):
+    """
+    Decides the closest active state to start growing from, returns:
+        - The nearest active state if at least one neighbor is within δBN
+        - The active state with the minimum cost otherwise
+
+    Args:
+        active  : shape (N, 3) array of tip positions of active states
+        active_costs : shape (N, 1) array of costs for those states
+    Returns:
+        shape (B, 3) indices of the selected active states
+        shape (B, 3) sampled random states
+    """    
+    # 1) xrand ← Sample_State(X);
+    xrand = sample_3D_state(params, batch_size)
+    
+    # 2. Xnear ← Near(V, xrand, δBN);
+    # Compute the distance from xrand to all active states
+    indices, dist2 = nearest_neighbor_all(params, active, xrand)
+    
+    # Find the (B, K) indices of the neighbors within δBN
+    inside_mask = dist2 <= (params.δBN ** 2) # Shape (B, K)
+    
+    big_val = 1e15
+    
+    # Get the inside point with the lowest cost
+    # If there are no inside points, behave unpredictably
+    masked_costs = np.where(inside_mask, active_costs[indices], big_val)
+    # Get the index of the active tip (per xrand) that has the minimum cost
+    min_idx = masked_costs.argmin(axis=1)
+    # Convert the indices to the actual tip positions
+    cheapest_inside_point_idx = indices[min_idx]
+    
+    # Get the closest active state to the random state
+    nearest_idx = np.argmin(dist2, axis=1)
+    nearest_tip_idx = indices[nearest_idx]
+    
+    # If at least one neighbor is within δBN, return the nearest active state,
+    # else return the active state with the minimum cost
+    any_inside = inside_mask.any(axis=1)
+    result = np.where(any_inside, cheapest_inside_point_idx, nearest_tip_idx)
+    
+    assert result.shape == (batch_size,)
+    
+    return result, xrand
+
+
+def is_node_locally_the_best_sst(
+    params: SSTparams,
+    xnew_tips: np.ndarray,     # Shape (B, 3)
+    xnew_costs:  np.ndarray,    # Shape (B,)
+    witness_tips: np.ndarray,  # Shape (M, 3)
+    rep_costs:      np.ndarray     # Shape (M,)
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Given some new states to add, determine if:
+      - They are in a new cell (distance > δs), and are added automatically. We later make a witness in its place too.
+      - They are in the cell of a witness, and are added if they are better than the witness's current rep
+
+    Args:
+      params      : Has .δs as the radius threshold.
+      xnew_tips : (B, d) array of newly generated states.
+      xnew_costs : (B, 1)   array of costs for each new state.
+      witness_tips : (M, d) array of witness states in S, corresponding to reps.
+      rep_states    : (M, d) array of existing representatives in S.
+      rep_costs     : (M, 1)   array of costs for those reps.
+
+    Returns:
+        to_add_fresh_mask : (B,) boolean mask of new states to add as fresh nodes.
+        to_add_dominating_states_mask : (B,) boolean mask of new states to add as dominating states.
+        to_add_dominating_states_witness_idx : (B,) indices of the witness states that the new states dominate.
+    """
+    
+    assert xnew_tips.shape[0] == xnew_costs.shape[0], f"xnew_tips shape: {xnew_tips.shape}, xnew_costs shape: {xnew_costs.shape}"
+    assert witness_tips.shape[0] == rep_costs.shape[0], f"witness_tips shape: {witness_tips.shape}, rep_costs shape: {rep_costs.shape}"
+    
+    indices, dist2 = nearest_neighbor(params, witness_tips, xnew_tips) # Shape (B)
+    assert indices.ndim == 1 and dist2.ndim == 1
+    
+    # Find the mask of states that are within δs
+    within_cell = dist2 <= (params.δs) ** 2
+    
+    # 2) If distance > δs, we automatically add x_new
+    to_add_fresh_mask = ~within_cell
+        
+    # 3) If distance < δs, only add x_new if x_new_cost < cost of that nearest rep.
+    to_add_dominating_states_mask = within_cell & (xnew_costs <= rep_costs[indices])
+        
+    to_add_dominating_states_witness_idx = np.where(to_add_dominating_states_mask, indices, -1)
+    
+    assert to_add_dominating_states_mask.shape == to_add_dominating_states_mask.shape
+    assert to_add_fresh_mask.shape == (xnew_tips.shape[0],), f"to_add_fresh_mask shape: {to_add_fresh_mask.shape}, xnew_tips shape: {xnew_tips.shape}"
+    
+    assert to_add_dominating_states_mask.shape == (xnew_tips.shape[0],)
+    assert to_add_dominating_states_witness_idx.shape == (xnew_tips.shape[0],)
+    
+    # Fresh states are disjoint from dominating states
+    return to_add_fresh_mask,\
+           to_add_dominating_states_mask, to_add_dominating_states_witness_idx
+
+
+def prune_path_at(old_rep_idx, tree):
+    # Prune dead paths. Keep pruning while:
+    #   - The old rep is not past the root
+    #   - The old rep has no children
+    #   - The old rep is not active
+    while (old_rep_idx > 0 and old_rep_idx < tree.num_states) and \
+            (tree._num_children[old_rep_idx] == 0) and \
+            (not tree._isactive[old_rep_idx]):
+        
+        # Deactivate old_rep, set it to kil
+        tree._isactive[old_rep_idx] = False # Kinda redundant
+        tree._kil[old_rep_idx] = True
+        
+        # FIXME Looks real noisy, suppressed
+        # erase_sst_parent_edges(tree, old_rep_idx)
+        
+        # Reduce the child count of old_rep's parent (kill its connection)
+        tree._num_children[tree._parent_idxs[old_rep_idx]] -= 1
+        # Move up to parent for next iteration
+        old_rep_idx = tree._parent_idxs[old_rep_idx]
+
+
+def geometric_cost_to_go(sst_params: SSTparams, querytips):
+    """
+    For each tip, find the nearest point from the geometric plan, and return
+    the upper bound of curves to get to the goal.
+    
+    Args:
+        querytips : (N, 3) array of tip positions to query.
+        sst_params: contains the points and their costs.
+    
+    Returns:
+        (N,) array of costs for each tip.
+    """
+    
+    assert sst_params.points.shape[0] > 0
+    
+    indices, dist2 = nearest_neighbor_all(sst_params, sst_params.points, querytips)
+    
+    # Get the index of the nearest point in the geometric plan
+    nearest_idx = dist2.argmin(axis=1)
+    # Get the cost of that point
+    nearest_cost = sst_params.point_costs[nearest_idx]
+    
+    assert nearest_cost.shape == (querytips.shape[0],)
+    
+    return nearest_cost * sst_params.geo_cost_to_go_weight
 
 #------------------------------------------ rollout
+
+'''
+NOTE's:
+- nothing special was done to the obj position/dstate records if num objs == 0:
+  should this be a special case, or will the record fill with null entries correctly as is?
+'''
+
+def rollout(sst_params, simparams, batch_size, 
+            time_to_evolve,
+            curr_time, cspace, dstate, obj_positions, obj_dstate,
+            bodies, bending_control, 
+            init_x, init_y, init_heading,
+            ):
+    """
+    Perform a rollout of the vine simulation for a given number of steps, or until all
+    batch elements reach the max_bodies limit. Returns the cspace, bodies, and time at 
+    all steps. If a batch element reaches the bodies limit, then the last valid
+    cspace and bodies are duplicated for the rest of the steps.
+    
+    Args:
+        Left as an exercise for the reader.
+    Returns:
+
+        cspace_record : shape (steps_to_iter, batch_size, max_bodies + 1, 3)
+        bodies_record  : shape (steps_to_iter, batch_size)
+        time_record    : shape (steps_to_iter, batch_size)
+
+        dynamic_obj_record : shape (steps_to_iter, batch_size, num_dynamic_objs, 4 (for the coords))
+    """
+    
+    # Record every δs distance, to reduce pressure on the set cover
+    record_every = int(sst_params.δs // (simparams.grow_rate * simparams.dt)) * sst_params.record_every_multiplier
+    steps_to_iter = int(ceil((time_to_evolve) / simparams.dt))        
+    
+    history_size = steps_to_iter // record_every + 1
+
+    bodies_record = np.zeros((history_size, batch_size), dtype=np.int32)
+    time_record = np.zeros((history_size, batch_size), dtype=np.float32)
+
+    cspace_record = np.zeros((history_size, batch_size, simparams.max_bodies * 3), dtype=np.float32)
+    dstate_record = np.zeros((history_size, batch_size, simparams.max_bodies * 3), dtype=np.float32)
+
+    obj_position_record = np.zeros((history_size, batch_size, int(simparams.obj_mass.size), 8), dtype=np.float32)
+    obj_dstate_record = np.zeros((history_size, batch_size, int(simparams.obj_mass.size), 3), dtype=np.float32)
+    
+    # Track which batch elements have reached the max_bodies limit,
+    # so dont update them anymore
+    reached_max = bodies >= simparams.max_bodies - 1
+    
+    for i in range(steps_to_iter):
+        
+        next_cspace, next_bodies, next_dynamic_positions, next_dstate_solution = forward(
+            simparams, init_heading, init_x, init_y, cspace, dstate, bodies,
+            obj_positions, obj_dstate
+        )
+
+        # Check if forward() has caused any vine has hit max length
+        reached_max = reached_max | (bodies >= simparams.max_bodies - 1)
+        
+        # Record the cspace and bodies for this step, but if a vine already
+        # hit its limit, reuse the last one
+        cspace = np.where(reached_max[..., None, None], cspace, next_cspace)
+        bodies = np.where(reached_max, bodies, next_bodies)        
+        curr_time = curr_time + simparams.dt                
+        dynamic_obj_positions = np.where(reached_max[..., None, None], 
+                                         dynamic_obj_positions, next_dynamic_positions)
+        dstate = np.where(reached_max[..., None, None], dstate, next_dstate_solution)
+
+        if i % record_every == 0:
+            # Record the current state
+            bodies_record[i // record_every] = bodies
+            time_record[i // record_every] = curr_time
+
+            cspace_record[i // record_every] = cspace
+            obj_position_record[i // record_every] = obj_positions
+
+            dstate_record[i // record_every] = dstate
+            obj_dstate_record[i // record_every] = obj_dstate
+            
+        # All our vines have hit their limit, stop the rollout
+        if np.all(reached_max):
+            break
+    
+    # Assert all bodies are within the max_bodies limit
+    assert np.all(bodies < simparams.max_bodies), f"bodies: {bodies}, max_bodies: {simparams.max_bodies}"
+    
+    last_index_filled = i // record_every
+
+    return time_record[:last_index_filled], \
+            bodies_record[:last_index_filled], \
+            cspace_record[:last_index_filled], \
+            obj_position_record[:last_index_filled], \
+            dstate_record[:last_index_filled], \
+            obj_dstate_record[:last_index_filled], \
+            last_index_filled
 
 #------------------------------------------ actual sst()
 
 
 #------------------------------------------ sst_star()
-def sst_star(sst_params: SSTparams, sim_params: VineParams, callback=None):
+
     
     decay_factor = 0.8
     sst_iter_0 = 7
@@ -478,7 +856,6 @@ def sst_star(sst_params: SSTparams, sim_params: VineParams, callback=None):
         # we can do better
         
         tree.clean_states()
-
 
 
 #------------------------------------------ main()
