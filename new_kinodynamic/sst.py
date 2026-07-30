@@ -152,7 +152,7 @@ class StatesStruct:
         self._bending_controls = np.zeros((self.init_size, max_bodies, bending_controls_size), dtype=np.float32)
 
         self._c_spaces = np.zeros((self.init_size, max_bodies * 3), dtype=np.float32)
-        self._obj_positions = np.zeros((self.init_size, num_dynamic_objs, 8), 
+        self._obj_positions = np.zeros((self.init_size, num_dynamic_objs, 4), 
                                            dtype=np.float32)
         
         self._dstates = np.zeros((self.init_size, max_bodies * 3), dtype=np.float32)
@@ -206,7 +206,7 @@ class StatesStruct:
         self._bending_controls = np.concatenate([self._bending_controls, np.zeros((current_size, self.max_bodies, bending_controls_size), dtype=np.float32)], axis=0)
 
         self._c_spaces = np.concatenate([self._c_spaces, np.zeros((current_size, self.max_bodies * 3), dtype=np.float32)], axis=0)
-        self._dynamic_positions = np.concatenate([self._dynamic_positions, np.zeros((current_size, self.num_dynamic_objs, 8), dtype=np.float32)], 
+        self._obj_positions = np.concatenate([self._obj_positions, np.zeros((current_size, self.num_dynamic_objs, 4), dtype=np.float32)], 
                                                  axis=0)
         self._dstates = np.concatenate([self._dstates, np.zeros((current_size, self.max_bodies * 3), dtype=np.float32)], axix=0)
         self._obj_dstates = np.concatenate([self._obj_dstates, np.zeros((current_size, self.num_dynamic_objs, 3), dtype=np.float32)],
@@ -263,11 +263,11 @@ class StatesStruct:
         assert time.shape == (num_to_add,)
         assert bending_control.shape == (num_to_add, self.max_bodies, 2)
 
-        assert c_space.shape == (num_to_add, self.max_bodies + 1, 3)
-        assert dstate.shape == (num_to_add, self.dstate_len, 3)
+        assert c_space.shape == (num_to_add, self.max_bodies * 3)
+        assert dstate.shape == (num_to_add, self.max_bodies * 3)
 
         if self.num_dynamic_objs != 0:
-            assert obj_positions.shape == (num_to_add, self.num_dynamic_objs, 8)
+            assert obj_positions.shape == (num_to_add, self.num_dynamic_objs, 4)
             assert obj_dstates.shape(num_to_add, self.num_dynamic_objs, 3)
         
         assert cost_to_come.shape == (num_to_add,)
@@ -721,7 +721,7 @@ def rollout(sst_params, simparams, batch_size,
     cspace_record = np.zeros((history_size, batch_size, simparams.max_bodies * 3), dtype=np.float32)
     dstate_record = np.zeros((history_size, batch_size, simparams.max_bodies * 3), dtype=np.float32)
 
-    obj_position_record = np.zeros((history_size, batch_size, int(simparams.obj_mass.size), 8), dtype=np.float32)
+    obj_position_record = np.zeros((history_size, batch_size, int(simparams.obj_mass.size), 4), dtype=np.float32)
     obj_dstate_record = np.zeros((history_size, batch_size, int(simparams.obj_mass.size), 3), dtype=np.float32)
     
     # Track which batch elements have reached the max_bodies limit,
@@ -730,7 +730,7 @@ def rollout(sst_params, simparams, batch_size,
     
     for i in range(steps_to_iter):
         
-        next_cspace, next_bodies, next_dynamic_positions, next_dstate_solution = forward(
+        next_cspace, next_bodies, next_obj_positions, next_dstate_solution = forward(
             simparams, init_heading, init_x, init_y, cspace, dstate, bodies,
             obj_positions, obj_dstate
         )
@@ -743,8 +743,8 @@ def rollout(sst_params, simparams, batch_size,
         cspace = np.where(reached_max[..., None, None], cspace, next_cspace)
         bodies = np.where(reached_max, bodies, next_bodies)        
         curr_time = curr_time + simparams.dt                
-        dynamic_obj_positions = np.where(reached_max[..., None, None], 
-                                         dynamic_obj_positions, next_dynamic_positions)
+        obj_positions = np.where(reached_max[..., None, None], 
+                                         obj_positions, next_obj_positions)
         dstate = np.where(reached_max[..., None, None], dstate, next_dstate_solution)
 
         if i % record_every == 0:
@@ -857,7 +857,143 @@ def rollout(sst_params, simparams, batch_size,
         
         tree.clean_states()
 
+#-------------------------------------------- sst
 
+'''
+NOTE's: 
+- bending_controls and its record (used to randomize p, l0) have not been implemented into forward()/rollout() yet
+- think about how to render rotation for moving blocks (in this case, they're just squares)
+'''
+
+
+def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_positions, 
+        tree, iters=1000, callback=None):
+
+    batch_size = sst_params.batch_size
+
+    init_x = sst_params.start[0]
+    init_y = sst_params.start[1]
+    init_heading = sst_params.start[2]
+
+    bodies = 1
+
+    cspace = np.zeros((sim_params.max_bodies * 3))
+    cspace[0, 0], cspace[0, 1] = init_x, init_y
+
+    bending_control = np.zeros((1, sim_params.max_bodies, 2))
+    bending_control[:, :, 0] = 0.0 # pressure
+    bending_control[:, :, 1] = 0.025/2 # l0
+
+    tip = cspace_to_tip(sim_params, 1, cspace[None, ...], np.array([bodies]), init_x, init_y, init_heading)
+
+    # Initialize StateTree if needed (using values above)
+
+    if not tree:
+        tree = StatesStruct(sim_params.max_bodies, sim_params.obj_mass.size)
+
+        cost_to_go = 0 if sst_params.points is None else geometric_cost_to_go(sst_params, tip).item()
+
+        state0_idx = tree.add_state(isactive=True,
+                                    cspace=cspace,
+                                    dstate=torch.zeros((sim_params.max_bodies * 3)),
+                                    obj_positions=init_obj_positions,
+                                    obj_dstate=torch.zeros((sim_params.obj_mass.size, 3)),
+                                    bodies=bodies,
+                                    bending_control=bending_control,
+                                    time=0,
+                                    cost_to_come=0,
+                                    cost_total= tiebreak_factor * length_unbatched(sim_params, cspace, bodies) + cost_to_go,
+                                    tip=tip,
+                                    parent_idx=-1,
+                                    num_children=0,)    
+
+    # Draw all witnesses and their rep tips (if existing)
+    for wit_idx in range(tree.num_witnesses):
+        draw_witness(tree, wit_idx, sst_params.δs)
+
+    # Get all rep_idxs which are not empty
+    witness_has_rep_mask = tree.rep_idxs() > 0
+    valid_rep_idxs = tree.rep_idxs()[witness_has_rep_mask]
+    rep_tips = tree._tips[valid_rep_idxs]
+
+    # Draw all rep tips, then witness_to_rep
+    draw_tips(rep_tips, costs=tree._cost_to_come[valid_rep_idxs])
+
+    # SST iteration:
+
+    for sst_iter in range(int(iters)):
+
+        # ------------ Sample random tip positions and their closest active states ------------
+        active_states_mask = tree._isactive
+        
+        # active_states_idx (B,) indexes the items in active_states_mask
+        active_states_idx, xrand = best_first_selection_sst(sst_params, tree._tips[active_states_mask], tree._cost_to_come[active_states_mask], batch_size)
+        
+        # propagate_origin_idx (B,) indexes tree states, are the states we start propagating from
+        propagate_origin_idx = np.where(active_states_mask)[0][active_states_idx] 
+
+        # ------------- Monte Carlo propagation of the closest states -------------
+        new_bend_angle = np.random.uniform(-3.33, 3.33, batch_size) # Shape (B,)
+        new_bend_angle = 1.0 / new_bend_angle
+
+        #FIXME: figure out how pressure, l0 term are randomized in original sst,
+        #       and how demo works with these params
+                
+        current_bending_controls = tree._bending_controls[propagate_origin_idx]
+        current_bodies = tree._bodies[propagate_origin_idx]
+
+        for idx in range(batch_size):
+            current_bending_controls[idx, current_bodies[idx]:, 0] = p[idx]        
+            current_bending_controls[idx, current_bodies[idx]:, 1] = l0[idx]
+
+        # Rollout:
+
+        print('Starting rollout...')
+        start_time = time.time()
+
+        new_times, new_bodies, new_cspaces, new_obj_positions, \
+        new_dstates, new_obj_dstates, last_index_filled = rollout(
+            sst_params, sim_params, batch_size, sst_params.time_to_evolve,
+            curr_time=tree._times[propagate_origin_idx],
+            cspace=tree._c_spaces[propagate_origin_idx],
+            dstate=tree._dstates[propagate_origin_idx],
+            obj_positions=tree._obj_positions[propagate_origin_idx],
+            obj_dstate=tree._obj_dstates[propagate_origin_idx],
+            bodies=tree._bodies[propagate_origin_idx],
+            bending_control=current_bending_controls,
+            init_x=init_x,
+            init_y=init_y,
+            init_heading=init_heading)
+        print('Rollout time:', time.time() - start_time)
+
+        if not sst_params.do_maximal:
+            # Sample one timestep to take from per batch
+            take_one_idx = np.random.randint(0, steps_to_iter, batch_size)
+            batch_indices = np.arange(batch_size)
+            
+            new_bodies = new_bodies[take_one_idx, batch_indices]
+            new_times = new_times[take_one_idx, batch_indices]
+
+            new_cspaces = new_cspaces[take_one_idx, batch_indices]
+            new_obj_positions = new_obj_positions[take_one_idx, batch_indices]
+
+            new_dstates = new_dstates[take_one_idx, batch_indices]
+            new_obj_dstates = new_obj_dstates[take_one_idx, batch_indices]
+
+            steps_to_iter = 1 
+
+        # Rollout returns a record of position at each timestep, so flatten timestep and batch together                
+                
+        new_bodies = new_bodies.reshape(-1)
+        new_times = new_times.reshape(-1)
+
+        new_cspaces = new_cspaces.reshape(-1, sim_params.max_bodies * 3)
+        new_dstates = new_dstates.reshape(-1, tree.dstate_len * 3)
+        new_obj_positions = new_obj_positions(-1, sim_params.obj_mass.size, 4)
+        new_obj_dstates = new_dstates(-1, sim_params.obj_mass.size, 4)
+
+        #FIXME: implement all the rest of the asserts (don't skip that part)
+        
 #------------------------------------------ main()
 if __name__ == "__main__":
     pass
