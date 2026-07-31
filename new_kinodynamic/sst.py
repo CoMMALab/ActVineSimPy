@@ -14,7 +14,7 @@ import torch
 if torch.cuda.is_available():
     torch.set_default_device('cuda')
 
-from kinodynamic.env_loader import load_box_config
+from .env_loader import load_box_config
 import numpy as np
 
 from render import *
@@ -864,7 +864,7 @@ def rollout(sst_params, simparams, batch_size,
         
         tree.clean_states()
 
-#-------------------------------------------- sst
+#-------------------------------------------- sst()
 
 '''
 NOTE's: 
@@ -1202,6 +1202,189 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_positions,
 
     return tree, {}
 
+
+#------------------------------------------- sst_star()
+
+def sst_star(sst_params: SSTparams, sim_params: VineParams, callback=None):
+
+    decay_factor = 0.8
+    sst_iter_0 = 7
+    sst_iter = sst_iter_0
+    j = 0
+
+    # Dimension of the state space (well, not really, but good enough
+    # unless you want to set this to infinity)
+    d = 3
+    # Dimension of the control space
+    l = 1
+    
+    # Initial tree is None, sst will create it
+    tree = None
+    
+    # Callback once to indicate we have started
+    if callback is not None:
+        callback(None)
+    
+    while True:
+        # Clear the screen
+        clear_all_surfaces()
+    
+        tree, info = sst(sst_params, sim_params, tree, sst_iter, callback)
+    
+        if 'status' in info and info['status'] == 'callback requested suicide':
+            break
+    
+        # Shrink the δ-robust region towards zero
+        sst_params.δs *= decay_factor
+        sst_params.δBN *= decay_factor
+    
+        # Update iters
+        j += 1
+        sst_iter = sst_iter_0 * (1 + math.log2(j)) * decay_factor ** (-1 * (d + l + 1) * j) 
+    
+        # Clear the screen
+        # clear_all_surfaces()
+    
+        # Look for reps that no longer fall within δs
+        # And deactivate them, also search for prune candidates in their ancestors
+        witness_tip = tree.witness_positions()
+        witness_rep_idx_ = tree.rep_idxs()
+        valid_witness_mask = witness_rep_idx_ >= 0
+    
+        # Get the witnesses with valid reps
+        witness_tip = witness_tip[valid_witness_mask]
+        witness_rep_idx = witness_rep_idx_[valid_witness_mask]
+        rep_tip = tree._tips[witness_rep_idx]
+    
+        # Find the ones with distance > δs
+        distance_from_witness_to_rep2 = distance(sst_params, witness_tip - rep_tip)
+        to_remove_mask = distance_from_witness_to_rep2 > sst_params.δs * sst_params.δs
+    
+        for rep_idx in witness_rep_idx[to_remove_mask]:
+            # Deactivate the rep (prequisite for pruning)
+            tree._isactive[rep_idx] = False
+    
+            # Prune the old rep, and any valid ancestors
+            prune_path_at(rep_idx, tree)
+    
+        for rep_idx in witness_rep_idx_[~valid_witness_mask]:
+            # Deactivate the rep (prequisite for pruning)
+            tree._isactive[rep_idx] = False
+    
+            # Prune the old rep, and any valid ancestors
+            prune_path_at(rep_idx, tree)
+    
+        # TODO prune_path_at may introduce more invalid nodes
+        # we should repeat until there are none
+    
+        # TODO consider taking the min possible segments K so far,
+        # and removing all states with >= k segments (since we know for sure)
+        # we can do better
+    
+        tree.clean_states()
+
+
 #------------------------------------------ main()
+'''
+NOTE: 
+
+- same render concerns as with sst(): how much of current render is compatible?
+  (will likely have to borrow some methods/strategies from demos for properly rendering objs)
+
+'''
+
 if __name__ == "__main__":
-    pass
+
+    parser = argparse.ArgumentParser(description='Run the SST planner.')
+    parser.add_argument('--env', type=str, default='envs/divider.txt', help='Path to the environment config file.')
+    parser.add_argument('--noplan', action='store_true', help='Skip the planning step and use cached points.')
+    parser.add_argument('--nogeo', action='store_true', help='Don\'t use geoemtric planner to guide exploration.')
+    args = parser.parse_args()
+
+    # Load the config file
+    cfg = load_box_config(args.env)
+    init_vis(figsize=(12,9), obstacles=cfg['obstacles'], dynamic_obstacles=cfg['dynamic_obstacles'], start=cfg['start'], goal=cfg['goal'],
+                save_pygame_folder=f'pics/live/')
+
+    # See if we already have points saved
+    env_hash = hashlib.md5(open(args.env, 'rb').read()).hexdigest()
+    env_hash = env_hash[:8]
+    has_geo_plan = os.path.exists(f'cache/points_{env_hash}.npy') and \
+                   os.path.exists(f'cache/point_costs.npy')
+    if has_geo_plan: 
+        print(f'Found geometric plan for this env file (cache/points_{env_hash}.npy), recycling cached plan')
+    else:
+        print(f'Did not find cached geometric plan cache/points_{env_hash}.npy, running geo planner')
+
+    # If any of these conditions hold, don't do the geo plan
+    if not (has_geo_plan or args.noplan or args.nogeo):
+        print('Running geometric planner (Note: you can run this with the flag \'python sst.py --noplan\' to skip this step'
+                ' and use the cached points from the last run)')
+
+        geometric_plan(env=args.env, time=60.0, thresh=0.001,
+                        save_points_path=f'cache/points_{env_hash}.npy',
+                        plan_goal_to_start=True,
+                        min_r=0.0)
+
+
+    if not (args.nogeo):
+        # Load points from file
+        points = np.load(f'cache/points_{env_hash}.npy')
+        point_costs = np.load(f'cache/points_{env_hash}_costs.npy') # We'll just assume if points exists, then points_costs is up to date too
+        # points[:, 0:2] *= cfg['scale']
+        
+        print('Loaded', points.shape[0], 'points')
+        assert points.shape[0] > 0, 'Need more than 0 points'
+    
+        # Draw the points
+        draw_points(points, point_costs)
+    else:
+        # We didn't load points
+        points = None
+        point_costs = None
+        
+
+    render()
+
+
+    # Sim params
+    sim_params = VineParams(
+        max_bodies=70,
+        body_length=68.0, # 25.0 mm
+        radius=50.0, # 16.0,
+        dt=1/10,
+        grow_rate=20.0, # was 20
+        grow_force=10.0, # was 15
+        stiffness=20.0,
+        damping=50.0,
+        # Curiously, decreasing substeps helps prevent penetration bugs. But it doesn't fix the root problem
+        substeps=15, # FIXME THIS NUMBER CAN BE MUCH SMALLER IF WE DO LANGRANGE PROPERRLY
+        alpha=1e-2,
+        obstacle_rects=cfg['obstacles'],
+        dynamic_objects=cfg['dynamic_obstacles'],
+        use_tube_obstacle=args.env=='envs/env_tube.txt',
+        dynamic_objs_mass=cfg['dynamic_object_masses'],
+        dynamic_objs_inertia=cfg['dynamic_object_inertias']
+    )
+
+    # SST params
+    sst_params = SSTparams(
+        batch_size=100,
+        δBN=60.0,
+        δs=45.0, # 20
+        min_x=0.0,
+        max_x=cfg['bound_x'],
+        min_y=0.0,
+        max_y=cfg['bound_y'],
+        start=cfg['start'],
+        goal=cfg['goal'],
+        goal_radius=cfg['goal_radius'],
+        points=points,
+        point_costs=point_costs,
+        info={'env_path': args.env}, # Not used, except when we serialize this object for view_solutions
+        do_cost_to_go=not args.nogeo,
+        time_to_evolve=100,
+    )
+
+
+    sst_star(sst_params, sim_params)
