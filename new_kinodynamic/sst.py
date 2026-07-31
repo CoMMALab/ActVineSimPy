@@ -19,7 +19,9 @@ import numpy as np
 
 from render import *
 from kinodynamic.max_cover import max_cover
+
 from .vine import VineParams
+from .si import vine_params_si, set_objects_si
 
 from geometric.biarc_rrtstar import main as geometric_plan
 from kinodynamic.nearest import distance, nearest_neighbor, nearest_neighbor_all
@@ -137,7 +139,7 @@ class StatesStruct:
     Use the function call (ie isactive()) to get the data, truncated to the last valid item.
 
     NOTE: on representation
-    - dynamic object pose: (init_size, num objs, [x1, y1, x2, y2, x3, y3, x4, y4])
+    - dynamic object pose: (init_size, num objs, [x, y, theta])
     - dynamic object dstate: (init_size, num objs, [dx, dy, dtheta])
     - vine cspace: (init_size, max_bodies * [x, y, theta])
     - vine dstate: (init_size, max_bodies * [dx, dy, dtheta])
@@ -159,7 +161,7 @@ class StatesStruct:
         self._bending_controls = np.zeros((self.init_size, max_bodies, bending_controls_size), dtype=np.float32)
 
         self._c_spaces = np.zeros((self.init_size, max_bodies * 3), dtype=np.float32)
-        self._obj_positions = np.zeros((self.init_size, num_dynamic_objs, 4), 
+        self._obj_positions = np.zeros((self.init_size, num_dynamic_objs, 3), 
                                            dtype=np.float32)
         
         self._dstates = np.zeros((self.init_size, max_bodies * 3), dtype=np.float32)
@@ -213,7 +215,7 @@ class StatesStruct:
         self._bending_controls = np.concatenate([self._bending_controls, np.zeros((current_size, self.max_bodies, bending_controls_size), dtype=np.float32)], axis=0)
 
         self._c_spaces = np.concatenate([self._c_spaces, np.zeros((current_size, self.max_bodies * 3), dtype=np.float32)], axis=0)
-        self._obj_positions = np.concatenate([self._obj_positions, np.zeros((current_size, self.num_dynamic_objs, 4), dtype=np.float32)], 
+        self._obj_positions = np.concatenate([self._obj_positions, np.zeros((current_size, self.num_dynamic_objs, 3), dtype=np.float32)], 
                                                  axis=0)
         self._dstates = np.concatenate([self._dstates, np.zeros((current_size, self.max_bodies * 3), dtype=np.float32)], axix=0)
         self._obj_dstates = np.concatenate([self._obj_dstates, np.zeros((current_size, self.num_dynamic_objs, 3), dtype=np.float32)],
@@ -274,7 +276,7 @@ class StatesStruct:
         assert dstate.shape == (num_to_add, self.max_bodies * 3)
 
         if self.num_dynamic_objs != 0:
-            assert obj_positions.shape == (num_to_add, self.num_dynamic_objs, 4)
+            assert obj_positions.shape == (num_to_add, self.num_dynamic_objs, 3)
             assert obj_dstates.shape(num_to_add, self.num_dynamic_objs, 3)
         
         assert cost_to_come.shape == (num_to_add,)
@@ -713,7 +715,7 @@ def rollout(sst_params, simparams, batch_size,
         bodies_record  : shape (steps_to_iter, batch_size)
         time_record    : shape (steps_to_iter, batch_size)
 
-        dynamic_obj_record : shape (steps_to_iter, batch_size, num_dynamic_objs, 4 (for the coords))
+        dynamic_obj_record : shape (steps_to_iter, batch_size, num_dynamic_objs, 3 (for the coords))
     """
     
     # Record every δs distance, to reduce pressure on the set cover
@@ -728,7 +730,7 @@ def rollout(sst_params, simparams, batch_size,
     cspace_record = np.zeros((history_size, batch_size, simparams.max_bodies * 3), dtype=np.float32)
     dstate_record = np.zeros((history_size, batch_size, simparams.max_bodies * 3), dtype=np.float32)
 
-    obj_position_record = np.zeros((history_size, batch_size, int(simparams.obj_mass.size), 4), dtype=np.float32)
+    obj_position_record = np.zeros((history_size, batch_size, int(simparams.obj_mass.size), 3), dtype=np.float32)
     obj_dstate_record = np.zeros((history_size, batch_size, int(simparams.obj_mass.size), 3), dtype=np.float32)
     
     # Track which batch elements have reached the max_bodies limit,
@@ -873,11 +875,8 @@ NOTE's:
 - think about how to render rotation for moving blocks (in this case, they're just squares)
 '''
 
-def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_positions, 
+def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
         tree, iters=1000, callback=None):
-
-    global find_actuator_params
-    find_actuator_params = sim_params.spam_moment_fn
 
     batch_size = sst_params.batch_size
 
@@ -906,7 +905,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_positions,
         state0_idx = tree.add_state(isactive=True,
                                     cspace=cspace,
                                     dstate=torch.zeros((sim_params.max_bodies * 3)),
-                                    obj_positions=init_obj_positions,
+                                    obj_positions=init_obj_pose,
                                     obj_dstate=torch.zeros((sim_params.obj_mass.size, 3)),
                                     bodies=bodies,
                                     bending_control=bending_control,
@@ -1003,15 +1002,15 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_positions,
 
         new_cspaces = new_cspaces.reshape(-1, sim_params.max_bodies * 3)
         new_dstates = new_dstates.reshape(-1, tree.dstate_len * 3)
-        new_obj_positions = new_obj_positions(-1, sim_params.obj_mass.size, 4)
-        new_obj_dstates = new_dstates(-1, sim_params.obj_mass.size, 4)
+        new_obj_positions = new_obj_positions(-1, sim_params.obj_mass.size, 3)
+        new_obj_dstates = new_dstates(-1, sim_params.obj_mass.size, 3)
 
         assert new_bodies.shape == (steps_to_iter * batch_size,), f"new_bodies shape: {new_bodies.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert new_times.shape == (steps_to_iter * batch_size,), f"new_times shape: {new_times.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
 
         assert new_cspaces.shape == (steps_to_iter * batch_size, sim_params.max_bodies * 3), f"new_cspaces shape: {new_cspaces.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert new_dstates.shape == (steps_to_iter * batch_size, sim_params.max_bodies * 3), f"new_dstates shape: {new_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
-        assert new_obj_positions == (steps_to_iter * batch_size, sim_params.obj_mass.size, 4), f"new_dstates shape: {new_obj_positions.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+        assert new_obj_positions == (steps_to_iter * batch_size, sim_params.obj_mass.size, 3), f"new_dstates shape: {new_obj_positions.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert new_obj_dstates == (steps_to_iter * batch_size, sim_params.obj_mass.size, 3), f"new_dstates shape: {new_obj_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
 
         # Assert that no new cspace is all zeros
@@ -1205,7 +1204,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_positions,
 
 #------------------------------------------- sst_star()
 
-def sst_star(sst_params: SSTparams, sim_params: VineParams, callback=None):
+def sst_star(sst_params: SSTparams, sim_params: VineParams, initial_obj_pose=None, callback=None):
 
     decay_factor = 0.8
     sst_iter_0 = 7
@@ -1229,7 +1228,7 @@ def sst_star(sst_params: SSTparams, sim_params: VineParams, callback=None):
         # Clear the screen
         clear_all_surfaces()
     
-        tree, info = sst(sst_params, sim_params, tree, sst_iter, callback)
+        tree, info = sst(sst_params, sim_params, initial_obj_pose, tree, sst_iter, callback)
     
         if 'status' in info and info['status'] == 'callback requested suicide':
             break
@@ -1346,26 +1345,39 @@ if __name__ == "__main__":
 
     render()
 
+    # In SI when applicable (meters, kilograms, seconds)
+    # NOTE: a lot of these params get translated into params specified above (check vine_params_si def for more info)
 
-    # Sim params
-    sim_params = VineParams(
-        max_bodies=70,
-        body_length=68.0, # 25.0 mm
-        radius=50.0, # 16.0,
-        dt=1/10,
-        grow_rate=20.0, # was 20
-        grow_force=10.0, # was 15
-        stiffness=20.0,
-        damping=50.0,
-        # Curiously, decreasing substeps helps prevent penetration bugs. But it doesn't fix the root problem
-        substeps=15, # FIXME THIS NUMBER CAN BE MUCH SMALLER IF WE DO LANGRANGE PROPERRLY
-        alpha=1e-2,
-        obstacle_rects=cfg['obstacles'],
-        dynamic_objects=cfg['dynamic_obstacles'],
-        use_tube_obstacle=args.env=='envs/env_tube.txt',
-        dynamic_objs_mass=cfg['dynamic_object_masses'],
-        dynamic_objs_inertia=cfg['dynamic_object_inertias']
-    )
+    # Set VineParams
+
+    max_bodies = 70
+    obstacles_m = cfg['obstacles']
+    radius_m = 0.0125
+    seg_len_m = 0.018
+    seg_mass_kg = 0.02
+    seg_inertia_kgm2 = 1.0e-5
+    grow_rate_mps = 0.3
+    ang_damp = 5.0e-5
+    lin_damp = 0.10
+    dt_s = 1.0 / 90
+    stiffnes_mode = 'linear'
+
+    sim_params = vine_params_si(max_bodies=max_bodies,
+                                obstacles_m=obstacles_m,
+                                radius_m=radius_m,
+                                seg_len_m=seg_len_m,
+                                seg_mass_kg=seg_mass_kg,
+                                seg_inertia_kgm2=seg_inertia_kgm2,
+                                grow_rate_mps=grow_rate_mps,
+                                ang_damp=ang_damp,
+                                lin_damp=lin_damp,
+                                dt_s=dt_s,
+                                stiffness_mode=stiffnes_mode)
+
+    # For dynamic obstacles:
+    objs_m = cfg['dynamic_obstacles']
+    masses_kg = cfg['dynamic_obstacles_masses']
+    initial_obj_pose = set_objects_si(params=sim_params, objs_m=objs_m, masses_kg=masses_kg)
 
     # SST params
     sst_params = SSTparams(
@@ -1387,4 +1399,4 @@ if __name__ == "__main__":
     )
 
 
-    sst_star(sst_params, sim_params)
+    sst_star(sst_params, sim_params, initial_obj_pose=initial_obj_pose)
