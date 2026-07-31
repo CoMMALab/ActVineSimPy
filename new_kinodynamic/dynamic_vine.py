@@ -77,13 +77,14 @@ def object_env_constraints(params, obj_pose):
     return ow_now, ow_J, oo_now, oo_J
 
 
-def dynamic_forward_part(params, init_heading, init_x, init_y, state, dstate, bodies, obj_pose):
+def dynamic_forward_part(params, init_heading, init_x, init_y, state, dstate, bodies, obj_pose,
+                         bending_control):
     """Per-batch vine measures + vine<->object proximity measures/Jacobians (jacrev w.r.t. pose
     gives the object velocity coupling directly, torque included). Degrades to vine-only when
     there are no objects (n_obj == 0): torch.vmap can't map over a zero-length object axis, so
     the empty proximity tensors are built directly instead of via vmap/jacrev."""
     bodies, forces, growth, sdf_now, dev_now, L, J, gws, gwd = \
-        forward_batched_part(params, init_heading, init_x, init_y, state, dstate, bodies)
+        forward_batched_part(params, init_heading, init_x, init_y, state, dstate, bodies, bending_control)
     n_obj, mb = obj_pose.shape[0], params.max_bodies
     if n_obj == 0:
         prox_now = state.new_full((mb, 0), 1e3)
@@ -164,7 +165,7 @@ def dynamic_solve(params, bodies, dstate, obj_dstate, forces, growth, sdf_now, d
     return solve_layers(M, p, G, h, A, b)
 
 
-def step(params, init_heading, init_x, init_y, state, dstate, bodies, obj_pose=None, obj_dstate=None):
+def step(params, init_heading, init_x, init_y, state, dstate, bodies, bending_control, obj_pose=None, obj_dstate=None):
     """One full physics step for the vine plus any movable objects -- the sim's single entry point.
     obj_pose is (B, n_obj, 3) = (cx, cy, theta); obj_dstate is (B, n_obj, 3) = (vx, vy, vtheta).
     Both default to the params' object count at zero pose/velocity, so a vine with NO objects is
@@ -177,9 +178,10 @@ def step(params, init_heading, init_x, init_y, state, dstate, bodies, obj_pose=N
     if obj_dstate is None:
         obj_dstate = torch.zeros(B, n_obj, 3)
 
-    fwd = torch.func.vmap(partial(dynamic_forward_part, params), in_dims=(0, 0, 0, 0, 0, 0, 0))
+    fwd = torch.func.vmap(partial(dynamic_forward_part, params), in_dims=(0, 0, 0, 0, 0, 0, 0, 0))
+
     bodies, forces, growth, sdf_now, dev_now, L, J, gws, gwd, prox_now, pjs, pjp = \
-        fwd(init_heading, init_x, init_y, state, dstate, bodies, obj_pose)
+        fwd(init_heading, init_x, init_y, state, dstate, bodies, obj_pose, bending_control)
     
     ow_now, ow_J, oo_now, oo_J = torch.func.vmap(partial(object_env_constraints, params))(obj_pose)
 

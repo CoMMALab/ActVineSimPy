@@ -24,14 +24,21 @@ from .vine import VineParams
 from geometric.biarc_rrtstar import main as geometric_plan
 from kinodynamic.nearest import distance, nearest_neighbor, nearest_neighbor_all
 
-from .spam import make_actuation_fn
-
 from .dynamic_vine import step as forward
+
+from sPAM.torch_nns_usage import torch_solve as find_actuator_params
+from sPAM.spam import params as act_params
+from sPAM.torch_nns import get_or_train_model, get_prediction_function
 
 #------------------------------------------ global defs (variable/function defs)
 
 tiebreak_factor = 0.0001
 bending_controls_size = 2
+
+find_actuator_params = torch.vmap(find_actuator_params, in_dims=(None, None, 0))
+
+scaling_info, model = get_or_train_model(act_params)
+predict = get_prediction_function(scaling_info, model)
 
 #------------------------------------------ SSTparams, DontCompareSecond, and StatesScruct defs
 class SSTparams:
@@ -731,7 +738,7 @@ def rollout(sst_params, simparams, batch_size,
     for i in range(steps_to_iter):
         
         next_cspace, next_bodies, next_obj_positions, next_dstate_solution = forward(
-            simparams, init_heading, init_x, init_y, cspace, dstate, bodies,
+            simparams, init_heading, init_x, init_y, cspace, dstate, bodies, bending_control,
             obj_positions, obj_dstate
         )
 
@@ -862,12 +869,17 @@ def rollout(sst_params, simparams, batch_size,
 '''
 NOTE's: 
 - bending_controls and its record (used to randomize p, l0) have not been implemented into forward()/rollout() yet
+- p, l0 randomization is followed similar to before; is this compatible with new underlying code?
+
 - think about how to render rotation for moving blocks (in this case, they're just squares)
 '''
 
 
 def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_positions, 
         tree, iters=1000, callback=None):
+
+    global find_actuator_params
+    find_actuator_params = sim_params.spam_moment_fn
 
     batch_size = sst_params.batch_size
 
@@ -905,7 +917,9 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_positions,
                                     cost_total= tiebreak_factor * length_unbatched(sim_params, cspace, bodies) + cost_to_go,
                                     tip=tip,
                                     parent_idx=-1,
-                                    num_children=0,)    
+                                    num_children=0,)
+            
+        tree.add_witness(np.zeros(3), state0_idx)
 
     # Draw all witnesses and their rep tips (if existing)
     for wit_idx in range(tree.num_witnesses):
@@ -933,12 +947,14 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_positions,
         propagate_origin_idx = np.where(active_states_mask)[0][active_states_idx] 
 
         # ------------- Monte Carlo propagation of the closest states -------------
+        # NOTE: p, l0 randomization is here
+
         new_bend_angle = np.random.uniform(-3.33, 3.33, batch_size) # Shape (B,)
         new_bend_angle = 1.0 / new_bend_angle
 
-        #FIXME: figure out how pressure, l0 term are randomized in original sst,
-        #       and how demo works with these params
-                
+        p, l0 = find_actuator_params(predict, act_params, torch.tensor(new_bend_angle))
+        assert np.all(np.isfinite(p)), f"p: {p}, l0: {l0}"
+
         current_bending_controls = tree._bending_controls[propagate_origin_idx]
         current_bodies = tree._bodies[propagate_origin_idx]
 

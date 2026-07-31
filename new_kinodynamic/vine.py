@@ -344,7 +344,7 @@ def vine_wrinkle_moment(theta_abs, eps_crit):
     return torch.where(theta_abs > theta_min, wrinkle, linear)
 
 
-def bending_energy(params: VineParams, theta_rel, dtheta_rel, bodies):
+def bending_energy(params: VineParams, theta_rel, dtheta_rel, bodies, bending_control):
     """Bending torque per joint = elastic restoring moment + angular velocity damping.
     theta_rel / dtheta_rel are the per-joint relative angle / angular velocity."""
     if params.stiffness_mode == 'spam':
@@ -355,10 +355,14 @@ def bending_energy(params: VineParams, theta_rel, dtheta_rel, bodies):
         # The restoring grows with curl and balances the actuation at a stable equilibrium curvature, so
         # the vine settles into a uniform curl instead of a constant torque winding up unbounded (which
         # buckled the base). spam_moment_scale / spam_restore_scale are the SI->non-dim calibration knobs.
+
+        p = bending_control[:, 0]
+        l0 = bending_control[:, 1]
+
         turning_radius = torch.where(theta_rel.abs() < 1e-3,          # (unused by make_actuation_fn; F_t
                                      torch.zeros_like(theta_rel),      #  is ~constant, so it ignores r)
                                      params.bend_length_scale / theta_rel)
-        m_act = params.spam_moment_fn(turning_radius, params.spam_p, params.spam_l0)  # F_t*arm (Eq. 1d), signed
+        m_act = params.spam_moment_fn(turning_radius, p, l0)  # F_t*arm (Eq. 1d), signed
         act = params.spam_moment_scale * m_act                                        # actuation (SI->nd scale)
         m_vine = params.spam_restore_scale * theta_rel.sign() * \
             vine_wrinkle_moment(theta_rel.abs(), params.spam_eps_critical)             # wrinkling restoring (Eq. 2)
@@ -459,7 +463,8 @@ def growth_rate(params: VineParams, state, dstate, bodies):
     return constraint
 
 
-def forward_batched_part(params: VineParams, init_heading, init_x, init_y, state, dstate, bodies):
+def forward_batched_part(params: VineParams, init_heading, init_x, init_y, state, dstate, bodies,
+                         bending_control):
     '''
     Compute some jacobians about this state wrt forces, growth, sdf_now
     
@@ -491,7 +496,7 @@ def forward_batched_part(params: VineParams, init_heading, init_x, init_y, state
     theta_rel = finite_changes(StateTensor(state).theta, init_heading)
     dtheta_rel = finite_changes(StateTensor(dstate).theta, 0.0)
 
-    bend_energy = bending_energy(params, theta_rel, dtheta_rel, bodies)
+    bend_energy = bending_energy(params, theta_rel, dtheta_rel, bodies, bending_control)
     
     # print('deviation_now', deviation_now.mean())
     # print('sdf_now', sdf_now.mean())
