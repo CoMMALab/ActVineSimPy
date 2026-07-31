@@ -868,12 +868,10 @@ def rollout(sst_params, simparams, batch_size,
 
 '''
 NOTE's: 
-- bending_controls and its record (used to randomize p, l0) have not been implemented into forward()/rollout() yet
 - p, l0 randomization is followed similar to before; is this compatible with new underlying code?
 
 - think about how to render rotation for moving blocks (in this case, they're just squares)
 '''
-
 
 def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_positions, 
         tree, iters=1000, callback=None):
@@ -1008,8 +1006,202 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_positions,
         new_obj_positions = new_obj_positions(-1, sim_params.obj_mass.size, 4)
         new_obj_dstates = new_dstates(-1, sim_params.obj_mass.size, 4)
 
-        #FIXME: implement all the rest of the asserts (don't skip that part)
+        assert new_bodies.shape == (steps_to_iter * batch_size,), f"new_bodies shape: {new_bodies.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+        assert new_times.shape == (steps_to_iter * batch_size,), f"new_times shape: {new_times.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+
+        assert new_cspaces.shape == (steps_to_iter * batch_size, sim_params.max_bodies * 3), f"new_cspaces shape: {new_cspaces.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+        assert new_dstates.shape == (steps_to_iter * batch_size, sim_params.max_bodies * 3), f"new_dstates shape: {new_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+        assert new_obj_positions == (steps_to_iter * batch_size, sim_params.obj_mass.size, 4), f"new_dstates shape: {new_obj_positions.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+        assert new_obj_dstates == (steps_to_iter * batch_size, sim_params.obj_mass.size, 3), f"new_dstates shape: {new_obj_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+
+        # Assert that no new cspace is all zeros
+        assert np.all(~np.all(new_cspaces == 0, axis=(1,2))), f"new_cspaces shape: {new_cspaces.shape}"
+
+        finite_mask = np.all(np.isfinite(new_cspaces), axis=1)
+        assert np.all(finite_mask), f"{np.sum(finite_mask)} finite cspaces out of {new_cspaces.shape[0]}"
+
+        # Get the tip position of the new states
+        new_tips = cspace_to_tip(sim_params, new_cspaces.shape[0], new_cspaces, new_bodies, init_x, init_y, init_heading) 
+
+        # Increment the costs of the new states by 1 (since we applied a new control input)
+        cost_come = tree._cost_to_come[propagate_origin_idx] + 1
+
+        # Tile the costs to match the shape of cspaces (steps_to_iter * batch_size)
+        new_costs_come = np.tile(cost_come, [steps_to_iter])
+        propagate_origin_idx = np.tile(propagate_origin_idx, [steps_to_iter])
+        current_bending_controls = np.tile(current_bending_controls, [steps_to_iter, 1, 1])
         
+        assert new_costs_come.shape == (steps_to_iter * batch_size,)
+        assert propagate_origin_idx.shape == (steps_to_iter * batch_size,)
+        assert current_bending_controls.shape == (steps_to_iter * batch_size, sim_params.max_bodies, 2)
+
+        # --------- Find non-overlapping subset of states ---------
+        if sst_params.do_set_cover:
+            print('starting max_cover with', new_tips.shape[0], 'states')
+            start_time = time.time()
+            non_overlapping_mask = max_cover(sst_params, np.asarray(new_tips))
+            print('max_cover time:', time.time() - start_time, 'ended with', non_overlapping_mask.sum(), 'states')
+            
+            
+            new_bodies = new_bodies[non_overlapping_mask]
+            new_times = new_times[non_overlapping_mask]
+            new_tips = new_tips[non_overlapping_mask]
+            new_costs_come = new_costs_come[non_overlapping_mask]
+            current_bending_controls = current_bending_controls[non_overlapping_mask]
+            propagate_origin_idx = propagate_origin_idx[non_overlapping_mask]
+
+            new_cspaces = new_cspaces[non_overlapping_mask]
+            new_dstates = new_dstates[non_overlapping_mask]
+            new_obj_positions = new_obj_positions[non_overlapping_mask]
+            new_obj_dstates = new_obj_dstates[non_overlapping_mask]
+            
+        if sst_params.do_cost_to_go:
+            new_costs_total = new_costs_come + geometric_cost_to_go(sst_params, new_tips) + \
+                            tiebreak_factor * length(sim_params, new_cspaces, new_bodies)
+        else:
+            new_costs_total = new_costs_come
+
+        draw_dead_state(sim_params, new_cspaces, new_obj_positions, new_bodies, init_x, init_y, init_heading)
+
+        # If any states falls in the goal region, add to the solutions
+        # Append all info: bodies, cspaces, costs, bending controls
+
+        initial_num_solutions = sst_params.solutions.qsize()
+        in_goal_mask = np.linalg.norm(new_tips[:, 0:2] - sst_params.goal[0:2], axis=1) < sst_params.goal_radius
+        for idx in in_goal_mask.nonzero()[0]:
+            sst_params.solutions.put(DontCompareSecond(
+                new_costs_come[idx].item() + tiebreak_factor * length_unbatched(sim_params, new_cspaces[idx], new_bodies[idx]),
+                {
+                    'cspace': new_cspaces[idx],
+                    'bodies': new_bodies[idx],
+                    'bending_control': current_bending_controls[idx],
+                    'cost_to_come': new_costs_come[idx],
+                    'cost_total': new_costs_total[idx],
+                    'tip': new_tips[idx],
+                }
+            ))
+
+        # Save solutions to file if we passed a multiple of 5
+        save_every = 5
+        more_than_5 = sst_params.solutions.qsize() >= initial_num_solutions + save_every
+        passed_5_mod = sst_params.solutions.qsize() % save_every < initial_num_solutions % save_every
+        if more_than_5 or passed_5_mod:
+            # Save winning states and sim params
+            np.save('cache/solutions.npy', list(sst_params.solutions.queue))
+            np.save('cache/winning_sim_params.npy', sim_params)
+            np.save('cache/winning_info.npy', sst_params.info)
+            print(f'\033[92mSaved solutions ({sst_params.solutions.qsize()}) \033[0m')
+
+        # --------- Add new states to tree ---------
+        # Get cost for each witness's rep, or -np.inf if has no rep
+        witness_rep_costs = np.where(tree.rep_idxs() > 0, tree._cost_total[tree.rep_idxs()], -np.inf)
+
+        # Fresh states don't touch any existing witness (will make new witnesses for them)
+        # Dominating states fall inside an existing witness and has better cost than the witness's rep
+        # (will replace the old rep with them)
+        # All these masks index into xnew_*
+        new_fresh_mask, new_dominating_states_mask, new_dominating_states_witness_idx = \
+                    is_node_locally_the_best_sst(sst_params, 
+                                                new_tips, 
+                                                new_costs_total, 
+                                                tree.witness_positions(), 
+                                                witness_rep_costs)
+        
+        draw_tips(new_tips, costs=new_costs_total)
+
+
+        # Add new witness-creating states to the tree, and record their indexes      
+        
+        new_fresh_idx = tree.add_states(isactive=True,
+                                        c_space=new_cspaces[new_fresh_mask],
+                                        dstate=new_dstates[new_fresh_idx],
+                                        obj_positions=new_obj_positions[new_fresh_idx],
+                                        obj_dstates=new_obj_dstates[new_fresh_idx],
+                                        bodies=new_bodies[new_fresh_mask],
+                                        time=new_times[new_fresh_mask],
+                                        bending_control=current_bending_controls[new_fresh_mask],
+                                        # Heuristic stuff
+                                        cost_to_come=new_costs_come[new_fresh_mask],
+                                        cost_total=new_costs_total[new_fresh_mask],
+                                        tip=new_tips[new_fresh_mask],
+                                        # Tree stuff
+                                        parent_idx=propagate_origin_idx[new_fresh_mask],
+                                        num_children=0)
+        
+        # Add new dominating states to the tree, and record their indexes
+        new_dominating_states_idx = tree.add_states(isactive=True,
+                                        c_space=new_cspaces[new_dominating_states_mask],
+                                        dstate=new_dstates[new_dominating_states_mask],
+                                        obj_positions=new_obj_positions[new_dominating_states_mask],
+                                        obj_dstates=new_obj_dstates[new_dominating_states_mask],
+                                        bodies=new_bodies[new_dominating_states_mask],
+                                        time=new_times[new_dominating_states_mask],
+                                        bending_control=current_bending_controls[new_dominating_states_mask],
+                                        # Heuristic stuff
+                                        cost_to_come=new_costs_come[new_dominating_states_mask],
+                                        cost_total=new_costs_total[new_dominating_states_mask],
+                                        tip=new_tips[new_dominating_states_mask],
+                                        # Tree stuff
+                                        parent_idx=propagate_origin_idx[new_dominating_states_mask],
+                                        num_children=0)
+
+        # Set states to inactive if they have 1 more segments than the best so far
+        min_segments = sst_params.solutions.queue[0].second['cost_to_come'] \
+            if sst_params.solutions.qsize() > 0 else 9999
+        
+        too_many_segs_mask = tree.cost_to_come() > min_segments + 1
+        tree.isactive()[too_many_segs_mask] = False
+
+        # Update child counter for parents of recently added states
+        tree._num_children[propagate_origin_idx[new_fresh_mask]] += 1
+        tree._num_children[propagate_origin_idx[new_dominating_states_mask]] += 1
+
+        # For each fresh state, create a new witness and assign state as rep
+        new_witness_idx = tree.add_witnesses(new_tips[new_fresh_mask], new_fresh_idx)
+        for idx in new_witness_idx:
+            draw_witness(tree, idx, sst_params.δs)
+
+        # Overthrow old reps and bring in the new guard of dominating reps
+        old_rep_idx = tree._rep_idxs[new_dominating_states_witness_idx]
+        
+        # Deactivate the old rep
+        tree._isactive[old_rep_idx] = False 
+        
+        # erase_witness_to_rep(tree, the_witness_of_the_hour)
+        
+        # Set the new rep
+        tree._rep_idxs[new_dominating_states_witness_idx[new_dominating_states_mask]] = new_dominating_states_idx
+        
+        # Prune the old rep, and any valid ancestors
+        for idx in old_rep_idx:
+            prune_path_at(idx, tree)
+
+        # -------- Print out some stats --------
+        num_active_nodes = np.sum(tree.isactive())
+        num_total_nodes = tree.num_states
+        num_reps = np.sum(tree.rep_idxs() >= 0)
+        num_witnesses = tree.num_witnesses
+
+        draw_goal(sst_params.goal, sst_params.goal_radius)
+        draw_stats(sst_params, sst_iter, iters, num_active_nodes, num_total_nodes, num_reps, num_witnesses, tree._cost_to_come[tree._isactive])
+        render()
+
+
+        if callback:
+            # Serves two functions: let the callback maker know the current best solution,
+            # and allow the callback to kill self if needed
+            
+            if sst_params.solutions.qsize() > 0:
+                callback_return = callback(sorted(sst_params.solutions.queue))
+            else:
+                callback_return = callback(None)
+            
+            if callback_return is True:
+                print('SST: got callback intent to suicide, unaliving')
+                return tree, {'status': 'callback requested suicide'}
+
+    return tree, {}
+
 #------------------------------------------ main()
 if __name__ == "__main__":
     pass
