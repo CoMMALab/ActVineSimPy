@@ -17,7 +17,7 @@ if torch.cuda.is_available():
 from .env_loader import load_box_config
 import numpy as np
 
-from render import *
+from .render import *
 from kinodynamic.max_cover import max_cover
 
 from .vine import VineParams

@@ -64,10 +64,12 @@ def render(name, gifname, objs_m, masses_kg, frames, xlim_mm, ylim_mm=(-45, 45),
         for (pose, hw, hh) in walls_obb:
             corners = _obb_corners_mm(pose[0], pose[1], pose[2], hw, hh)
             ax.add_patch(Polygon(corners, closed=True, facecolor=(1, .89, .71), edgecolor="k", zorder=1))
+
         for k in range(n_obj):
             cx, cy, th = [float(v) for v in obj_pose[0, k]]
             corners = _obb_corners_mm(cx, cy, th, float(params.obj_hw[k]), float(params.obj_hh[k]))
             ax.add_patch(Polygon(corners, closed=True, facecolor=(.55, .8, .95), edgecolor="b", lw=2, zorder=3))
+
         n = int(bodies[0])
         xs = [MM(float(state[0, 3 * j])) for j in range(n)]; ys = [MM(float(state[0, 3 * j + 1])) for j in range(n)]
         ax.plot(xs, ys, "-", color=(.15, .3, .8), lw=2, zorder=5)
