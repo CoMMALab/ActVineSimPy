@@ -14,19 +14,19 @@ import torch
 if torch.cuda.is_available():
     torch.set_default_device('cuda')
 
-from .env_loader import load_box_config
+from new_kinodynamic.env_loader import load_box_config
 import numpy as np
 
-from .render import *
+from new_kinodynamic.render import *
 from kinodynamic.max_cover import max_cover
 
-from .vine import VineParams
-from .si import vine_params_si, set_objects_si
+from new_kinodynamic.vine import VineParams
+from new_kinodynamic.si import vine_params_si, set_objects_si
 
 from geometric.biarc_rrtstar import main as geometric_plan
 from kinodynamic.nearest import distance, nearest_neighbor, nearest_neighbor_all
 
-from .dynamic_vine import step as forward
+from new_kinodynamic.dynamic_vine import step as forward
 
 from sPAM.torch_nns_usage import torch_solve as find_actuator_params
 from sPAM.spam import params as act_params
@@ -415,11 +415,11 @@ def get_last_body_length(cspace: np.ndarray, n_bodies: int):
     last = n_bodies - 1
     prev_last = n_bodies - 2
 
-    last_x = cspace[:, last * 3 + 0]
-    prev_x = cspace[:, prev_last * 3 + 0]
+    last_x = cspace[last * 3 + 0]
+    prev_x = cspace[prev_last * 3 + 0]
 
-    last_y = cspace[:, last * 3 + 1]
-    prev_y = cspace[:, prev_last * 3 + 1]
+    last_y = cspace[last * 3 + 1]
+    prev_y = cspace[prev_last * 3 + 1]
 
     return torch.sqrt((last_x - prev_x).pow(2) + (last_y - prev_y).pow(2))
 
@@ -438,13 +438,17 @@ def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray,
     FIXME: before changing this to be compatible with new cspace representation, answer: WHAT DOES THIS EVEN DO?
             (where is it used and does it still need to be used?)
     """
+
+    cspace = torch.tensor(cspace)
+    n_bodies = torch.tensor(n_bodies)
+
     assert cspace.shape == (batch_size, params.max_bodies * 3), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
     assert n_bodies.shape == (batch_size,)
     
     angles = cspace[:, 2::3]        # shape (n_bodies,)
     last_len = torch.vmap(get_last_body_length, in_dims=(0, 0))(cspace, n_bodies)
 
-    assert last_len.shape == (batch_size, 1)
+    assert last_len.shape == (batch_size,)
     
     # Step 1: compute global angles for each segment center
     global_angle_full = heading0 + torch.cumsum(torch.tensor(angles), dim=1)
@@ -499,6 +503,9 @@ def length(params: VineParams, cspace: np.ndarray, n_bodies: np.ndarray):
     """
     
     batch_size = cspace.shape[0]
+    cspace = torch.tensor(cspace)
+    n_bodies = torch.tensor(n_bodies)
+
     assert cspace.shape == (batch_size, params.max_bodies * 3), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
     assert n_bodies.shape == (batch_size,)
     
@@ -513,7 +520,7 @@ def length(params: VineParams, cspace: np.ndarray, n_bodies: np.ndarray):
     
     assert total_lengths.shape == (batch_size,)
         
-    return total_lengths
+    return total_lengths.cpu().numpy()
 
 
 def length_unbatched(params: VineParams, cspace: np.ndarray, n_bodies: int):
@@ -730,8 +737,8 @@ def rollout(sst_params, simparams, batch_size,
     cspace_record = np.zeros((history_size, batch_size, simparams.max_bodies * 3), dtype=np.float32)
     dstate_record = np.zeros((history_size, batch_size, simparams.max_bodies * 3), dtype=np.float32)
 
-    obj_position_record = np.zeros((history_size, batch_size, int(simparams.obj_mass.size), 3), dtype=np.float32)
-    obj_dstate_record = np.zeros((history_size, batch_size, int(simparams.obj_mass.size), 3), dtype=np.float32)
+    obj_position_record = np.zeros((history_size, batch_size, sim_params.obj_mass.size(0), 3), dtype=np.float32)
+    obj_dstate_record = np.zeros((history_size, batch_size, sim_params.obj_mass.size(0), 3), dtype=np.float32)
     
     # Track which batch elements have reached the max_bodies limit,
     # so dont update them anymore
@@ -784,88 +791,6 @@ def rollout(sst_params, simparams, batch_size,
             obj_dstate_record[:last_index_filled], \
             last_index_filled
 
-#------------------------------------------ actual sst()
-
-
-#------------------------------------------ sst_star()
-
-    
-    decay_factor = 0.8
-    sst_iter_0 = 7
-    sst_iter = sst_iter_0
-    j = 0
-    
-    # Dimension of the state space (well, not really, but good enough
-    # unless you want to set this to infinity)
-    d = 3
-    # Dimension of the control space
-    l = 1
-    
-    # Initial tree is None, sst will create it
-    tree = None
-    
-    # Callback once to indicate we have started
-    if callback is not None:
-        callback(None)
-    
-    while True:
-        # Clear the screen
-        clear_all_surfaces()
-        
-        tree, info = sst(sst_params, sim_params, tree, sst_iter, callback)
-        
-        if 'status' in info and info['status'] == 'callback requested suicide':
-            break
-        
-        # Shrink the δ-robust region towards zero
-        sst_params.δs *= decay_factor
-        sst_params.δBN *= decay_factor
-        
-        # Update iters
-        j += 1
-        sst_iter = sst_iter_0 * (1 + math.log2(j)) * decay_factor ** (-1 * (d + l + 1) * j) 
-        
-        # Clear the screen
-        # clear_all_surfaces()
-        
-        # Look for reps that no longer fall within δs
-        # And deactivate them, also search for prune candidates in their ancestors
-        witness_tip = tree.witness_positions()
-        witness_rep_idx_ = tree.rep_idxs()
-        valid_witness_mask = witness_rep_idx_ >= 0
-        
-        # Get the witnesses with valid reps
-        witness_tip = witness_tip[valid_witness_mask]
-        witness_rep_idx = witness_rep_idx_[valid_witness_mask]
-        rep_tip = tree._tips[witness_rep_idx]
-        
-        # Find the ones with distance > δs
-        distance_from_witness_to_rep2 = distance(sst_params, witness_tip - rep_tip)
-        to_remove_mask = distance_from_witness_to_rep2 > sst_params.δs * sst_params.δs
-        
-        for rep_idx in witness_rep_idx[to_remove_mask]:
-            # Deactivate the rep (prequisite for pruning)
-            tree._isactive[rep_idx] = False
-                        
-            # Prune the old rep, and any valid ancestors
-            prune_path_at(rep_idx, tree)
-            
-        for rep_idx in witness_rep_idx_[~valid_witness_mask]:
-            # Deactivate the rep (prequisite for pruning)
-            tree._isactive[rep_idx] = False
-                        
-            # Prune the old rep, and any valid ancestors
-            prune_path_at(rep_idx, tree)
-        
-        # TODO prune_path_at may introduce more invalid nodes
-        # we should repeat until there are none
-        
-        # TODO consider taking the min possible segments K so far,
-        # and removing all states with >= k segments (since we know for sure)
-        # we can do better
-        
-        tree.clean_states()
-
 #-------------------------------------------- sst()
 
 '''
@@ -887,7 +812,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
     bodies = 1
 
     cspace = np.zeros((sim_params.max_bodies * 3))
-    cspace[0, 0], cspace[0, 1] = init_x, init_y
+    cspace[0], cspace[1] = init_x, init_y
 
     bending_control = np.zeros((1, sim_params.max_bodies, 2))
     bending_control[:, :, 0] = 0.0 # pressure
@@ -898,15 +823,17 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
     # Initialize StateTree if needed (using values above)
 
     if not tree:
-        tree = StatesStruct(sim_params.max_bodies, sim_params.obj_mass.size)
+
+
+        tree = StatesStruct(sim_params.max_bodies, sim_params.obj_mass.size(0))
 
         cost_to_go = 0 if sst_params.points is None else geometric_cost_to_go(sst_params, tip).item()
 
         state0_idx = tree.add_state(isactive=True,
-                                    cspace=cspace,
-                                    dstate=torch.zeros((sim_params.max_bodies * 3)),
-                                    obj_positions=init_obj_pose,
-                                    obj_dstate=torch.zeros((sim_params.obj_mass.size, 3)),
+                                    c_space=cspace,
+                                    dstate=np.zeros((sim_params.max_bodies * 3), dtype=np.float32),
+                                    obj_positions=init_obj_pose.cpu().numpy(),
+                                    obj_dstate=np.zeros((sim_params.obj_mass.size(0), 3), dtype=np.float32),
                                     bodies=bodies,
                                     bending_control=bending_control,
                                     time=0,
@@ -950,6 +877,8 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
         new_bend_angle = 1.0 / new_bend_angle
 
         p, l0 = find_actuator_params(predict, act_params, torch.tensor(new_bend_angle))
+        p, l0 = p.cpu().numpy(), l0.cpu().numpy()
+
         assert np.all(np.isfinite(p)), f"p: {p}, l0: {l0}"
 
         current_bending_controls = tree._bending_controls[propagate_origin_idx]
@@ -1002,16 +931,16 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
 
         new_cspaces = new_cspaces.reshape(-1, sim_params.max_bodies * 3)
         new_dstates = new_dstates.reshape(-1, tree.dstate_len * 3)
-        new_obj_positions = new_obj_positions(-1, sim_params.obj_mass.size, 3)
-        new_obj_dstates = new_dstates(-1, sim_params.obj_mass.size, 3)
+        new_obj_positions = new_obj_positions(-1, sim_params.obj_mass.size(0), 3)
+        new_obj_dstates = new_dstates(-1, sim_params.obj_mass.size(0), 3)
 
         assert new_bodies.shape == (steps_to_iter * batch_size,), f"new_bodies shape: {new_bodies.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert new_times.shape == (steps_to_iter * batch_size,), f"new_times shape: {new_times.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
 
         assert new_cspaces.shape == (steps_to_iter * batch_size, sim_params.max_bodies * 3), f"new_cspaces shape: {new_cspaces.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert new_dstates.shape == (steps_to_iter * batch_size, sim_params.max_bodies * 3), f"new_dstates shape: {new_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
-        assert new_obj_positions == (steps_to_iter * batch_size, sim_params.obj_mass.size, 3), f"new_dstates shape: {new_obj_positions.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
-        assert new_obj_dstates == (steps_to_iter * batch_size, sim_params.obj_mass.size, 3), f"new_dstates shape: {new_obj_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+        assert new_obj_positions == (steps_to_iter * batch_size, sim_params.obj_mass.size(0), 3), f"new_dstates shape: {new_obj_positions.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+        assert new_obj_dstates == (steps_to_iter * batch_size, sim_params.obj_mass.size(0), 3), f"new_dstates shape: {new_obj_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
 
         # Assert that no new cspace is all zeros
         assert np.all(~np.all(new_cspaces == 0, axis=(1,2))), f"new_cspaces shape: {new_cspaces.shape}"
@@ -1107,7 +1036,6 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
                                                 witness_rep_costs)
         
         draw_tips(new_tips, costs=new_costs_total)
-
 
         # Add new witness-creating states to the tree, and record their indexes      
         
@@ -1300,10 +1228,8 @@ if __name__ == "__main__":
     parser.add_argument('--nogeo', action='store_true', help='Don\'t use geoemtric planner to guide exploration.')
     args = parser.parse_args()
 
-    # Load the config file
+    # Get environment info stored on file:
     cfg = load_box_config(args.env)
-    init_vis(figsize=(12,9), obstacles=cfg['obstacles'], dynamic_obstacles=cfg['dynamic_obstacles'], start=cfg['start'], goal=cfg['goal'],
-                save_pygame_folder=f'pics/live/')
 
     # See if we already have points saved
     env_hash = hashlib.md5(open(args.env, 'rb').read()).hexdigest()
@@ -1341,9 +1267,6 @@ if __name__ == "__main__":
         # We didn't load points
         points = None
         point_costs = None
-        
-
-    render()
 
     # In SI when applicable (meters, kilograms, seconds)
     # NOTE: a lot of these params get translated into params specified above (check vine_params_si def for more info)
@@ -1376,8 +1299,17 @@ if __name__ == "__main__":
 
     # For dynamic obstacles:
     objs_m = cfg['dynamic_obstacles']
-    masses_kg = cfg['dynamic_obstacles_masses']
-    initial_obj_pose = set_objects_si(params=sim_params, objs_m=objs_m, masses_kg=masses_kg)
+
+    masses_kg = cfg['dynamic_object_masses']
+    initial_obj_pose = set_objects_si(params=sim_params, aabbs_m=cfg['dynamic_obstacles'], masses_kg=masses_kg)
+
+    half_heights = sim_params.obj_hh
+    half_widths = sim_params.obj_hw
+
+    # Initialize pygame
+    init_vis(figsize=(12,9), obstacles=cfg['obstacles'], dynamic_obstacles=initial_obj_pose, start=cfg['start'], goal=cfg['goal'],
+                    save_pygame_folder=f'pics/live/', sim_params=sim_params)
+    render()
 
     # SST params
     sst_params = SSTparams(

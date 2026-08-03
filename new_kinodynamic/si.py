@@ -51,7 +51,7 @@ def vine_params_si(max_bodies=40, obstacles_m=None,
     """
     # default "no obstacles": one tiny box far out of reach (10 m) -- kept at a modest internal
     # magnitude so it doesn't blow up the QP's constraint scaling (a 1e6 m dummy -> 1e9 internal did).
-    obs_nd = [_obstacle_to_nd(o) for o in (obstacles_m or [[10.0, -0.01, 10.01, 0.01]])]
+    obs_nd = [_obstacle_to_nd(o) for o in obstacles_m]
     p = VineParams(max_bodies=max_bodies, obstacles=obs_nd,
                    grow_rate=grow_rate_mps * T0 / (L0 * GROW_FACTOR),
                    stiffness_mode=stiffness_mode)

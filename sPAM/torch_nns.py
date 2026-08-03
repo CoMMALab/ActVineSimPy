@@ -22,6 +22,13 @@ from sPAM.torch_spam import l_m_to_phi_eps, params
 import pandas as pd
 
 import torch
+if torch.cuda.is_available():
+    torch.set_default_device('cuda')
+    print("PREDICTION MODEL: USING CUDA")
+else:
+    print("PREDICTION MODEL: USING CPU")
+    
+
 # NOTE: deliberately do NOT call torch.set_default_device('cuda') here. This module is imported as a
 # library (dvsim/spam.py -> the vine sim), and flipping the *global* default device forces the whole
 # cpu-native dvsim sim onto CUDA, where its growth path stalls. The sPAM MLP is tiny; it runs on the
@@ -133,23 +140,8 @@ def unscale_outputs(output_scaled, scaling_info):
     return output_scaled * out_rng + out_min
 
 # --------------------------
-# 3. Flax MLP Model
+# 3. MLP Model
 # --------------------------
-
-# class MLP(nn.Module):
-#     num_outputs: int
-
-#     @nn.compact
-#     def __call__(self, x):
-#         # x shape: (batch, 2)
-#         # x = x.astype(jnp.float16)
-#         x = nn.Dense(features=32, kernel_init=initializers.he_normal())(x)
-#         x = nn.relu(x)
-#         # x = nn.Dense(features=16, kernel_init=initializers.he_normal())(x)
-#         # x = nn.relu(x)
-#         x = nn.Dense(features=self.num_outputs, kernel_init=initializers.he_normal())(x)
-        
-#         return x
 
 class MLP(nn.Module):
     def __init__(self, num_outputs):
@@ -176,32 +168,6 @@ class MLP(nn.Module):
 # 4. TrainState and Metrics
 # -------------------------------
 
-# @struct.dataclass
-# class Metrics:
-#     mse: float
-#     count: int
-
-#     @staticmethod
-#     def empty():
-#         return Metrics(mse=0.0, count=0)
-
-#     def update(self, preds, targets):
-#         loss = jnp.mean((preds - targets) ** 2)
-#         return Metrics(mse=self.mse + loss * preds.shape[0], count=self.count + preds.shape[0])
-
-#     def compute(self):
-#         return {'mse': (self.mse / self.count) if self.count > 0 else 0.0}
-
-
-# NOTE: below two classes are specific to flax, not needed for torch
-# class TrainState(train_state.TrainState):
-#     metrics: Metrics = Metrics.empty()
-
-# def create_train_state(rng, model, learning_rate, input_shape):
-#     params = model.init(rng, jnp.ones(input_shape))['params']
-#     tx = optax.adam(learning_rate)
-#     return TrainState.create(apply_fn=model.apply, params=params, tx=tx, metrics=Metrics.empty())
-
 class Metrics:
     def __init__(self):
         self.mse = 0.0
@@ -221,25 +187,6 @@ class Metrics:
 # ----------------------
 # 5. Training and Evaluation Steps
 # ----------------------
-
-# @jax.jit
-# def train_step(state, x_batch, y_batch):
-#     def loss_fn(params):
-#         preds = state.apply_fn({'params': params}, x_batch)
-#         return jnp.mean((preds - y_batch)**2)
-    
-#     grad_fn = jax.grad(loss_fn)
-#     grads = grad_fn(state.params)
-#     new_state = state.apply_gradients(grads=grads)
-    
-#     preds = new_state.apply_fn({'params': new_state.params}, x_batch)
-#     new_metrics = new_state.metrics.update(preds, y_batch)
-#     return new_state.replace(metrics=new_metrics)
-
-# @jax.jit
-# def eval_step(state, x_batch, y_batch):
-#     preds = state.apply_fn({'params': state.params}, x_batch)
-#     return state.metrics.update(preds, y_batch)
 
 def train_step(model, optimizer, metrics, x_batch, y_batch, device):
     
@@ -289,7 +236,6 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256, d
 
     # Define model, optimizer, and device
     device = torch.device(device)
-    print("USING THIS DEVICE:", device)
 
     model = MLP(num_outputs=2)
     model = model.to(device)
@@ -544,10 +490,10 @@ def get_prediction_function(scaling_info, model):
         
         # Predict
         model.eval()
+        model = model.to(scaled_inputs.device)
 
         with torch.no_grad():
-            scaled_inputs = scaled_inputs.to(torch.float32)      
-            # scaled_inputs = scaled_inputs.to(device)      
+            scaled_inputs = scaled_inputs.to(torch.float32)
             preds_scaled = model(scaled_inputs)
 
         # Unscale outputs

@@ -392,7 +392,9 @@ def extend(params: VineParams, state, dstate, bodies):
 
     # Compute last body's distance
     last_link_distance = ((state.x[last_i] - endingx)**2 + \
-                          (state.y[last_i] - endingy)**2).sqrt().squeeze(-1)
+                          (state.y[last_i] - endingy)**2).sqrt()
+
+    if last_link_distance.dim() > 0: last_link_distance = last_link_distance.squeeze(-1)
 
     # x2 to prevent 0-len segments
     extend_needed = last_link_distance > params.half_len * params.promote_factor

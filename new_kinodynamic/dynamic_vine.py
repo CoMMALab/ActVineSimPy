@@ -178,7 +178,13 @@ def step(params, init_heading, init_x, init_y, state, dstate, bodies, bending_co
     if obj_dstate is None:
         obj_dstate = torch.zeros(B, n_obj, 3)
 
-    fwd = torch.func.vmap(partial(dynamic_forward_part, params), in_dims=(0, 0, 0, 0, 0, 0, 0, 0))
+    fwd = torch.func.vmap(partial(dynamic_forward_part, params), in_dims=(None, None, None, 0, 0, 0, 0, 0))
+
+    state = torch.tensor(state)
+    dstate = torch.tensor(dstate)
+    bodies = torch.tensor(bodies)
+    obj_pose = torch.tensor(obj_pose)
+    bending_control = torch.tensor(bending_control)
 
     bodies, forces, growth, sdf_now, dev_now, L, J, gws, gwd, prox_now, pjs, pjp = \
         fwd(init_heading, init_x, init_y, state, dstate, bodies, obj_pose, bending_control)

@@ -1,6 +1,8 @@
 from sPAM.torch_spam import paramstype, params
 
 import torch
+if torch.cuda.is_available():
+    torch.set_default_device('cuda')
 
 def torch_solve(predict, params: paramstype, radius):
     '''
@@ -41,10 +43,10 @@ def torch_solve(predict, params: paramstype, radius):
                      ])
 
     inputs = torch.stack((eps.repeat(len(l_0)), l_0), dim=-1)
-    ouputs = predict(inputs)
+    outputs = predict(inputs)
 
     # Inputs are (eps, l_0) --> (phi, m)
-    phi, m = ouputs[:, 0], ouputs[:, 1]
+    phi, m = outputs[:, 0], outputs[:, 1]
 
     # --- Solve for pressure ---
     p_act = force / (torch.pi * params.R_c**2) * (2 * m * torch.cos(phi)**2) / (1 - 2 * m)
