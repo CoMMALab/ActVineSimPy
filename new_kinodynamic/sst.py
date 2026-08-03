@@ -746,22 +746,31 @@ def rollout(sst_params, simparams, batch_size,
     
     for i in range(steps_to_iter):
         
-        next_cspace, next_bodies, next_obj_positions, next_dstate_solution = forward(
+        next_cspace, next_dstate, next_bodies, next_obj_positions, next_obj_dstate = forward(
             simparams, init_heading, init_x, init_y, cspace, dstate, bodies, bending_control,
             obj_positions, obj_dstate
         )
+
+        # Convert tensors to numpy for rest of ops:
+        next_cspace = next_cspace.cpu().numpy()
+        next_dstate = next_dstate.cpu().numpy()
+        next_obj_positions = next_obj_positions.cpu().numpy()
+        next_bodies = next_bodies.cpu().numpy()
+        next_obj_dstate = next_obj_dstate.cpu().numpy()
 
         # Check if forward() has caused any vine has hit max length
         reached_max = reached_max | (bodies >= simparams.max_bodies - 1)
         
         # Record the cspace and bodies for this step, but if a vine already
         # hit its limit, reuse the last one
-        cspace = np.where(reached_max[..., None, None], cspace, next_cspace)
-        bodies = np.where(reached_max, bodies, next_bodies)        
-        curr_time = curr_time + simparams.dt                
+        curr_time = curr_time + simparams.dt
+
+        cspace = np.where(reached_max[..., None], cspace, next_cspace)
+        bodies = np.where(reached_max, bodies, next_bodies)                        
         obj_positions = np.where(reached_max[..., None, None], 
                                          obj_positions, next_obj_positions)
-        dstate = np.where(reached_max[..., None, None], dstate, next_dstate_solution)
+        dstate = np.where(reached_max[..., None], dstate, next_dstate)
+        obj_dstate = np.where(reached_max[..., None, None], obj_dstate, next_obj_dstate)
 
         if i % record_every == 0:
             # Record the current state

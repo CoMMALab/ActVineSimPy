@@ -2,6 +2,27 @@ import math
 import torch
 from functools import partial
 
+#--------------------- Helpers to make functions vmap compatible:
+
+def torch_get_from_1D(tensor: torch.tensor, index):
+    '''
+    Retrieves value from 1D tensor without upsetting jacrev or vmap:
+    '''
+
+    idx = torch.arange(tensor.shape[0])
+    mask = (idx == index)
+    return torch.where(mask, tensor, torch.zeros_like(tensor)).sum()
+
+def torch_set_in_1D(tensor: torch.tensor, index, value):
+    '''
+    The same as the following: tensor[index] = value, but does so without upsetting jacrev/vmap
+    '''
+    idx = torch.arange(tensor.shape[0])
+    mask = (idx == index)
+    return torch.where(mask, value, tensor)
+
+
+
 # DiffVine's baked-in ad-hoc unit factors. They keep the QP well-conditioned in the base's native
 # units; dvsim.si absorbs them into the stored non-dim parameter values. Named here so vine.py,
 # dynamic_vine.py and si.py share ONE definition instead of duplicating the bare literals (which
@@ -314,15 +335,27 @@ def joint_deviation(params: VineParams, init_x, init_y, state: torch.Tensor, bod
                                          - params.half_len * torch.sin(theta[:-1])
 
     # Last body is special. It has a sliding AND rotation joint with the second-last body
-    endx = x[bodies - 2] + params.half_len * torch.cos(theta[bodies - 2])
-    endy = y[bodies - 2] + params.half_len * torch.sin(theta[bodies - 2])
+    # endx = x[bodies - 2] + params.half_len * torch.cos(theta[bodies - 2])
+    # endy = y[bodies - 2] + params.half_len * torch.sin(theta[bodies - 2])
 
-    angle_diff = torch.atan2(y[bodies - 1] - endy, x[bodies - 1] - endx) - theta[bodies - 1]
+    endx = torch_get_from_1D(x, bodies-2) + params.half_len * torch.cos(
+        torch_get_from_1D(theta, bodies-2)
+    )
+    endy = torch_get_from_1D(y, bodies-2) + params.half_len * torch.sin(
+            torch_get_from_1D(theta, bodies-2)
+    )
+
+    # angle_diff = torch.atan2(y[bodies - 1] - endy, x[bodies - 1] - endx) - theta[bodies - 1]
+    
+    angle_diff = torch.atan2(torch_get_from_1D(y, bodies-1) - endy, 
+                             torch_get_from_1D(x, bodies-1) - endx) - torch_get_from_1D(theta, bodies-1)
+
 
     # So if we have 4 bodies, we have constraints: [x y x y x y dtheta]
     #                                               0 1 2 3 4 5 6
     # So the last constraint index is 6 = (bodies-1)*2
-    constraints[(bodies - 1) * 2] = angle_diff
+    # constraints[(bodies - 1) * 2] = angle_diff
+    torch_set_in_1D(constraints, (bodies-1)*2, angle_diff)
 
     zero_out_custom(constraints, bodies * 2 - 1)
 
@@ -449,15 +482,25 @@ def growth_rate(params: VineParams, state, dstate, bodies):
     assert state.tensor.shape == dstate.tensor.shape
 
     # Now return the constraints for growing the last segment
-    x1 = state.x[id1]
-    y1 = state.y[id1]
-    vx1 = dstate.x[id1]
-    vy1 = dstate.y[id1]
+    # x1 = state.x[id1]
+    # y1 = state.y[id1]
+    # vx1 = dstate.x[id1]
+    # vy1 = dstate.y[id1]
 
-    x2 = state.x[id2]
-    y2 = state.y[id2]
-    vx2 = dstate.x[id2]
-    vy2 = dstate.y[id2]
+    x1 = torch_get_from_1D(state.x, id1)
+    y1 = torch_get_from_1D(state.y, id1)
+    vx1 = torch_get_from_1D(dstate.x, id1)
+    vy1 = torch_get_from_1D(dstate.y, id1)
+
+    # x2 = state.x[id2]
+    # y2 = state.y[id2]
+    # vx2 = dstate.x[id2]
+    # vy2 = dstate.y[id2]
+
+    x2 = torch_get_from_1D(state.x, id2)
+    y2 = torch_get_from_1D(state.y, id2)
+    vx2 = torch_get_from_1D(dstate.x, id2)
+    vy2 = torch_get_from_1D(dstate.y, id2)
 
     constraint = ((x2 - x1) * (vx2 - vx1) + (y2 - y1) * (vy2 - vy1)) / \
                   torch.sqrt((x2 - x1)**2 + (y2 - y1)**2)
