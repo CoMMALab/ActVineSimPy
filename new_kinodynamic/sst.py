@@ -412,6 +412,9 @@ def get_last_body_length(cspace: np.ndarray, n_bodies: int):
     NOTE: this is NOT batched, needs to be vmapped
     '''
 
+    print(n_bodies.shape)
+    print(n_bodies)
+
     last = n_bodies - 1
     prev_last = n_bodies - 2
 
@@ -745,6 +748,8 @@ def rollout(sst_params, simparams, batch_size,
     reached_max = bodies >= simparams.max_bodies - 1
     
     for i in range(steps_to_iter):
+
+        print(f'ITERATION {i}/{steps_to_iter}')
         
         next_cspace, next_dstate, next_bodies, next_obj_positions, next_obj_dstate = forward(
             simparams, init_heading, init_x, init_y, cspace, dstate, bodies, bending_control,
@@ -903,7 +908,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
         start_time = time.time()
 
         new_times, new_bodies, new_cspaces, new_obj_positions, \
-        new_dstates, new_obj_dstates, last_index_filled = rollout(
+        new_dstates, new_obj_dstates, steps_to_iter = rollout(
             sst_params, sim_params, batch_size, sst_params.time_to_evolve,
             curr_time=tree._times[propagate_origin_idx],
             cspace=tree._c_spaces[propagate_origin_idx],
@@ -939,20 +944,20 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
         new_times = new_times.reshape(-1)
 
         new_cspaces = new_cspaces.reshape(-1, sim_params.max_bodies * 3)
-        new_dstates = new_dstates.reshape(-1, tree.dstate_len * 3)
-        new_obj_positions = new_obj_positions(-1, sim_params.obj_mass.size(0), 3)
-        new_obj_dstates = new_dstates(-1, sim_params.obj_mass.size(0), 3)
+        new_dstates = new_dstates.reshape(-1, sim_params.max_bodies * 3)
+        new_obj_positions = new_obj_positions.reshape(-1, sim_params.obj_mass.size(0), 3)
+        new_obj_dstates = new_dstates.reshape(-1, sim_params.obj_mass.size(0), 3)
 
         assert new_bodies.shape == (steps_to_iter * batch_size,), f"new_bodies shape: {new_bodies.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert new_times.shape == (steps_to_iter * batch_size,), f"new_times shape: {new_times.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
 
         assert new_cspaces.shape == (steps_to_iter * batch_size, sim_params.max_bodies * 3), f"new_cspaces shape: {new_cspaces.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert new_dstates.shape == (steps_to_iter * batch_size, sim_params.max_bodies * 3), f"new_dstates shape: {new_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
-        assert new_obj_positions == (steps_to_iter * batch_size, sim_params.obj_mass.size(0), 3), f"new_dstates shape: {new_obj_positions.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
-        assert new_obj_dstates == (steps_to_iter * batch_size, sim_params.obj_mass.size(0), 3), f"new_dstates shape: {new_obj_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+        assert new_obj_positions.shape == (steps_to_iter * batch_size, sim_params.obj_mass.size(0), 3), f"new_dstates shape: {new_obj_positions.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+        assert new_obj_dstates.shape == (steps_to_iter * batch_size, sim_params.obj_mass.size(0), 3), f"new_dstates shape: {new_obj_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
 
         # Assert that no new cspace is all zeros
-        assert np.all(~np.all(new_cspaces == 0, axis=(1,2))), f"new_cspaces shape: {new_cspaces.shape}"
+        assert np.all(~np.all(new_cspaces == 0, axis=(1))), f"new_cspaces shape: {new_cspaces.shape}"
 
         finite_mask = np.all(np.isfinite(new_cspaces), axis=1)
         assert np.all(finite_mask), f"{np.sum(finite_mask)} finite cspaces out of {new_cspaces.shape[0]}"
@@ -1336,7 +1341,7 @@ if __name__ == "__main__":
         point_costs=point_costs,
         info={'env_path': args.env}, # Not used, except when we serialize this object for view_solutions
         do_cost_to_go=not args.nogeo,
-        time_to_evolve=100,
+        time_to_evolve=0.1, # was initially 100
     )
 
 
