@@ -502,7 +502,7 @@ def _draw_dynamic_obstacles(new_dynamic_obstacles=None, sim_params=None):
 
     # For redrawing dynamic objects when called by clear_surfaces
     # (In this casse, just redraw everything cached in _dynamic_obstacles set)
-    if new_dynamic_obstacles is None and sim_params is None:
+    if new_dynamic_obstacles is None or new_dynamic_obstacles.size == 0 or sim_params is None:
         for x, y, theta, hh, hw in _dynamic_obstacles:
             corners = _obb_corners_mm(x, y, theta, hw, hh)
             pygame.draw.polygon(_tree_surf, (173, 216, 230), corners)
@@ -519,10 +519,6 @@ def _draw_dynamic_obstacles(new_dynamic_obstacles=None, sim_params=None):
                 _dynamic_obstacles.add((x.item(), y.item(), theta.item(), hw, hh))
 
                 corners = _obb_corners_mm(x.item(), y.item(), theta.item(), hw, hh)
-
-                # print()
-                # print(*corners)
-                # print()
 
                 pygame.draw.polygon(_tree_surf, (173, 216, 230), corners)
                 pygame.draw.polygon(_tree_surf, (0, 0, 0), corners, width=2)
