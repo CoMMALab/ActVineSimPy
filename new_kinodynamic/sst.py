@@ -234,8 +234,8 @@ class StatesStruct:
             self.extend_states()
         
         # Convert to cpu tensor before
-        if torch.cuda.is_available():
-            tip = tip.cpu().numpy()
+        # if torch.cuda.is_available():
+        #     tip = tip.cpu().numpy()
 
         idx = self.num_states
         
@@ -277,7 +277,7 @@ class StatesStruct:
 
         if self.num_dynamic_objs != 0:
             assert obj_positions.shape == (num_to_add, self.num_dynamic_objs, 3)
-            assert obj_dstates.shape(num_to_add, self.num_dynamic_objs, 3)
+            assert obj_dstates.shape == (num_to_add, self.num_dynamic_objs, 3)
         
         assert cost_to_come.shape == (num_to_add,)
         assert cost_total.shape == (num_to_add,)
@@ -442,9 +442,6 @@ def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray,
     cspace = torch.tensor(cspace)
     n_bodies = torch.tensor(n_bodies)
 
-    print(cspace.shape)
-    print(n_bodies.shape)
-
     assert cspace.shape == (batch_size, params.max_bodies * 3), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
     assert n_bodies.shape == (batch_size,)
     
@@ -489,7 +486,7 @@ def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray,
         
     assert ret.shape == (batch_size, 3), f"ret shape: {ret.shape}"
     
-    return ret
+    return ret.cpu().numpy()
 
 
 def length(params: VineParams, cspace: np.ndarray, n_bodies: np.ndarray):
@@ -793,7 +790,6 @@ def rollout(sst_params, simparams, batch_size,
         # All our vines have hit their limit, stop the rollout
         if np.all(reached_max):
             break
-    print()
 
 
     # Assert all bodies are within the max_bodies limit
@@ -801,7 +797,7 @@ def rollout(sst_params, simparams, batch_size,
     
     last_index_filled = int(i // record_every)
 
-    print(i, record_every, last_index_filled)
+    # print(i, record_every, last_index_filled)
 
     return time_record[:last_index_filled], \
             bodies_record[:last_index_filled], \
@@ -945,22 +941,22 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
             steps_to_iter = 1 
 
         # Rollout returns a record of position at each timestep, so flatten timestep and batch together                
-                
+
         new_bodies = new_bodies.reshape(-1)
         new_times = new_times.reshape(-1)
 
         new_cspaces = new_cspaces.reshape(-1, sim_params.max_bodies * 3)
         new_dstates = new_dstates.reshape(-1, sim_params.max_bodies * 3)
         new_obj_positions = new_obj_positions.reshape(-1, sim_params.obj_mass.size(0), 3)
-        new_obj_dstates = new_dstates.reshape(-1, sim_params.obj_mass.size(0), 3)
+        new_obj_dstates = new_obj_dstates.reshape(-1, sim_params.obj_mass.size(0), 3)
 
         assert new_bodies.shape == (steps_to_iter * batch_size,), f"new_bodies shape: {new_bodies.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert new_times.shape == (steps_to_iter * batch_size,), f"new_times shape: {new_times.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
 
         assert new_cspaces.shape == (steps_to_iter * batch_size, sim_params.max_bodies * 3), f"new_cspaces shape: {new_cspaces.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert new_dstates.shape == (steps_to_iter * batch_size, sim_params.max_bodies * 3), f"new_dstates shape: {new_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
-        assert new_obj_positions.shape == (steps_to_iter * batch_size, sim_params.obj_mass.size(0), 3), f"new_dstates shape: {new_obj_positions.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
-        assert new_obj_dstates.shape == (steps_to_iter * batch_size, sim_params.obj_mass.size(0), 3), f"new_dstates shape: {new_obj_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+        assert new_obj_positions.shape == (steps_to_iter * batch_size, sim_params.obj_mass.size(0), 3), f"new_obj_positions shape: {new_obj_positions.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+        assert new_obj_dstates.shape == (steps_to_iter * batch_size, sim_params.obj_mass.size(0), 3), f"new_obj_dstates shape: {new_obj_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
 
         # Assert that no new cspace is all zeros
         assert np.all(~np.all(new_cspaces == 0, axis=(1))), f"new_cspaces shape: {new_cspaces.shape}"
@@ -968,9 +964,8 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
         finite_mask = np.all(np.isfinite(new_cspaces), axis=1)
         assert np.all(finite_mask), f"{np.sum(finite_mask)} finite cspaces out of {new_cspaces.shape[0]}"
 
-        # Get the tip position of the new states
 
-        print
+        # Get the tip position of the new states
 
         new_tips = cspace_to_tip(sim_params, new_cspaces.shape[0], new_cspaces, new_bodies, init_x, init_y, init_heading) 
 
@@ -1064,9 +1059,9 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
         
         new_fresh_idx = tree.add_states(isactive=True,
                                         c_space=new_cspaces[new_fresh_mask],
-                                        dstate=new_dstates[new_fresh_idx],
-                                        obj_positions=new_obj_positions[new_fresh_idx],
-                                        obj_dstates=new_obj_dstates[new_fresh_idx],
+                                        dstate=new_dstates[new_fresh_mask],
+                                        obj_positions=new_obj_positions[new_fresh_mask],
+                                        obj_dstates=new_obj_dstates[new_fresh_mask],
                                         bodies=new_bodies[new_fresh_mask],
                                         time=new_times[new_fresh_mask],
                                         bending_control=current_bending_controls[new_fresh_mask],

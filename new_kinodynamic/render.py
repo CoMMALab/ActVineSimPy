@@ -2,9 +2,11 @@ import pygame
 import math
 import numpy as np
 import os
+import torch
 
 from .si import len_to_mm
 from .vine import VineParams
+from .sst import get_last_body_length
 
 regular_font = None
 bold_font = None
@@ -510,13 +512,17 @@ def _draw_dynamic_obstacles(new_dynamic_obstacles=None, sim_params=None):
         for i in range(new_dynamic_obstacles.shape[0]): # skip batch or steps*batch dim
             for obj_idx, obj in enumerate(new_dynamic_obstacles[i]):
 
-                x, y, theta = tuple(obj.cpu().tolist())
-                hw = float(sim_params.obj_hw[obj_idx])
-                hh = float(sim_params.obj_hh[obj_idx])
+                x, y, theta = tuple(obj)
+                hw = float(sim_params.obj_hw[obj_idx].item())
+                hh = float(sim_params.obj_hh[obj_idx].item())
 
-                _dynamic_obstacles.add((x, y, theta, hw, hh))
+                _dynamic_obstacles.add((x.item(), y.item(), theta.item(), hw, hh))
 
-                corners = _obb_corners_mm(x, y, theta, hw, hh)
+                corners = _obb_corners_mm(x.item(), y.item(), theta.item(), hw, hh)
+
+                # print()
+                # print(*corners)
+                # print()
 
                 pygame.draw.polygon(_tree_surf, (173, 216, 230), corners)
                 pygame.draw.polygon(_tree_surf, (0, 0, 0), corners, width=2)
@@ -556,8 +562,14 @@ def _draw_vine(surface, params, points, circle_col=None, alpha=255, draw_circles
             
     for i in range(batch_size):
         for j in range(n_bodies[i]):
-            pygame.draw.line(surface, line_col_darker, (atx[i, j], aty[i, j]), (tx[i, j], ty[i, j]), line_thickness + 4)
-            pygame.draw.line(surface, line_col, (atx[i, j], aty[i, j]), (tx[i, j], ty[i, j]), line_thickness)
+
+            atx_x = atx[i, j].item(0)
+            aty_y = aty[i, j].item(0)
+            tx_x = tx[i, j].item(0)
+            ty_y = ty[i, j].item(0)
+
+            pygame.draw.line(surface, line_col_darker, (atx_x, aty_y), (tx_x, ty_y), line_thickness + 4)
+            pygame.draw.line(surface, line_col, (atx_x, aty_y), (tx_x, ty_y), line_thickness)
             
             this_circle_col = circle_col[i, j] if isinstance(circle_col, np.ndarray) else circle_col
             this_circle_col_dark = (this_circle_col[0] * 0.5, this_circle_col[1] * 0.5, this_circle_col[2] * 0.5, alpha)
@@ -572,8 +584,8 @@ def _compute_vine_points(params, cspace, bodies, x0, y0, heading0):
     
     batch_size = cspace.shape[0]
     
-    assert cspace.ndim == 3
-    assert cspace.shape[1] == params.max_bodies + 1
+    assert cspace.ndim == 2
+    assert cspace.shape[1] == params.max_bodies * 3
     assert bodies.shape == (batch_size,)
     
     heading0 = np.asarray(heading0, dtype=np.float32)
@@ -582,15 +594,19 @@ def _compute_vine_points(params, cspace, bodies, x0, y0, heading0):
     bodies = np.asarray(bodies, dtype=np.int32)
     cspace = np.asarray(cspace, dtype=np.float32)
         
-    angles = cspace[:, :-1, -1]
-    last_len = cspace[:, params.max_bodies, -1]
+    angles = cspace[:, 2::3]
+
+    # last_len = cspace[:, params.max_bodies, -1]
+    last_len = torch.vmap(get_last_body_length, in_dims=(0, 0))(torch.tensor(cspace), torch.tensor(bodies))
+    last_len = last_len.cpu().numpy()
+
     n_bodies = bodies
 
     global_angle_full = heading0 + np.cumsum(angles, axis=1)
     c_ = np.cos(global_angle_full)
     s_ = np.sin(global_angle_full)
     
-    full_lengths = np.full((batch_size, params.max_bodies,), fill_value=params.body_length)
+    full_lengths = np.full((batch_size, params.max_bodies,), fill_value=params.body_length.cpu().numpy())
     arange = np.arange(batch_size)
     full_lengths[arange, n_bodies-1] = last_len
     
