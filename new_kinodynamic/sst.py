@@ -412,9 +412,6 @@ def get_last_body_length(cspace: np.ndarray, n_bodies: int):
     NOTE: this is NOT batched, needs to be vmapped
     '''
 
-    print(n_bodies.shape)
-    print(n_bodies)
-
     last = n_bodies - 1
     prev_last = n_bodies - 2
 
@@ -444,6 +441,9 @@ def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray,
 
     cspace = torch.tensor(cspace)
     n_bodies = torch.tensor(n_bodies)
+
+    print(cspace.shape)
+    print(n_bodies.shape)
 
     assert cspace.shape == (batch_size, params.max_bodies * 3), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
     assert n_bodies.shape == (batch_size,)
@@ -732,7 +732,7 @@ def rollout(sst_params, simparams, batch_size,
     record_every = int(sst_params.δs // (simparams.grow_rate * simparams.dt)) * sst_params.record_every_multiplier
     steps_to_iter = int(ceil((time_to_evolve) / simparams.dt))        
     
-    history_size = steps_to_iter // record_every + 1
+    history_size = int(steps_to_iter // record_every + 1)
 
     bodies_record = np.zeros((history_size, batch_size), dtype=np.int32)
     time_record = np.zeros((history_size, batch_size), dtype=np.float32)
@@ -779,23 +779,29 @@ def rollout(sst_params, simparams, batch_size,
 
         if i % record_every == 0:
             # Record the current state
-            bodies_record[i // record_every] = bodies
-            time_record[i // record_every] = curr_time
+            int_to_use = int(i // record_every)
 
-            cspace_record[i // record_every] = cspace
-            obj_position_record[i // record_every] = obj_positions
+            bodies_record[int_to_use] = bodies
+            time_record[int_to_use] = curr_time
 
-            dstate_record[i // record_every] = dstate
-            obj_dstate_record[i // record_every] = obj_dstate
+            cspace_record[int_to_use] = cspace
+            obj_position_record[int_to_use] = obj_positions
+
+            dstate_record[int_to_use] = dstate
+            obj_dstate_record[int_to_use] = obj_dstate
             
         # All our vines have hit their limit, stop the rollout
         if np.all(reached_max):
             break
-    
+    print()
+
+
     # Assert all bodies are within the max_bodies limit
     assert np.all(bodies < simparams.max_bodies), f"bodies: {bodies}, max_bodies: {simparams.max_bodies}"
     
-    last_index_filled = i // record_every
+    last_index_filled = int(i // record_every)
+
+    print(i, record_every, last_index_filled)
 
     return time_record[:last_index_filled], \
             bodies_record[:last_index_filled], \
@@ -963,6 +969,9 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
         assert np.all(finite_mask), f"{np.sum(finite_mask)} finite cspaces out of {new_cspaces.shape[0]}"
 
         # Get the tip position of the new states
+
+        print
+
         new_tips = cspace_to_tip(sim_params, new_cspaces.shape[0], new_cspaces, new_bodies, init_x, init_y, init_heading) 
 
         # Increment the costs of the new states by 1 (since we applied a new control input)
@@ -1329,7 +1338,7 @@ if __name__ == "__main__":
     sst_params = SSTparams(
         batch_size=100,
         δBN=60.0,
-        δs=45.0, # 20
+        δs=20.0, # was 20
         min_x=0.0,
         max_x=cfg['bound_x'],
         min_y=0.0,
@@ -1341,7 +1350,8 @@ if __name__ == "__main__":
         point_costs=point_costs,
         info={'env_path': args.env}, # Not used, except when we serialize this object for view_solutions
         do_cost_to_go=not args.nogeo,
-        time_to_evolve=0.1, # was initially 100
+        time_to_evolve=1, # was initially 100
+        record_every_multiplier=0.01 # set for testing
     )
 
 
