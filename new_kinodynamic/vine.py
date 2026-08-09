@@ -99,6 +99,8 @@ def _obstacle_to_obb(o):
             x1, x2 = x2, x1
         if y1 > y2:
             y1, y2 = y2, y1
+
+        # print(f"{tuple(o)} => {[(x1 + x2) / 2, (y1 + y2) / 2, 0.0, (x2 - x1) / 2, (y2 - y1) / 2]}")
         return [(x1 + x2) / 2, (y1 + y2) / 2, 0.0, (x2 - x1) / 2, (y2 - y1) / 2]
     raise ValueError(f"obstacle must be [x1,y1,x2,y2] or [cx,cy,theta,hw,hh], got {o}")
 

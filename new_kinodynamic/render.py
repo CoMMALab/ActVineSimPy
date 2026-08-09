@@ -41,9 +41,11 @@ def _to_screen(x, y):
     By default, we shift x by +_offset_x, 
     and invert y about _offset_y (so that larger y is drawn lower).
     """
+
     sx = _offset_x + x * _scale
     sy = _offset_y + y * _scale
     return int(sx), int(sy)
+
 
 def _to_screen_array(x_array, y_array):
     assert x_array.ndim == 1 or x_array.ndim == 2, f"Expected 2D or 1D array, got {x_array.ndim}"
@@ -53,6 +55,7 @@ def _to_screen_array(x_array, y_array):
     sx = _offset_x + x_array * _scale
     sy = _offset_y + y_array * _scale
     return sx, sy
+
 
 def _get_blue_red_color_scale(t, max_val=50.0):
     """
@@ -92,6 +95,7 @@ def draw_live_state(params, cspace, bodies, x0, y0, heading0, draw_circles=False
                circle_thickness=8 if actuator_colors is not None else 5)
     
     return points[4], points[5]
+
 
 ##########################
 # SST Stuff
@@ -294,7 +298,7 @@ def flip(blit):
     Flip a blit upside down to match matplotlib coordinate system
     '''
     return pygame.transform.flip(blit, False, True)
-    
+
 
 #-------------------------------------- Main functions that are used directly in sst()
 
@@ -513,6 +517,7 @@ def _draw_dynamic_obstacles(new_dynamic_obstacles=None, sim_params=None):
             for obj_idx, obj in enumerate(new_dynamic_obstacles[i]):
 
                 x, y, theta = tuple(obj)
+
                 hw = float(sim_params.obj_hw[obj_idx].item())
                 hh = float(sim_params.obj_hh[obj_idx].item())
 
@@ -520,10 +525,17 @@ def _draw_dynamic_obstacles(new_dynamic_obstacles=None, sim_params=None):
 
                 corners = _obb_corners_mm(x.item(), y.item(), theta.item(), hw, hh)
 
+                # Scale to screen:
+                for i in range(len(corners)):
+                    scaled_x = corners[i][0] / 1000
+                    scaled_y = corners[i][1] / 1000
+
+                    scaled_x, scaled_y = _to_screen(scaled_x, scaled_y)
+                    corners[i] = (scaled_x, scaled_y)
+
                 pygame.draw.polygon(_tree_surf, (173, 216, 230), corners)
                 pygame.draw.polygon(_tree_surf, (0, 0, 0), corners, width=2)
     
-
 
 def _draw_vine(surface, params, points, circle_col=None, alpha=255, draw_circles=False, circle_thickness=5):
     '''

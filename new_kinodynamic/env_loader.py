@@ -10,6 +10,8 @@ def load_box_config(filename: str):
       start: <float> <float> <float>
       goal:  <float> <float> <float>
       ob_type: box
+      goal_radius: <float>
+      scale: <float>
       obstacles:
         x1 y1 x2 y2
         ...
@@ -269,6 +271,7 @@ def generate_divider_config():
     }
         
     return cfg
+
 
 def render_matplotlib(cfg):
     """

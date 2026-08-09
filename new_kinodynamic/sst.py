@@ -17,7 +17,7 @@ if torch.cuda.is_available():
 from new_kinodynamic.env_loader import load_box_config
 import numpy as np
 
-from new_kinodynamic.render import *
+from new_kinodynamic.new_render import *
 from kinodynamic.max_cover import max_cover
 
 from new_kinodynamic.vine import VineParams
@@ -217,7 +217,7 @@ class StatesStruct:
         self._c_spaces = np.concatenate([self._c_spaces, np.zeros((current_size, self.max_bodies * 3), dtype=np.float32)], axis=0)
         self._obj_positions = np.concatenate([self._obj_positions, np.zeros((current_size, self.num_dynamic_objs, 3), dtype=np.float32)], 
                                                  axis=0)
-        self._dstates = np.concatenate([self._dstates, np.zeros((current_size, self.max_bodies * 3), dtype=np.float32)], axix=0)
+        self._dstates = np.concatenate([self._dstates, np.zeros((current_size, self.max_bodies * 3), dtype=np.float32)], axis=0)
         self._obj_dstates = np.concatenate([self._obj_dstates, np.zeros((current_size, self.num_dynamic_objs, 3), dtype=np.float32)],
                                            axis=0)
 
@@ -742,7 +742,7 @@ def rollout(sst_params, simparams, batch_size,
     
     for i in range(steps_to_iter):
 
-        print(f'ITERATION {i}/{steps_to_iter}')
+        # print(f'ITERATION {i}/{steps_to_iter}')
         
         next_cspace, next_dstate, next_bodies, next_obj_positions, next_obj_dstate = forward(
             simparams, init_heading, init_x, init_y, cspace, dstate, bodies, bending_control,
@@ -837,7 +837,6 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
     # Initialize StateTree if needed (using values above)
 
     if not tree:
-
 
         tree = StatesStruct(sim_params.max_bodies, sim_params.obj_mass.size(0))
 
@@ -966,8 +965,11 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
         assert np.all(finite_mask), f"{np.sum(finite_mask)} finite cspaces out of {new_cspaces.shape[0]}"
 
         # Get the tip position of the new states
+        new_tips = cspace_to_tip(sim_params, new_cspaces.shape[0], new_cspaces, new_bodies, init_x, init_y, init_heading)
 
-        new_tips = cspace_to_tip(sim_params, new_cspaces.shape[0], new_cspaces, new_bodies, init_x, init_y, init_heading) 
+
+        # print("OBSTACLE POSITIONS:\n", sim_params.obstacle_pose)
+        # print("TIPS:\n", new_tips) 
 
         # Increment the costs of the new states by 1 (since we applied a new control input)
         cost_come = tree._cost_to_come[propagate_origin_idx] + 1
@@ -1015,6 +1017,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
 
         initial_num_solutions = sst_params.solutions.qsize()
         in_goal_mask = np.linalg.norm(new_tips[:, 0:2] - sst_params.goal[0:2], axis=1) < sst_params.goal_radius
+
         for idx in in_goal_mask.nonzero()[0]:
             sst_params.solutions.put(DontCompareSecond(
                 new_costs_come[idx].item() + tiebreak_factor * length_unbatched(sim_params, new_cspaces[idx], new_bodies[idx]),
@@ -1063,7 +1066,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
                                         dstate=new_dstates[new_fresh_mask],
                                         obj_positions=new_obj_positions[new_fresh_mask] if using_dynamic_obstacles
                                                        else None,
-                                        obj_dstates=new_obj_positions[new_fresh_idx] if using_dynamic_obstacles
+                                        obj_dstates=new_obj_positions[new_fresh_mask] if using_dynamic_obstacles
                                                     else None,
                                         bodies=new_bodies[new_fresh_mask],
                                         time=new_times[new_fresh_mask],
@@ -1308,6 +1311,8 @@ if __name__ == "__main__":
     dt_s = 1.0 / 90
     stiffnes_mode = 'linear'
 
+
+    print
     sim_params = vine_params_si(max_bodies=max_bodies,
                                 obstacles_m=obstacles_m,
                                 radius_m=radius_m,
@@ -1331,7 +1336,7 @@ if __name__ == "__main__":
         initial_obj_pose = np.array([])
 
     # Initialize pygame
-    init_vis(figsize=(12,9), obstacles=cfg['obstacles'], dynamic_obstacles=initial_obj_pose, start=cfg['start'], goal=cfg['goal'],
+    init_vis(figsize=(12,9), cfg_obstacles=cfg['obstacles'], dynamic_obstacles=initial_obj_pose, start=cfg['start'], goal=cfg['goal'],
                     save_pygame_folder=f'pics/live/', sim_params=sim_params)
     render()
 
