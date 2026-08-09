@@ -293,6 +293,8 @@ def init_vis(figsize=(12, 8), cfg_obstacles = None, dynamic_obstacles = None, st
     # NOTE: not updated for dynamic obstacles (since static walls are more likely to affect scaling)
     global _offset_x, _offset_y, _scale
     margin = 60
+
+    # The first four static obstacles are treated as the border walls, so use them for scaling
     min_x = min(o[0] * 1000 for o in cfg_obstacles)
     min_y = min(o[1] * 1000 for o in cfg_obstacles)
     max_x = max(o[2] * 1000 for o in cfg_obstacles)
@@ -543,9 +545,9 @@ def draw_goal(xy, radius):
     Draw a filled circle at the position
     '''
     global _live_surf
-    sx, sy = _to_screen(xy[0], xy[1])
-    pygame.draw.circle(_live_surf, (220, 20, 20, 40), (sx, sy), int(radius * _scale), 0)
-    pygame.draw.circle(_live_surf, (170, 0, 0), (sx, sy), int(radius * _scale), 4)
+    sx, sy = _to_screen(xy[0] * 1000, xy[1] * 1000)
+    pygame.draw.circle(_live_surf, (220, 20, 20, 40), (sx, sy), int(radius * 1000 * _scale), 0)
+    pygame.draw.circle(_live_surf, (170, 0, 0), (sx, sy), int(radius * 1000 * _scale), 4)
 
 
 def draw_dead_state(params, state, dynamic_positions, bodies, x0, y0, heading0):

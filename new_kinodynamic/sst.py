@@ -1311,8 +1311,6 @@ if __name__ == "__main__":
     dt_s = 1.0 / 90
     stiffnes_mode = 'linear'
 
-
-    print
     sim_params = vine_params_si(max_bodies=max_bodies,
                                 obstacles_m=obstacles_m,
                                 radius_m=radius_m,
