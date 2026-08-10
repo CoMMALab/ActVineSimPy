@@ -16,7 +16,7 @@ def load_box_config(filename: str):
         x1 y1 x2 y2
         ...
       dynamic_obstacles:
-        x1 y1 x2 y2 mass1 inertia1 
+        x1 y1 x2 y2 mass1
     Returns a dict with bound, start, goal, ob_type, obstacles, dynamic_obstacles (Nx4).
     """
 
@@ -29,8 +29,7 @@ def load_box_config(filename: str):
         'ob_type': None,
         'obstacles': [],
         'dynamic_obstacles': [],
-        'dynamic_object_masses': [],
-        'dynamic_object_inertias': []
+        'dynamic_object_masses': []
     }
     reading_obstacles = False
     reading_dynamic_obstacles = False
@@ -55,10 +54,9 @@ def load_box_config(filename: str):
                 
             if reading_dynamic_obstacles:
                 parts = line.split()
-                if len(parts) == 6:
+                if len(parts) == 5:
                     cfg['dynamic_obstacles'].append([float(p) for p in parts[:4]])
                     cfg['dynamic_object_masses'].append([float(parts[4])])
-                    cfg['dynamic_object_inertias'].append([float(parts[5])])
                 continue
 
             if line.startswith("bound:"):
@@ -122,9 +120,8 @@ def load_box_config(filename: str):
     cfg['bound_x'] *= cfg['scale']
     cfg['bound_y'] *= cfg['scale']
 
-    # Also convert dynamic obj masses/inertias to np.arrays:
+    # Also convert dynamic obj masses to np.arrays:
     cfg['dynamic_object_masses'] = np.array(cfg['dynamic_object_masses'], dtype=np.float32)
-    cfg['dynamic_object_inertias'] = np.array(cfg['dynamic_object_inertias'], dtype=np.float32)
     
     return cfg
 

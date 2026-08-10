@@ -823,8 +823,6 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
     init_y = sst_params.start[1]
     init_heading = sst_params.start[2]
 
-    print(f"Start position: {init_x, init_y}")
-
     bodies = 1
 
     cspace = np.zeros((sim_params.max_bodies * 3))
@@ -859,14 +857,10 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
                                     num_children=0,)
             
         # tree.add_witness(np.zeros(3), state0_idx)
-        print(f"TIP INFO: {tip}")
         tree.add_witness(np.array([init_x, init_y, 0]), state0_idx)
 
     # Draw all witnesses and their rep tips (if existing)
     for wit_idx in range(tree.num_witnesses):
-
-        print(f"NUM WITNESSES: {tree.num_witnesses}")
-
         draw_witness(tree, wit_idx, sst_params.δs)
 
     # Get all rep_idxs which are not empty

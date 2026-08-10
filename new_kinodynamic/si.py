@@ -78,7 +78,6 @@ def _obstacle_to_nd(o):
         cx, cy, th, hw, hh = o
         return [cx / L0, cy / L0, th, hw / L0, hh / L0]
 
-    print(f"{o} as {o.dtype} => {[c / L0 for c in o]}")
     return [c / L0 for c in o]   # AABB: every coordinate is a length
 
 

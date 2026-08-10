@@ -23,7 +23,7 @@ _sst_active_surf = None    # For non-persistent SST stuff
 
 _obstacles = None          # The obstacle list (x1,y1,x2,y2)
 
-_dynamic_obstacles = set()  # All unique dynamic object positions
+_dynamic_obstacles = set()  # All unique dynamic object positions (corners stored directly in screen coords)
 
 _screen_width = 1200
 _screen_height = 800
@@ -142,20 +142,13 @@ def _draw_obstacles():
             x, y, theta, hw, hh = obs
             corners = _obb_corners_mm(x, y, theta, hw, hh)
             
-            # # Convert mm to screen coordinates
-            # left, top = _to_screen(x1, y1)
-
-            # width = int((x2 - x1) * _scale)
-            # height = int((y2 - y1) * _scale)
-
+            # Convert mm to screen coordinates
             corners = [(_to_screen(x, y)) for x, y in corners]
             
             # Draw a brown rectangle for the obstacle
-            # pygame.draw.rect(_tree_surf, (255, 228, 181), (left, top, width, height))
             pygame.draw.polygon(_tree_surf, (255, 228, 181), corners)
             
             # Draw a black border around the obstacle
-            # pygame.draw.rect(_tree_surf, (0,0,0), (left, top, width, height), 4)
             pygame.draw.polygon(_tree_surf, (0, 0, 0), corners, 4)
 
 
@@ -165,17 +158,15 @@ def _draw_dynamic_obstacles(new_dynamic_obstacles=None, sim_params=None):
     whose position may be changed over time (thus requiring them to be re-drawn).
     '''
 
-
     # For redrawing dynamic objects when called by clear_surfaces
-    # (In this casse, just redraw everything cached in _dynamic_obstacles set)
+    # (In this case, just redraw everything cached in _dynamic_obstacles set)
     if new_dynamic_obstacles is None or new_dynamic_obstacles.size == 0 or sim_params is None:
-        for x, y, theta, hh, hw in _dynamic_obstacles:
-            corners = _obb_corners_mm(x, y, theta, hw, hh)
-            pygame.draw.polygon(_tree_surf, (173, 216, 230), corners)
-            pygame.draw.polygon(_tree_surf, (0, 0, 0), corners, width=2)
+        for obj_corners in _dynamic_obstacles:
+            pygame.draw.polygon(_tree_surf, (173, 216, 230), obj_corners)
+            pygame.draw.polygon(_tree_surf, (0, 0, 0), obj_corners, width=2)
 
     else:
-        for i in range(new_dynamic_obstacles.shape[0]): # skip batch or steps*batch dim
+        for i in range(new_dynamic_obstacles.shape[0]): # for each batch or steps*batch dim
             for obj_idx, obj in enumerate(new_dynamic_obstacles[i]):
 
                 x, y, theta = tuple(obj)
@@ -183,18 +174,14 @@ def _draw_dynamic_obstacles(new_dynamic_obstacles=None, sim_params=None):
                 hw = float(sim_params.obj_hw[obj_idx].item())
                 hh = float(sim_params.obj_hh[obj_idx].item())
 
-                _dynamic_obstacles.add((x.item(), y.item(), theta.item(), hw, hh))
-
+                # Convert non-dim units to mm
                 corners = _obb_corners_mm(x.item(), y.item(), theta.item(), hw, hh)
 
-                # Scale to screen:
-                for i in range(len(corners)):
-                    scaled_x = corners[i][0] / 1000
-                    scaled_y = corners[i][1] / 1000
+                # Convert mm to screen coordinates and cache for later
+                corners = [(_to_screen(x, y)) for x, y in corners]
+                _dynamic_obstacles.add(tuple(corners))
 
-                    scaled_x, scaled_y = _to_screen(scaled_x, scaled_y)
-                    corners[i] = (scaled_x, scaled_y)
-
+                # Draw the object
                 pygame.draw.polygon(_tree_surf, (173, 216, 230), corners)
                 pygame.draw.polygon(_tree_surf, (0, 0, 0), corners, width=2)
 
@@ -348,6 +335,8 @@ def init_vis(figsize=(12, 8), cfg_obstacles = None, dynamic_obstacles = None, st
 
     # Optionally draw obstacles on the tree surface immediately (so they are behind everything)
     _draw_obstacles()
+
+    print(dynamic_obstacles)
     _draw_dynamic_obstacles(dynamic_obstacles, sim_params)
     
     save_pygame_folder_path = save_pygame_folder
@@ -420,8 +409,6 @@ def draw_witness(tree, idx, radius, color=(0, 0, 0, 100)):
     global _sst_surf
     wx, wy, _ = tree._witness_positions[idx]
     sx, sy = _to_screen(wx * 1000, wy * 1000)
-
-    print(sx, sy)
 
     pygame.draw.circle(_sst_surf, color, (sx, sy), int(radius * _scale), 2)
 
