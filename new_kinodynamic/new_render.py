@@ -50,6 +50,8 @@ def _to_screen(x, y):
     Transform world (vine) coordinates into screen coordinates.
     By default, we shift x by +_offset_x, 
     and invert y about _offset_y (so that larger y is drawn lower).
+
+    NOTE: translates mm => screen coords
     """
 
     sx = _offset_x + x * _scale
@@ -233,9 +235,9 @@ def _draw_vine(surface, params, points, circle_col=None, alpha=255, draw_circles
     if circle_col is None:
         circle_col = (line_col[0] * 0.5, line_col[1] * 0.5, line_col[2] * 0.5, alpha)
             
-    atx, aty = _to_screen_array(antitip_x, antitip_y)
-    tx, ty = _to_screen_array(tip_x, tip_y)
-    cx, cy = _to_screen_array(center_x, center_y)
+    atx, aty = _to_screen_array(antitip_x * 1000, antitip_y * 1000)
+    tx, ty = _to_screen_array(tip_x * 1000, tip_y * 1000)
+    cx, cy = _to_screen_array(center_x * 1000, center_y * 1000)
     
     batch_size = atx.shape[0]
     
@@ -417,7 +419,10 @@ def draw_witness(tree, idx, radius, color=(0, 0, 0, 100)):
     """
     global _sst_surf
     wx, wy, _ = tree._witness_positions[idx]
-    sx, sy = _to_screen(wx, wy)
+    sx, sy = _to_screen(wx * 1000, wy * 1000)
+
+    print(sx, sy)
+
     pygame.draw.circle(_sst_surf, color, (sx, sy), int(radius * _scale), 2)
 
 
@@ -442,17 +447,10 @@ def draw_tips(tips, color=(0, 0, 0), costs=None):
     
     for idx in range(tips.shape[0]):
         x, y, theta = tips[idx]
-        x, y = _to_screen(x, y)
+        x, y = _to_screen(x * 1000, y * 1000)
         x2 = x + math.cos(theta) * 15
         y2 = y + math.sin(theta) * 15
         
-        # color = np.random.random(3) * 255
-        
-        
-        # cost_surface = bold_font.render(f"{int(costs[idx])}", True, (255, 55, 55))
-        # cost_rect = cost_surface.get_rect()
-        # cost_rect.topleft = (x - 7, y - 10)
-        # _sst_surf.blit(flip(cost_surface), cost_rect)
             
         if max_cost is not None:
             # Set the color to a scale from blue to red from cost [0 - 10]
@@ -464,14 +462,15 @@ def draw_tips(tips, color=(0, 0, 0), costs=None):
                 
         # small black circle
         pygame.draw.circle(_sst_surf, color, (x, y), 6)
-        # small line
-        # pygame.draw.line(_sst_surf, color, (x, y), (x2, y2), 2)
 
 
 def draw_points(points, costs, color=(0, 0, 0)):
     """
     Draw the points (N, 3) (x, y, theta) as small black circles on the _sst_surf,
     and each circle has a line coming out to indicate the heading.
+    
+    FIXME: don't know how things are cached currently, so this could render incorrectly
+           (come back to fix later, if you want, but it's not priority)
     """
     global _sst_surf
     
