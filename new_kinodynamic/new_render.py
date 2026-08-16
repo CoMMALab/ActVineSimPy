@@ -6,7 +6,9 @@ import torch
 
 from .si import len_to_mm
 from .vine import VineParams
+
 from .sst import get_last_body_length
+# from .old_sst import get_last_body_length
 
 regular_font = None
 bold_font = None
@@ -336,7 +338,6 @@ def init_vis(figsize=(12, 8), cfg_obstacles = None, dynamic_obstacles = None, st
     # Optionally draw obstacles on the tree surface immediately (so they are behind everything)
     _draw_obstacles()
 
-    print(dynamic_obstacles)
     _draw_dynamic_obstacles(dynamic_obstacles, sim_params)
     
     save_pygame_folder_path = save_pygame_folder

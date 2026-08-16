@@ -17,7 +17,7 @@ if torch.cuda.is_available():
 from new_kinodynamic.env_loader import load_box_config
 import numpy as np
 
-from new_kinodynamic.new_render import *
+from new_kinodynamic.render import *
 from kinodynamic.max_cover import max_cover
 
 from new_kinodynamic.vine import VineParams
@@ -217,7 +217,7 @@ class StatesStruct:
         self._c_spaces = np.concatenate([self._c_spaces, np.zeros((current_size, self.max_bodies * 3), dtype=np.float32)], axis=0)
         self._obj_positions = np.concatenate([self._obj_positions, np.zeros((current_size, self.num_dynamic_objs, 3), dtype=np.float32)], 
                                                  axis=0)
-        self._dstates = np.concatenate([self._dstates, np.zeros((current_size, self.max_bodies * 3), dtype=np.float32)], axis=0)
+        self._dstates = np.concatenate([self._dstates, np.zeros((current_size, self.max_bodies * 3), dtype=np.float32)], axix=0)
         self._obj_dstates = np.concatenate([self._obj_dstates, np.zeros((current_size, self.num_dynamic_objs, 3), dtype=np.float32)],
                                            axis=0)
 
@@ -232,6 +232,10 @@ class StatesStruct:
                   bodies, time, bending_control, cost_to_come, cost_total, tip, parent_idx, num_children):
         if self.num_states == self._c_spaces.shape[0]:
             self.extend_states()
+        
+        # Convert to cpu tensor before
+        # if torch.cuda.is_available():
+        #     tip = tip.cpu().numpy()
 
         idx = self.num_states
         
@@ -408,29 +412,6 @@ def get_last_body_length(cspace: np.ndarray, n_bodies: int):
     NOTE: this is NOT batched, needs to be vmapped
     '''
 
-    # # print("\nRUNNING LAST BODY LENGTH")
-
-    # print(n_bodies, n_bodies.shape)
-
-    # # print(num_bodies)
-
-    # last = n_bodies - 1
-    # prev_last = torch.clamp(last - 1, min=0)
-    # last = torch.clamp(last, min=0)
-
-    # # print(last.item(), prev_last)
-
-    # last_x = cspace[last * 3 + 0]
-    # prev_x = cspace[prev_last * 3 + 0]
-
-    # last_y = cspace[last * 3 + 1]
-    # prev_y = cspace[prev_last * 3 + 1]
-
-    # dist = torch.sqrt((last_x - prev_x).pow(2) + (last_y - prev_y).pow(2))
-
-    # return torch.where(n_bodies <= 1, torch.zeros_like(dist), dist)
-
-
     last = n_bodies - 1
     prev_last = n_bodies - 2
 
@@ -443,7 +424,8 @@ def get_last_body_length(cspace: np.ndarray, n_bodies: int):
     return torch.sqrt((last_x - prev_x).pow(2) + (last_y - prev_y).pow(2))
 
 
-def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray, n_bodies: np.ndarray, 
+def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray, 
+                       n_bodies: int, 
                        x0: float, y0: float, heading0: float):
     """
     Convert a batch of c-space -> global center coordinates of tip
@@ -453,22 +435,18 @@ def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray, n_bodies: 
     Returns:
         Shape (batch, 3) with the tip coordinates (x, y, theta)
 
-    FIXME: CSPACE.SHAPE[0] == 0, which is being passed as the batch size; why is this?
+    FIXME: before changing this to be compatible with new cspace representation, answer: WHAT DOES THIS EVEN DO?
+            (where is it used and does it still need to be used?)
     """
 
     cspace = torch.tensor(cspace)
     n_bodies = torch.tensor(n_bodies)
 
-    # n_bodies = n_bodies.unsqueeze(-1)
-
     assert cspace.shape == (batch_size, params.max_bodies * 3), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
-    # assert n_bodies.shape == (batch_size, 1)
     assert n_bodies.shape == (batch_size,)
     
     angles = cspace[:, 2::3]        # shape (n_bodies,)
-
     last_len = torch.vmap(get_last_body_length, in_dims=(0, 0))(cspace, n_bodies)
-    # last_len = last_len.squeeze(-1)
 
     assert last_len.shape == (batch_size,)
     
@@ -492,6 +470,7 @@ def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray, n_bodies: 
 
     full_lengths[arange, n_bodies-1] = torch.tensor(last_len, dtype=torch.float32)
     
+    
     # Now we do a cumulative sum of to get the tip coords of each segment
     tip_x = x0 + torch.cumsum(full_lengths * c_, dim=1)
 
@@ -504,10 +483,8 @@ def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray, n_bodies: 
                        tip_y[arange, n_bodies-1],
                        global_angle_full[arange, n_bodies-1]
                        ]).transpose(0, 1)
-    # ret = ret.squeeze(-1)
-    
+        
     assert ret.shape == (batch_size, 3), f"ret shape: {ret.shape}"
-
     
     return ret.cpu().numpy()
 
@@ -751,10 +728,7 @@ def rollout(sst_params, simparams, batch_size,
     # Record every δs distance, to reduce pressure on the set cover
     record_every = int(sst_params.δs // (simparams.grow_rate * simparams.dt)) * sst_params.record_every_multiplier
     steps_to_iter = int(ceil((time_to_evolve) / simparams.dt))        
-
-    print(f"Steps to iter: {steps_to_iter}")
-    print(f"num // denom = record_every: {sst_params.δs} // {(simparams.grow_rate * simparams.dt)} = {record_every}")
-
+    
     history_size = int(steps_to_iter // record_every + 1)
 
     bodies_record = np.zeros((history_size, batch_size), dtype=np.int32)
@@ -772,7 +746,7 @@ def rollout(sst_params, simparams, batch_size,
     
     for i in range(steps_to_iter):
 
-        # print(f'ITERATION {i}/{steps_to_iter}')
+        print(f'ITERATION {i}/{steps_to_iter}')
         
         next_cspace, next_dstate, next_bodies, next_obj_positions, next_obj_dstate = forward(
             simparams, init_heading, init_x, init_y, cspace, dstate, bodies, bending_control,
@@ -822,7 +796,6 @@ def rollout(sst_params, simparams, batch_size,
     assert np.all(bodies < simparams.max_bodies), f"bodies: {bodies}, max_bodies: {simparams.max_bodies}"
     
     last_index_filled = int(i // record_every)
-    if (last_index_filled <= 0): print(f"Last index filled is messed up by params")  
 
     # print(i, record_every, last_index_filled)
 
@@ -846,8 +819,6 @@ NOTE's:
 def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
         tree, iters=1000, callback=None):
 
-    using_dynamic_obstacles = False if init_obj_pose.size == 0 else True
-
     batch_size = sst_params.batch_size
 
     init_x = sst_params.start[0]
@@ -869,6 +840,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
 
     if not tree:
 
+
         tree = StatesStruct(sim_params.max_bodies, sim_params.obj_mass.size(0))
 
         cost_to_go = 0 if sst_params.points is None else geometric_cost_to_go(sst_params, tip).item()
@@ -876,7 +848,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
         state0_idx = tree.add_state(isactive=True,
                                     c_space=cspace,
                                     dstate=np.zeros((sim_params.max_bodies * 3), dtype=np.float32),
-                                    obj_positions=init_obj_pose,
+                                    obj_positions=init_obj_pose.cpu().numpy(),
                                     obj_dstate=np.zeros((sim_params.obj_mass.size(0), 3), dtype=np.float32),
                                     bodies=bodies,
                                     bending_control=bending_control,
@@ -887,8 +859,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
                                     parent_idx=-1,
                                     num_children=0,)
             
-        # tree.add_witness(np.zeros(3), state0_idx)
-        tree.add_witness(np.array([init_x, init_y, 0]), state0_idx)
+        tree.add_witness(np.zeros(3), state0_idx)
 
     # Draw all witnesses and their rep tips (if existing)
     for wit_idx in range(tree.num_witnesses):
@@ -976,29 +947,27 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
 
         new_cspaces = new_cspaces.reshape(-1, sim_params.max_bodies * 3)
         new_dstates = new_dstates.reshape(-1, sim_params.max_bodies * 3)
+        new_obj_positions = new_obj_positions.reshape(-1, sim_params.obj_mass.size(0), 3)
+        new_obj_dstates = new_obj_dstates.reshape(-1, sim_params.obj_mass.size(0), 3)
 
         assert new_bodies.shape == (steps_to_iter * batch_size,), f"new_bodies shape: {new_bodies.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert new_times.shape == (steps_to_iter * batch_size,), f"new_times shape: {new_times.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
 
         assert new_cspaces.shape == (steps_to_iter * batch_size, sim_params.max_bodies * 3), f"new_cspaces shape: {new_cspaces.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert new_dstates.shape == (steps_to_iter * batch_size, sim_params.max_bodies * 3), f"new_dstates shape: {new_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+        assert new_obj_positions.shape == (steps_to_iter * batch_size, sim_params.obj_mass.size(0), 3), f"new_obj_positions shape: {new_obj_positions.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+        assert new_obj_dstates.shape == (steps_to_iter * batch_size, sim_params.obj_mass.size(0), 3), f"new_obj_dstates shape: {new_obj_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
 
-
-        if using_dynamic_obstacles:
-            new_obj_positions = new_obj_positions.reshape(-1, sim_params.obj_mass.size(0), 3)
-            new_obj_dstates = new_obj_dstates.reshape(-1, sim_params.obj_mass.size(0), 3)
-            assert new_obj_positions.shape == (steps_to_iter * batch_size, sim_params.obj_mass.size(0), 3), f"new_obj_positions shape: {new_obj_positions.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
-            assert new_obj_dstates.shape == (steps_to_iter * batch_size, sim_params.obj_mass.size(0), 3), f"new_obj_dstates shape: {new_obj_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
-        
         # Assert that no new cspace is all zeros
         assert np.all(~np.all(new_cspaces == 0, axis=(1))), f"new_cspaces shape: {new_cspaces.shape}"
 
         finite_mask = np.all(np.isfinite(new_cspaces), axis=1)
         assert np.all(finite_mask), f"{np.sum(finite_mask)} finite cspaces out of {new_cspaces.shape[0]}"
 
+
         # Get the tip position of the new states
 
-        new_tips = cspace_to_tip(sim_params, new_cspaces.shape[0], new_cspaces, new_bodies, init_x, init_y, init_heading)
+        new_tips = cspace_to_tip(sim_params, new_cspaces.shape[0], new_cspaces, new_bodies, init_x, init_y, init_heading) 
 
         # Increment the costs of the new states by 1 (since we applied a new control input)
         cost_come = tree._cost_to_come[propagate_origin_idx] + 1
@@ -1029,9 +998,8 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
 
             new_cspaces = new_cspaces[non_overlapping_mask]
             new_dstates = new_dstates[non_overlapping_mask]
-
-            if using_dynamic_obstacles: new_obj_positions = new_obj_positions[non_overlapping_mask]
-            if using_dynamic_obstacles: new_obj_dstates = new_obj_dstates[non_overlapping_mask]
+            new_obj_positions = new_obj_positions[non_overlapping_mask]
+            new_obj_dstates = new_obj_dstates[non_overlapping_mask]
             
         if sst_params.do_cost_to_go:
             new_costs_total = new_costs_come + geometric_cost_to_go(sst_params, new_tips) + \
@@ -1046,7 +1014,6 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
 
         initial_num_solutions = sst_params.solutions.qsize()
         in_goal_mask = np.linalg.norm(new_tips[:, 0:2] - sst_params.goal[0:2], axis=1) < sst_params.goal_radius
-
         for idx in in_goal_mask.nonzero()[0]:
             sst_params.solutions.put(DontCompareSecond(
                 new_costs_come[idx].item() + tiebreak_factor * length_unbatched(sim_params, new_cspaces[idx], new_bodies[idx]),
@@ -1093,10 +1060,8 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
         new_fresh_idx = tree.add_states(isactive=True,
                                         c_space=new_cspaces[new_fresh_mask],
                                         dstate=new_dstates[new_fresh_mask],
-                                        obj_positions=new_obj_positions[new_fresh_mask] if using_dynamic_obstacles
-                                                       else None,
-                                        obj_dstates=new_obj_positions[new_fresh_mask] if using_dynamic_obstacles
-                                                    else None,
+                                        obj_positions=new_obj_positions[new_fresh_mask],
+                                        obj_dstates=new_obj_dstates[new_fresh_mask],
                                         bodies=new_bodies[new_fresh_mask],
                                         time=new_times[new_fresh_mask],
                                         bending_control=current_bending_controls[new_fresh_mask],
@@ -1112,10 +1077,8 @@ def sst(sst_params: SSTparams, sim_params: VineParams, init_obj_pose,
         new_dominating_states_idx = tree.add_states(isactive=True,
                                         c_space=new_cspaces[new_dominating_states_mask],
                                         dstate=new_dstates[new_dominating_states_mask],
-                                        obj_positions=new_obj_positions[new_dominating_states_mask] if using_dynamic_obstacles
-                                                       else None,
-                                        obj_dstates=new_obj_dstates[new_dominating_states_mask] if using_dynamic_obstacles
-                                                       else None,
+                                        obj_positions=new_obj_positions[new_dominating_states_mask],
+                                        obj_dstates=new_obj_dstates[new_dominating_states_mask],
                                         bodies=new_bodies[new_dominating_states_mask],
                                         time=new_times[new_dominating_states_mask],
                                         bending_control=current_bending_controls[new_dominating_states_mask],
@@ -1328,16 +1291,18 @@ if __name__ == "__main__":
 
     # Set VineParams
 
+     #NOTE: this file only exists to look at sst and sim params (nothing else)
+
     max_bodies = 70
     obstacles_m = cfg['obstacles']
     radius_m = 0.0125
     seg_len_m = 0.018
     seg_mass_kg = 0.02
     seg_inertia_kgm2 = 1.0e-5
-    grow_rate_mps = 0.3 # FIXME: when this becomes too low, cspace_to_tip() stops working
+    grow_rate_mps = 0.3
     ang_damp = 5.0e-5
     lin_damp = 0.10
-    dt_s = 1.0 / 90     # was 1.0 / 90
+    dt_s = 1.0 / 90
     stiffnes_mode = 'linear'
 
     sim_params = vine_params_si(max_bodies=max_bodies,
@@ -1354,16 +1319,15 @@ if __name__ == "__main__":
 
     # For dynamic obstacles:
     objs_m = cfg['dynamic_obstacles']
-    masses_kg = cfg['dynamic_object_masses']
 
-    if masses_kg.size > 0:
-        initial_obj_pose = set_objects_si(params=sim_params, aabbs_m=cfg['dynamic_obstacles'], masses_kg=masses_kg)
-        initial_obj_pose = initial_obj_pose.cpu().numpy()
-    else:
-        initial_obj_pose = np.array([])
+    masses_kg = cfg['dynamic_object_masses']
+    initial_obj_pose = set_objects_si(params=sim_params, aabbs_m=cfg['dynamic_obstacles'], masses_kg=masses_kg)
+
+    half_heights = sim_params.obj_hh
+    half_widths = sim_params.obj_hw
 
     # Initialize pygame
-    init_vis(figsize=(12,9), cfg_obstacles=cfg['obstacles'], dynamic_obstacles=initial_obj_pose, start=cfg['start'], goal=cfg['goal'],
+    init_vis(figsize=(12,9), obstacles=cfg['obstacles'], dynamic_obstacles=initial_obj_pose, start=cfg['start'], goal=cfg['goal'],
                     save_pygame_folder=f'pics/live/', sim_params=sim_params)
     render()
 
@@ -1371,7 +1335,7 @@ if __name__ == "__main__":
     sst_params = SSTparams(
         batch_size=100,
         δBN=60.0,
-        δs=20.0, # was 20.0
+        δs=20.0, # was 20
         min_x=0.0,
         max_x=cfg['bound_x'],
         min_y=0.0,
