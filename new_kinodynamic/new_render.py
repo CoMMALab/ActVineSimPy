@@ -414,42 +414,21 @@ def draw_witness(tree, idx, radius, color=(0, 0, 0, 100)):
     pygame.draw.circle(_sst_surf, color, (sx, sy), int(radius * _scale), 2)
 
 
-def draw_tips(tips, color=(0, 0, 0), costs=None):
+def draw_tips(tips, color=(0, 0, 0)):
     """
     Draw the tips as small black lines on the _sst_surf.
     """
     global _sst_surf
     
-    if costs is not None: 
-        assert costs.shape[0] == tips.shape[0], f"Expected {tips.shape[0]} costs, got {costs.shape}"
-        assert costs.ndim == 1
-        global bold_font
-        
-    max_cost = None
-    if costs is not None and costs.shape[0] > 0:
-        # Normalize costs to [0, 1]
-        min_cost = min(0, np.min(costs))
-        max_cost = max(6, np.max(costs))
-        
-        costs_norm = (costs - min_cost) / (max_cost - min_cost)
-    
     for idx in range(tips.shape[0]):
         x, y, theta = tips[idx]
         x, y = _to_screen(x * 1000, y * 1000)
-        x2 = x + math.cos(theta) * 15
-        y2 = y + math.sin(theta) * 15
         
-            
-        if max_cost is not None:
-            # Set the color to a scale from blue to red from cost [0 - 10]
-            # If the cost if out of this bound make it cyan
-            if costs[idx] < 0 or costs[idx] > max_cost:
-                color = (0, 255, 255)
-            else:
-                color = _get_blue_red_color_scale(costs_norm[idx], max_val=1)
-                
         # small black circle
-        pygame.draw.circle(_sst_surf, color, (x, y), 6)
+        color = (255, 255, 255) # black
+        radius = 6
+
+        pygame.draw.circle(_sst_surf, color, (x, y), radius)
 
 
 def draw_points(points, costs, color=(0, 0, 0)):
@@ -484,7 +463,7 @@ def draw_points(points, costs, color=(0, 0, 0)):
         pygame.draw.line(_sst_surf, color, (x, y), (x2, y2), 3)
 
 
-def draw_stats(sst_params, sst_iter, total_iters, num_active_nodes, num_total_nodes, num_reps, num_witnesses, costs):
+def draw_stats(sst_params, sst_iter, total_iters, num_active_nodes, num_total_nodes):
     """
     Write some stats on the right top corner of the screen, line by line.
     """
@@ -510,8 +489,6 @@ def draw_stats(sst_params, sst_iter, total_iters, num_active_nodes, num_total_no
         f""
         f"Iteration:          {sst_iter} / {int(total_iters)}",
         f"Active/total nodes: {num_active_nodes} / {num_total_nodes}",
-        f"Reps/Witnesses:     {num_reps} / {num_witnesses}",
-        f"Min/Max sol cost:   {np.min(costs):.1f} / {np.max(costs):.1f}",
         f"Solutions:          {sst_params.solutions.qsize()} (min: {min_in_queue:.2f})",
     ]
     
