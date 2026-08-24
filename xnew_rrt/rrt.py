@@ -13,6 +13,8 @@ Millimeters are used for display.
 
 import torch
 import matplotlib as plt
+from matplotlib.patches import Circle, Polygon
+from matplotlib.animation import FuncAnimation
 
 # Sim modules:
 from dvsim import si
@@ -23,6 +25,9 @@ from dvsim.vine import create_state_batched, init_state_batched
 
 
 #-------------------------- Helper functions
+
+MM = lambda x: si.len_to_mm(x)  # internal length -> mm (for display)
+
 
 def init_params(max_bodies, grow_rate_mps,
                 bend_length_scale, spam_moment_scale, p, l0):
@@ -36,7 +41,26 @@ def init_params(max_bodies, grow_rate_mps,
     return params
 
 
-def draw():
+def update_animation(state, bodies, radius_mm, xlim_mm, ylim_mm, iteration_num,
+         ):
+
+    # Get coords for each body
+    n = int(bodies[0])
+    xs = [MM(float(state[0, 3 * j])) for j in range(n)]
+    ys = [MM(float(state[0, 3 * j + 1])) for j in range(n)]
+
+    # Draw circles wherever the bodies are
+    ax.plot(xs, ys, "-", color=(.15, .3, .8), lw=2, zorder=5)
+    for x, y in zip(xs, ys):
+        ax.add_patch(Circle((x, y), radius_mm, facecolor=(.9, .6, .3, .45), 
+                            edgecolor=(.6, .35, .1), zorder=4))
+
+    # Actually create the plot
+    ax.plot([0], [0], "g^", ms=9, zorder=6)
+    ax.set_xlim(*xlim_mm); ax.set_ylim(*ylim_mm); ax.set_aspect("equal")
+    ax.set_xlabel("mm")
+    ax.set_title(f"Frame {iteration_num}")
+
 
 
 
@@ -92,5 +116,9 @@ if __name__ == "__main__":
 
     xlim_mm = (min(wall_xs) * 1000, max(wall_xs) * 1000)
     ylim_mm = (min(wall_ys) * 1000, min(wall_ys) * 1000)
+
+    frame_dim=(6, 4.2) # in inches
+    fig, ax = plt.subplots(figsize=frame_dim)
+
 
     

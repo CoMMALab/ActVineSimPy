@@ -114,8 +114,10 @@ def render_vine_spam(name, gifname, p, l0, scale, frames=45, xlim_mm=(-15, 160),
     params.spam_l0 = torch.full((mb,), float(l0))         # rest length (m); sign = curl direction
 
     B = 1
-    ih = torch.zeros(B, 1); ix = torch.zeros(B, 1); iy = torch.zeros(B, 1)
-    state, dstate = create_state_batched(B, mb); bodies = torch.full((B, 1), 2)
+    ih = torch.zeros(B, 1); ix = torch.zeros(B, 1) 
+    iy = torch.zeros(B, 1)
+    state, dstate = create_state_batched(B, mb) 
+    bodies = torch.full((B, 1), 2)
     init_state_batched(params, state, bodies, ih)
     R_mm = MM(float(params.radius))
 
