@@ -50,10 +50,13 @@ def _obb_corners_mm(cx, cy, th, hw, hh):
 
 
 def init_params(max_bodies, grow_rate_mps,
-                bend_length_scale, spam_moment_scale, p, l0,
+                bend_length_scale, spam_moment_scale, p, l0, radius_m,
                 static_objects):
-    
-    params = si.vine_params_si(max_bodies=max_bodies, obstacles_m=static_objs, grow_rate_mps=grow_rate_mps)
+
+    print(static_objects)
+
+    params = si.vine_params_si(max_bodies=max_bodies, obstacles_m=static_objects, grow_rate_mps=grow_rate_mps,
+                               radius_m=radius_m)
     params.stiffness_mode = 'spam'
     params.bend_length_scale = torch.tensor(bend_length_scale)
     params.spam_moment_scale = torch.tensor(spam_moment_scale)
@@ -78,7 +81,6 @@ def find_borders(walls):
     ylim_mm = (min(wall_ys) * 1000, max(wall_ys) * 1000)
 
     return xlim_mm, ylim_mm
-
 
 
 def update(i):
@@ -153,9 +155,6 @@ def update(i):
 
     except Exception as e:
         print(f"Stopped at frame {i} ({type(e).__name__})")
-
-        raise e
-
         sim_state["halted"] = True
         ani.event_source.stop()
         return
@@ -168,10 +167,9 @@ def update(i):
 
 #------------------------------------- Main
 
-B = 1 # unbatched => batch size of 1
-
-
 if __name__ == "__main__":
+
+    B = 1 # unbatched => batch size of 1
 
     # All obstacles:
     
@@ -186,6 +184,7 @@ if __name__ == "__main__":
     dynamic_obj_masses = [0.2]
 
     # Define params and dynamic object info:
+    # NOTE: vine_params args are in SI units
 
     solver.cvxpylayer = None
     vine_params = init_params(max_bodies=40,
@@ -193,7 +192,8 @@ if __name__ == "__main__":
                               bend_length_scale=0.018,
                               spam_moment_scale=22000.0,
                               p=8000.0, l0=-0.04, 
-                              static_objects = (walls + static_objs))
+                              static_objects = (walls + static_objs),
+                              radius_m=0.0125)
 
     moveable_obj_pose = si.set_objects_si(vine_params, dynamic_obj_coords, 
                                           dynamic_obj_masses)
@@ -205,13 +205,15 @@ if __name__ == "__main__":
 
     max_bodies = 40 # same as vine params
 
+    # In mm:
+    init_x = torch.zeros(B, 1); init_x[:, 0] = 300
+    init_y = torch.zeros(B, 1); init_y[:, 0] = 300
+
     init_heading = torch.zeros(1, 1); 
-    init_x = torch.zeros(B, 1)
-    init_y = torch.zeros(B, 1)
 
     state, dstate = create_state_batched(B, max_bodies)
     bodies = torch.full((B, 1), 2)
-    init_state_batched(vine_params, state, bodies, init_heading)
+    init_state_batched(vine_params, state, bodies, init_heading, init_x, init_y)
 
     body_radius_mm = MM(float(vine_params.radius))
 
@@ -220,7 +222,6 @@ if __name__ == "__main__":
     static_obj_poses = [([float(v) for v in vine_params.obstacle_pose[k]],
                           float(vine_params.obstacle_hw[k]), float(vine_params.obstacle_hh[k]))
                           for k in range(vine_params.obstacle_pose.shape[0])]
-
 
     # Find dims for the display
     # NOTE: the physical display is in inches, but objs in frame should be scaled in mm

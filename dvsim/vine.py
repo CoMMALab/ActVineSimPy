@@ -222,7 +222,8 @@ def create_state_batched(batch_size, max_bodies):
     return state, dstate
 
 
-def init_state_batched(params: VineParams, state, bodies, init_headings) -> StateTensor:
+def init_state_batched(params: VineParams, state, bodies, init_headings,
+                       init_x, init_y) -> StateTensor:
     '''
     Create vine state vectors from params
     '''
@@ -233,8 +234,14 @@ def init_state_batched(params: VineParams, state, bodies, init_headings) -> Stat
     for i in range(batch_size):
         state.theta[i, :] = init_headings[i]
 
-    state.x[:, 0] = params.half_len * torch.cos(state.theta[:, 0])
-    state.y[:, 0] = params.half_len * torch.sin(state.theta[:, 0])
+    # state.x[:, 0] = params.half_len * torch.cos(state.theta[:, 0])
+    # state.y[:, 0] = params.half_len * torch.sin(state.theta[:, 0])
+
+    state.x[:, 0] = init_x[:, 0]
+    state.y[:, 0] = init_y[:, 0]
+
+    # print(f"X of first body: {state.x[:,0]}")
+    # print(f"Y of first body: {state.y[:,0]}")
 
     # Init all body positions
     for batch_i in range(batch_size):

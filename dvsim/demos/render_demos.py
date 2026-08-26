@@ -44,7 +44,7 @@ def render(name, gifname, objs_m, masses_kg, frames, xlim_mm, ylim_mm=(-45, 45),
     B = 1
     ih = torch.zeros(B, 1); ix = torch.zeros(B, 1); iy = torch.zeros(B, 1)
     state, dstate = create_state_batched(B, 40); bodies = torch.full((B, 1), 2)
-    init_state_batched(params, state, bodies, ih)
+    init_state_batched(params, state, bodies, ih, ix, iy)
     obj_dstate = torch.zeros(B, n_obj, 3)
     R_mm = MM(float(params.radius))
     # Walls are oriented boxes too (params.obstacle_*); drawn as OBB polygons like the movable
@@ -113,7 +113,7 @@ def render_vine_spam(name, gifname, p, l0, scale, frames=45, xlim_mm=(-15, 160),
     B = 1
     ih = torch.zeros(B, 1); ix = torch.zeros(B, 1); iy = torch.zeros(B, 1)
     state, dstate = create_state_batched(B, mb); bodies = torch.full((B, 1), 2)
-    init_state_batched(params, state, bodies, ih)
+    init_state_batched(params, state, bodies, ih, ix, iy)
     R_mm = MM(float(params.radius))
 
     fdir = os.path.join(HERE, "_frames"); os.makedirs(fdir, exist_ok=True)
