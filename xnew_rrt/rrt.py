@@ -75,7 +75,7 @@ def find_borders(walls):
         wall_ys.append(wall[1]); wall_ys.append(wall[3])
 
     xlim_mm = (min(wall_xs) * 1000, max(wall_xs) * 1000)
-    ylim_mm = (min(wall_ys) * 1000, min(wall_ys) * 1000)
+    ylim_mm = (min(wall_ys) * 1000, max(wall_ys) * 1000)
 
     return xlim_mm, ylim_mm
 
@@ -125,7 +125,9 @@ def update(i):
                                 facecolor=(.3, .5, .95, .4), edgecolor=(.1, .2, .6), zorder=4))
 
         ax.plot([0], [0], "g^", ms=9, zorder=6)
-        ax.set_xlim(*xlim_mm); ax.set_ylim(*ylim_mm); ax.set_aspect("equal")
+        ax.set_xlim(*xlim_mm) 
+        ax.set_ylim(*ylim_mm) 
+        ax.set_aspect("equal")
         ax.set_xlabel("mm"); ax.set_title(f"Frame {i}")        
             
 
