@@ -50,17 +50,19 @@ def _obb_corners_mm(cx, cy, th, hw, hh):
             for lx, ly in ((-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh))]
 
 
-def init_params(max_bodies, grow_rate_mps,
-                bend_length_scale, spam_moment_scale, p, l0, radius_m,
-                static_objects):
+def init_params(max_bodies=40, grow_rate_mps=0.3,
+                bend_length_scale=None, spam_moment_scale=None, 
+                p=None, l0=None, radius_m=0.0125,
+                static_objects=None):
 
     params = si.vine_params_si(max_bodies=max_bodies, obstacles_m=static_objects, grow_rate_mps=grow_rate_mps,
                                radius_m=radius_m)
-    params.stiffness_mode = 'spam'
-    params.bend_length_scale = torch.tensor(bend_length_scale)
-    params.spam_moment_scale = torch.tensor(spam_moment_scale)
-    params.spam_p = torch.full((max_bodies,), float(p))
-    params.spam_l0 = torch.full((max_bodies,), float(l0))
+
+    # params.stiffness_mode = 'spam'
+    if bend_length_scale is not None: params.bend_length_scale = torch.tensor(bend_length_scale)
+    if spam_moment_scale is not None: params.spam_moment_scale = torch.tensor(spam_moment_scale)
+    if p is not None: params.spam_p = torch.full((max_bodies,), float(p))
+    if l0 is not None: params.spam_l0 = torch.full((max_bodies,), float(l0))
 
     return params
 
@@ -115,6 +117,17 @@ def render(i, curr_sim_state=None):
         n = int(curr_bodies[0])
         xs = [MM(float(curr_state[0, 3 * j])) for j in range(n)] 
         ys = [MM(float(curr_state[0, 3 * j + 1])) for j in range(n)]
+
+
+        if curr_sim_state==sim_state:
+            obj_x, obj_y, obj_theta = [float(v) for v in dyn_obj_poses[0, k]]
+            last_body_x = xs[-1]; last_body_y = ys[-1]
+
+            # dist = math.sqrt(pow(obj_x - last_body_x, 2) + pow(obj_y - last_body_y, 2))
+
+            print(f"Dist of last body to center of blue obj: {abs(obj_x - last_body_x)}, {abs(obj_y - last_body_y)}")
+
+
 
         ax.plot(xs, ys, "-", color=(.15, .3, .8), lw=2, zorder=5)
 
@@ -204,7 +217,21 @@ def render_saved(i):
     snap = recorded_frames[i]
     render(i, snap)
 
+
 #------------------------------------- Main
+
+'''
+Progress Notes:
+
+1. Vine does not react when making contact with moveable obstacles
+
+2. Vine coils upon itself in several situations:
+    - when it bumps into static obstacles => dramatic reaction
+    - when the initial heading is changed to anything != 0 => massive coily mess
+      that grows in on itself
+
+'''
+
 
 if __name__ == "__main__":
 
@@ -219,25 +246,21 @@ if __name__ == "__main__":
 
     static_objs = [(0.7125, 0.3, 0.8125, 0.2)]
 
-    static_objs.append((0.7125, 0.5000, 0.8125, 0.4000))
-
-    # dynamic_obj_coords = [(0.7125, 0.5000, 0.8125, 0.4000)]
-    # dynamic_obj_masses = [0.2]
-
-    dynamic_obj_coords = None
-    dynamic_obj_masses = None
+    dynamic_obj_coords = [(0.7125, 0.5000, 0.8125, 0.4000)]
+    dynamic_obj_masses = [0.2]
 
     # Define params and dynamic object info:
     # NOTE: vine_params args are in SI units
 
     solver.cvxpylayer = None
 
-    max_bodies = 10
+    max_bodies = 40
     vine_params = init_params(max_bodies=max_bodies,
-                              grow_rate_mps=0.3,
-                              bend_length_scale=0.018,
-                              spam_moment_scale=22000.0,
-                              p=8000.0, l0=-0.04, 
+                              grow_rate_mps=0.5,
+                            #   bend_length_scale=0.018,
+                            #   spam_moment_scale=22000.0,
+                            #   p=8000.0, 
+                            #   l0=-0.04, 
                               static_objects = (walls + static_objs),
                               radius_m= 0.0125*4)
 
@@ -254,10 +277,11 @@ if __name__ == "__main__":
     # Initialize state:
 
     # In mm:
-    init_x = torch.zeros(B, 1); init_x[:, 0] = 300
-    init_y = torch.zeros(B, 1); init_y[:, 0] = 300
+    init_x = torch.zeros(B, 1); init_x[:, 0] = 400
+    init_y = torch.zeros(B, 1); init_y[:, 0] = 400
 
-    init_heading = torch.zeros(1, 1); 
+    init_heading = torch.zeros(1, 1)
+    init_heading[:, 0] = 0 
 
     state, dstate = create_state_batched(B, max_bodies)
     bodies = torch.full((B, 1), 2)
@@ -315,8 +339,11 @@ if __name__ == "__main__":
     plt.show()
 
     # Save gif to specified dir:
+
+    print("Will now create gif, please be patient...")
     save_ani = FuncAnimation(fig, render_saved, frames=len(recorded_frames), interval=50, blit=False)
-    save_ani.save("xnew_rrt/gifs/static_contact.gif", writer="pillow", fps=20)
+    save_ani.save("xnew_rrt/gifs/dynamic_contact.gif", writer="pillow", fps=20)
+    print("Done, now ending process...")
 
     sim_state.pop("close_timer", None)
     plt.close("all")
