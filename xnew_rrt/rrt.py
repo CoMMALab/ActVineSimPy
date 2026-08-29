@@ -45,7 +45,7 @@ class Node:
     counter = 0 # for unique id generation
     all_nodes = [] # for find_nearest_to() in O(n)
 
-    def __init__(self, state_info, parent):
+    def __init__(self, state_info, parent=None):
         self.parent = parent
         self.info = state_info
         self.children = []
@@ -55,8 +55,11 @@ class Node:
 
         Node.all_nodes.append(self)
 
-    def __eq__(self, value: Node):
+    def __eq__(self, value):
         return (self.node_id == value.node_id)
+
+    def __hash__(self):
+        return hash(self.node_id)
 
 
 class RRTTree:
@@ -89,9 +92,12 @@ class RRTTree:
         for node in Node.all_nodes:
             dist = self.distance_function(node.info, new_state)
 
+            print(f"Node {node.info["state"]} with dist {dist}")
+
             if dist < min_distance:
-                dist = min_distance
+                min_distance = dist
                 nearest_state = node
+                print(f"Picking node {nearest_state.info["state"]}")
 
         return nearest_state
 
