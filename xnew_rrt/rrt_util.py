@@ -2,8 +2,6 @@
 Actual file that runs RRT
 '''
 
-import torch
-
 '''
 Questions:
 1. How will randomly sampling points work? Is that just by randomly selecting p, l_0,
