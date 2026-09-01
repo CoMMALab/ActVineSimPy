@@ -1,4 +1,7 @@
-import torch, math, matplotlib
+import torch, math, matplotlib, random
+
+from collections import namedtuple
+
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Polygon
 from matplotlib.animation import FuncAnimation
@@ -8,9 +11,6 @@ from dvsim import si
 import dvsim.solver as solver
 from dvsim.dynamic_vine import step 
 from dvsim.vine import create_state_batched, init_state_batched
-
-
-
 
 # RRT utility:
 from rrt_util import StateInfo, Node, RRTTree
@@ -56,29 +56,30 @@ def _obb_corners_mm(cx, cy, th, hw, hh):
             for lx, ly in ((-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh))]
 
 
+def find_borders(walls):
+    '''
+    Just find the outer edges of the walls to define as the mins/maxes for the frame
+    '''
+    wall_xs = []; wall_ys = []
+    
+    for wall in walls:
+
+        wall_xs.append(wall[0]); wall_xs.append(wall[2])
+        wall_ys.append(wall[1]); wall_ys.append(wall[3])
+
+    xlim_mm = (min(wall_xs) * 1000, max(wall_xs) * 1000)
+    ylim_mm = (min(wall_ys) * 1000, max(wall_ys) * 1000)
+
+    return xlim_mm, ylim_mm
+
+
 def find_frame_dims(walls, max_dim):
 
     '''
     Given the wall dimensions, return the appropriate width/height
     of the animation frame in inches.
     The neither of the returned dims will go past the given max_dim.
-    '''
-    
-    def find_borders(walls):
-        '''
-        Just find the outer edges of the walls to define as the mins/maxes for the frame
-        '''
-        wall_xs = []; wall_ys = []
-        
-        for wall in walls:
-
-            wall_xs.append(wall[0]); wall_xs.append(wall[2])
-            wall_ys.append(wall[1]); wall_ys.append(wall[3])
-
-        xlim_mm = (min(wall_xs) * 1000, max(wall_xs) * 1000)
-        ylim_mm = (min(wall_ys) * 1000, max(wall_ys) * 1000)
-
-        return xlim_mm, ylim_mm
+    '''    
 
     xlim_mm, ylim_mm = find_borders(walls)
 
@@ -95,11 +96,137 @@ def find_frame_dims(walls, max_dim):
 
     return width_in, height_in
 
+#----------------------------------------------------------------------- RRT Distance Func and Goal Test
 
-#----------------------------------------------------------------------- For RRT
+def rrt_distance(state_obj1: StateInfo, state_obj2: StateInfo, 
+                 max_bodies, num_moveable_objs,
+                 theta_weight = 1, 
+                 weight_list = (1, 1, 1, 1, 1)):
+    '''
+    Default distance function for comparing states returned by sim
+    On args:
+        - theta_weight: how much to weight diff in theta compared to diff in position
+        - weight_list: how much to multiply each measure by (arbitrarily decided)
+    '''
 
-def sampleRandomState
+    def distance_metric(pose1, pose2, theta_weight):
+        # Tentative measure for angle diff: 
+        # dtheta = torch.atan2(torch.sin(theta1 - theta2), torch.cos(theta1 - theta2))
 
+        # Euclidean distance is used otherwise
+
+        x1, y1, theta1 = pose1
+        x2, y2, theta2 = pose2
+
+        euclid_dist = torch.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+        dtheta = torch.atan2(torch.sin(theta2 - theta1), torch.cos(theta2 - theta1))
+
+        return euclid_dist + theta_weight * dtheta
+
+    #NOTE: reshapes are to make things easier for vmap
+
+    vine_state1 = state_obj1["state"].reshape(B * max_bodies, 3)
+    vine_state2 = state_obj2["state"].reshape(B * max_bodies, 3)
+
+    vine_dstate1 = state_obj1["dstate"].reshape(B * max_bodies, 3)
+    vine_dstate2 = state_obj2["dstate"].reshape(B * max_bodies, 3)
+
+    bodies1 = state_obj1["bodies"].reshape(B * 1)
+    bodies2 = state_obj2["bodies"].reshape(B * 1)
+
+    obj_state1 = state_obj1["moveable_obj_pose"].reshape(B * num_moveable_objs, 3)
+    obj_state2 = state_obj2["moveable_obj_pose"].reshape(B * num_moveable_objs, 3)
+
+    obj_dstate1 = state_obj1["moveable_obj_dstate"].reshape(B * num_moveable_objs, 3)
+    obj_dstate2 = state_obj2["moveable_obj_dstate"].reshape(B * num_moveable_objs, 3)
+
+    # Diff for vine states:
+    vine_state_diff = torch.vmap(distance_metric, dims=(0, 0, None))(vine_state1, vine_state2, theta_weight)
+    vine_state_diff = torch.sum(vine_state_diff)
+
+    # Diff for vine dstates:
+    vine_dstate_diff = torch.vmap(distance_metric, dims=(0, 0, None))(vine_dstate1, vine_dstate2, theta_weight)
+    vine_dstate_diff = torch.sum(vine_dstate_diff)
+
+    # Diff for bodies:
+    bodies_diff = torch.abs(bodies2 - bodies1)
+
+    # Diff for moveable object states:
+    obj_state_diff = torch.vmap(distance_metric, dims=(0, 0, None))(obj_state1, obj_state2, theta_weight)
+    obj_state_diff = torch.sum(obj_state_diff)
+
+    # Diff for moveable object dstates:
+    obj_dstate_diff = torch.vmap(distance_metric, dims=(0, 0, None))(obj_dstate1, obj_dstate2, theta_weight)
+    obj_dstate_diff = torch.sum(obj_dstate_diff)
+
+    # Return one weighted measure:
+
+    state_w, dstate_w, bodies_w, obj_state_w, obj_dstate_w = weight_list
+
+    return (vine_state_diff * state_w) + \
+           (vine_dstate_diff * dstate_w) + \
+           (bodies_diff * bodies_w) + \
+           (obj_state_diff * obj_state_w) + \
+           (obj_dstate_diff * obj_dstate_w)
+
+
+#----------------------------------------------------------------------- Everything else for RRT
+
+
+def getRandomSample(walls, max_bodies, num_moveable_objs,
+                    velocity_cap, curr_bodies):
+    '''
+    Generates completely random state for kinodynamic RRT. 
+    Does not actually have to be (and isn't likely to be)
+    an achievable state for the sim. Just being used to help the
+    algorithm explore the state space.
+
+    NOTE: everything is randomly sampled in mm, then converted to non-dim units
+          (which is actually what the sim uses)
+
+          state/dstate: (B, max_bodies * 3)
+          bodies: (B, 1)
+          moveable_obj_state/dstate: (B, num_moveable_objs, 3)
+
+    NOTE's on args:
+        - velocity_cap: an arbitrary constraint (change if you wish)
+        - curr_bodies: each step should grow exactly 1 more body, so this is used
+                       as a constraint
+    '''
+
+    xlim_mm, ylim_mm = find_borders(walls)
+    MAX_DEG = 360
+    MIN_X = xlim_mm[0]; MAX_X = xlim_mm[1] + 1
+    MIN_Y = ylim_mm[0]; MAX_Y = ylim_mm[1] + 1
+
+    # Randomly sample vine's state (within walls' borders):    
+    rand_state = torch.zeros((B, max_bodies*3))
+    rand_state[:, 0::3] = MIN_X + torch.rand(B, max_bodies) * (MAX_X - MIN_X)
+    rand_state[:, 1::3] = MIN_Y + torch.rand(B, max_bodies) * (MAX_Y - MIN_Y)
+    rand_state[:, 2::3] = torch.rand(B, max_bodies) * MAX_DEG
+
+    # Randomly sample vine's dstate:
+    rand_dstate = torch.zeros((B, max_bodies*3))
+    rand_dstate[:, 0::3] = torch.rand(B, max_bodies) * velocity_cap
+    rand_dstate[:, 1::3] = torch.rand(B, max_bodies) * velocity_cap
+    rand_dstate[:, 2::3] = torch.rand(B, max_bodies) * MAX_DEG
+
+    # Grow body:
+    rand_bodies = torch.zeros((B, 1)); rand_bodies[:, 0] = curr_bodies + 1
+
+    # Randomly sample dynamic objects' state:
+    rand_obj_state = torch.zeros((B, num_moveable_objs, max_bodies*3))
+    rand_obj_state[:, :, 0::3] = MIN_X + torch.rand(B, num_moveable_objs, max_bodies*3) * (MAX_X - MIN_X)
+    rand_obj_state[:, :, 1::3] = MIN_Y + torch.rand(B, num_moveable_objs, max_bodies*3) * (MAX_Y - MIN_Y)
+    rand_obj_state[:, :, 2::3] = torch.rand(B, num_moveable_objs, max_bodies*3) * MAX_DEG
+
+    # Randomly sample dynamic objects' dstate:
+    rand_obj_dstate = torch.zeros((B, num_moveable_objs, max_bodies*3))
+    rand_obj_dstate[:, :, 0::3] = torch.rand(B, num_moveable_objs, max_bodies*3) * velocity_cap
+    rand_obj_dstate[:, :, 1::3] = torch.rand(B, num_moveable_objs, max_bodies*3) * velocity_cap
+    rand_obj_dstate[:, :, 2::3] = torch.rand(B, num_moveable_objs, max_bodies*3) * MAX_DEG
+
+    return rand_state, rand_dstate, rand_bodies, rand_obj_state, rand_obj_dstate
 
 #---------------------------------------------------------------------- Main
 
@@ -152,5 +279,24 @@ if __name__ == "__main__":
 
 
     # Run RRT to try to find a path towards the goal region
+
+    '''
+    The algorithm:
+    1. Randomly sample a state (randomize state, dstate, bodies, moveable_obj_state, moveable_obj_dstate) => x_rand
+    2. Find x_nearest => closest state to x_rand
+    3. Find x_new by propagating from x_nearest using some randomized controls (p, l0, etc.)
+        - x_rand is disposable after this (likely not even reachable)
+    4. Add x_new to the tree (returns path if it's a goal state)
+    5. Repeat
+    '''
+
+    # Initialization for RRT:
     
-    max_iters = 100
+    start_state = StateInfo(vine_state, vine_dstate, bodies,
+                            moveable_obj_pose, moveable_obj_dstate)
+
+
+    
+
+    RRT_ITERS = 10
+    for iter in range(1, RRT_ITERS+1):

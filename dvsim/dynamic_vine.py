@@ -83,7 +83,7 @@ def dynamic_forward_part(params, init_heading, init_x, init_y, state, dstate, bo
     there are no objects (n_obj == 0): torch.vmap can't map over a zero-length object axis, so
     the empty proximity tensors are built directly instead of via vmap/jacrev."""
     bodies, forces, growth, sdf_now, dev_now, L, J, gws, gwd = \
-        forward_batched_part(params, init_heading, init_x, init_y, state, dstate, bodies)
+        forward_batchled_part(params, init_heading, init_x, init_y, state, dstate, bodies)
     n_obj, mb = obj_pose.shape[0], params.max_bodies
     if n_obj == 0:
         prox_now = state.new_full((mb, 0), 1e3)

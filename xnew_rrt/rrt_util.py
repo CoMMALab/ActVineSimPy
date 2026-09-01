@@ -7,6 +7,13 @@ Questions:
 1. How will randomly sampling points work? Is that just by randomly selecting p, l_0,
    and then seeing what the state would look like afterwards? Could this potentially
    take a really long time
+
+
+2. FIXME: How do you take a random step in the sim? 
+          Which state do you use as the parent when taking this random step?
+          Just the nearest one to the goal? 
+
+          Above kind of changes how the whole structure operates...
 '''
 
 class StateInfo:
