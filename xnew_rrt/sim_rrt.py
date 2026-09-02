@@ -1,5 +1,7 @@
 import torch, math, matplotlib, random
 
+import numpy as np
+
 from collections import namedtuple
 
 import matplotlib.pyplot as plt
@@ -15,6 +17,15 @@ from dvsim.vine import create_state_batched, init_state_batched
 # RRT utility:
 from rrt_util import StateInfo, Node, RRTTree
 
+# For predicting p, l0 given a bending angle:
+from sPAM.torch_nns import get_or_train_model, get_prediction_function
+from sPAM.spam import params as act_params
+from sPAM.torch_nns_usage import torch_solve as find_actuator_params
+
+scaling_info, model = get_or_train_model()
+predict = get_prediction_function(scaling_info, model)
+
+find_actuator_params = torch.vmap(find_actuator_params, in_dims=(None, None, 0))
 
 #---------------------------------------------------------------------- Sim/Animation Helper Defs
 
@@ -97,7 +108,11 @@ def find_frame_dims(walls, max_dim):
 
     return width_in, height_in
 
-#----------------------------------------------------------------------- RRT Distance Func and Goal Test
+
+#NOTE: should probably just move RRT stuff to rrt_util.py later on ...
+
+#----------------------------------------------------------------------- RRT Distance Funcs
+
 
 def euclidean_distance(state_obj1: StateInfo, state_obj2: StateInfo, 
                  max_bodies, num_moveable_objs,
@@ -144,22 +159,22 @@ def euclidean_distance(state_obj1: StateInfo, state_obj2: StateInfo,
     obj_dstate2 = state_obj2["moveable_obj_dstate"].reshape(B * num_moveable_objs, 3)
 
     # Diff for vine states:
-    vine_state_diff = torch.vmap(vmapped_distance, dims=(0, 0, None))(vine_state1, vine_state2, theta_weight)
+    vine_state_diff = torch.vmap(vmapped_distance, in_dims=(0, 0, None))(vine_state1, vine_state2, theta_weight)
     vine_state_diff = torch.sum(vine_state_diff)
 
     # Diff for vine dstates:
-    vine_dstate_diff = torch.vmap(vmapped_distance, dims=(0, 0, None))(vine_dstate1, vine_dstate2, theta_weight)
+    vine_dstate_diff = torch.vmap(vmapped_distance, in_dims=(0, 0, None))(vine_dstate1, vine_dstate2, theta_weight)
     vine_dstate_diff = torch.sum(vine_dstate_diff)
 
     # Diff for bodies:
     bodies_diff = torch.abs(bodies2 - bodies1)
 
     # Diff for moveable object states:
-    obj_state_diff = torch.vmap(vmapped_distance, dims=(0, 0, None))(obj_state1, obj_state2, theta_weight)
+    obj_state_diff = torch.vmap(vmapped_distance, in_dims=(0, 0, None))(obj_state1, obj_state2, theta_weight)
     obj_state_diff = torch.sum(obj_state_diff)
 
     # Diff for moveable object dstates:
-    obj_dstate_diff = torch.vmap(vmapped_distance, dims=(0, 0, None))(obj_dstate1, obj_dstate2, theta_weight)
+    obj_dstate_diff = torch.vmap(vmapped_distance, in_dims=(0, 0, None))(obj_dstate1, obj_dstate2, theta_weight)
     obj_dstate_diff = torch.sum(obj_dstate_diff)
 
     # Return one weighted measure:
@@ -171,6 +186,9 @@ def euclidean_distance(state_obj1: StateInfo, state_obj2: StateInfo,
            (bodies_diff * bodies_w) + \
            (obj_state_diff * obj_state_w) + \
            (obj_dstate_diff * obj_dstate_w)
+
+
+#----------------------------------------------------------------------- RRT Goal Tests
 
 
 def last_body_goal_test(state_obj: StateInfo, 
@@ -198,7 +216,6 @@ def last_body_goal_test(state_obj: StateInfo,
 
 
 #----------------------------------------------------------------------- Everything else for RRT
-
 
 def getRandomState(walls, max_bodies, num_moveable_objs,
                     velocity_cap, curr_bodies):
@@ -260,6 +277,7 @@ def getRandomState(walls, max_bodies, num_moveable_objs,
     rand_obj_dstate = ND(rand_obj_dstate)
 
     return StateInfo(rand_state, rand_dstate, rand_bodies, rand_obj_state, rand_obj_dstate)
+
 
 #---------------------------------------------------------------------- Main
 
@@ -329,7 +347,60 @@ if __name__ == "__main__":
 
     rrt_tree = RRTTree(start_state, distance_function=euclidean_distance,
                        goal_test=last_body_goal_test)
+    path_to_goal = None
+
+    #NOTE: assume each step grows by one body (updated each iter)
+    curr_bodies = start_state["bodies"] 
 
     RRT_ITERS = 10
+    VEL_CAP = 1000 # for random sampling dstates
+
+    BEND_ANGLE_BOUND = 3.33 #NOTE: ripped from sst(); could change?
+    bend_length_scale = torch.tensor(0.0018) #FIXME: should vary and depend on actuators, but not sure how to yet
+    spam_moment_scale = 1.0                  #FIXME: may be same problem as above
+
     for iter in range(1, RRT_ITERS+1):
-        randState = getRandomState(walls, )
+        rand_state = getRandomState(walls, max_bodies, num_moveable_objs,
+                                   velocity_cap=VEL_CAP, curr_bodies=curr_bodies)
+
+        nearest_state = rrt_tree.find_nearest_to(rand_state)
+
+        # Propagate from nearest_state by giving random controls to the sim:
+        new_bend_angle = np.random.uniform(BEND_ANGLE_BOUND*-1, BEND_ANGLE_BOUND, B)
+        new_bend_angle = 1.0 / new_bend_angle
+
+        p, l0 = find_actuator_params(predict, act_params, torch.tensor(new_bend_angle))
+        assert p.shape == (B, 1)
+        assert l0.shape == (B, 1)
+
+        p = p.reshape(B * 1); l0 = l0.reshape(B * 1)
+        p = p.repeat(max_bodies)
+        l0 = l0.repeat(max_bodies)
+
+        vine_params.spam_p = p
+        vine_params.spam_l0 = l0
+        vine_params.bend_length_scale = bend_length_scale
+        vine_params.spam_moment_scale = spam_moment_scale
+
+        # Find next state to add to the tree (run the sim)
+        try:
+            new_state, new_dstate, new_bodies, new_obj_state, new_obj_dstate = step(
+                vine_params, init_heading, init_x, init_y,
+                nearest_state["state"], nearest_state["dstate"],
+                nearest_state["bodies"],
+                nearest_state["moveable_obj_pose"], nearest_state["moveable_obj_dstate"]
+            )
+
+            new_tree_state = StateInfo(new_state, new_dstate, new_bodies, new_obj_state, new_obj_dstate,
+                                       p, l0)
+
+            path_to_goal = rrt_tree.add_edge(nearest_state, new_tree_state)
+            if path_to_goal is not None:
+                print("RRT has found a path")
+                break
+
+        except Exception as e:
+            print(f"Error encountered on RRT iter {iter}:\t{e}")
+            raise e # just for debugging
+
+    

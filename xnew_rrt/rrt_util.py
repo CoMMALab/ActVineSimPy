@@ -24,12 +24,17 @@ class StateInfo:
     NOTE: because what is saved in here is what is spit out by the sim,
           everything here is in NON-DIM INTERNAL UNITS (when applicable)
     '''
-    def __init__(self, state, dstate, bodies, moveable_obj_pose, moveable_obj_dstate):
+    def __init__(self, state, dstate, bodies, moveable_obj_pose, moveable_obj_dstate,
+                 p_control=None, l0_control=None):
         self.state = state
         self.dstate = dstate
         self.bodies = bodies
         self.moveable_obj_pose = moveable_obj_pose
         self.moveable_obj_dstate = moveable_obj_dstate
+
+        self.p_control = p_control
+        self.l0_control = l0_control
+
 
     def __getitem__(self, key):
         if key == "state":
@@ -134,6 +139,9 @@ class RRTTree:
             path.append(curr_node) # append root
             path.reverse()
             return path
+        
+        else:
+            return None
 
             
 
