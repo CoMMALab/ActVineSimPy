@@ -19,7 +19,8 @@ from rrt_util import StateInfo, Node, RRTTree
 #---------------------------------------------------------------------- Sim/Animation Helper Defs
 
 B = 1 # batch size
-MM = lambda x: si.len_to_mm(x)  # internal length -> mm (for display)
+MM = lambda x: si.len_to_mm(x)    # internal length -> mm (for display)
+ND = lambda x: x / (si.L0 * 1000) # mm -> internal length (used by sim)      
 
 
 def init_params(max_bodies=40, grow_rate_mps=0.3,
@@ -98,7 +99,7 @@ def find_frame_dims(walls, max_dim):
 
 #----------------------------------------------------------------------- RRT Distance Func and Goal Test
 
-def rrt_distance(state_obj1: StateInfo, state_obj2: StateInfo, 
+def euclidean_distance(state_obj1: StateInfo, state_obj2: StateInfo, 
                  max_bodies, num_moveable_objs,
                  theta_weight = 1, 
                  weight_list = (1, 1, 1, 1, 1)):
@@ -107,9 +108,11 @@ def rrt_distance(state_obj1: StateInfo, state_obj2: StateInfo,
     On args:
         - theta_weight: how much to weight diff in theta compared to diff in position
         - weight_list: how much to multiply each measure by (arbitrarily decided)
+
+    NOTE: everything stays in non-dim units, but I don't think that really matters... :p
     '''
 
-    def distance_metric(pose1, pose2, theta_weight):
+    def vmapped_distance(pose1, pose2, theta_weight):
         # Tentative measure for angle diff: 
         # dtheta = torch.atan2(torch.sin(theta1 - theta2), torch.cos(theta1 - theta2))
 
@@ -141,22 +144,22 @@ def rrt_distance(state_obj1: StateInfo, state_obj2: StateInfo,
     obj_dstate2 = state_obj2["moveable_obj_dstate"].reshape(B * num_moveable_objs, 3)
 
     # Diff for vine states:
-    vine_state_diff = torch.vmap(distance_metric, dims=(0, 0, None))(vine_state1, vine_state2, theta_weight)
+    vine_state_diff = torch.vmap(vmapped_distance, dims=(0, 0, None))(vine_state1, vine_state2, theta_weight)
     vine_state_diff = torch.sum(vine_state_diff)
 
     # Diff for vine dstates:
-    vine_dstate_diff = torch.vmap(distance_metric, dims=(0, 0, None))(vine_dstate1, vine_dstate2, theta_weight)
+    vine_dstate_diff = torch.vmap(vmapped_distance, dims=(0, 0, None))(vine_dstate1, vine_dstate2, theta_weight)
     vine_dstate_diff = torch.sum(vine_dstate_diff)
 
     # Diff for bodies:
     bodies_diff = torch.abs(bodies2 - bodies1)
 
     # Diff for moveable object states:
-    obj_state_diff = torch.vmap(distance_metric, dims=(0, 0, None))(obj_state1, obj_state2, theta_weight)
+    obj_state_diff = torch.vmap(vmapped_distance, dims=(0, 0, None))(obj_state1, obj_state2, theta_weight)
     obj_state_diff = torch.sum(obj_state_diff)
 
     # Diff for moveable object dstates:
-    obj_dstate_diff = torch.vmap(distance_metric, dims=(0, 0, None))(obj_dstate1, obj_dstate2, theta_weight)
+    obj_dstate_diff = torch.vmap(vmapped_distance, dims=(0, 0, None))(obj_dstate1, obj_dstate2, theta_weight)
     obj_dstate_diff = torch.sum(obj_dstate_diff)
 
     # Return one weighted measure:
@@ -170,10 +173,34 @@ def rrt_distance(state_obj1: StateInfo, state_obj2: StateInfo,
            (obj_dstate_diff * obj_dstate_w)
 
 
+def last_body_goal_test(state_obj: StateInfo, 
+                        max_bodies,
+                        vine_radius, # in m, for consistency
+                        goal_coords, # (x, y) given in m
+                        goal_radius  # given in m
+                        ):
+    '''
+    Simple goal test: if the last body is anywhere within the 
+    goal region, then returns True (otherwise returns False).
+
+    NOTE: assumes both the vine body's and the goal region's geometries
+          are simple circles.
+    '''
+
+    num_bodies = state_obj["bodies"].reshape(B * 1)
+    last_body_x, last_body_y, last_body_theta = state_obj["state"].reshape(B * max_bodies, 3)[num_bodies - 1]
+
+    min_dist_before_collision = goal_radius + vine_radius
+
+    distance = torch.sqrt((goal_coords[0] - last_body_x)**2, (goal_coords[1] - last_body_y)**2)
+
+    return distance < min_dist_before_collision
+
+
 #----------------------------------------------------------------------- Everything else for RRT
 
 
-def getRandomSample(walls, max_bodies, num_moveable_objs,
+def getRandomState(walls, max_bodies, num_moveable_objs,
                     velocity_cap, curr_bodies):
     '''
     Generates completely random state for kinodynamic RRT. 
@@ -226,7 +253,13 @@ def getRandomSample(walls, max_bodies, num_moveable_objs,
     rand_obj_dstate[:, :, 1::3] = torch.rand(B, num_moveable_objs, max_bodies*3) * velocity_cap
     rand_obj_dstate[:, :, 2::3] = torch.rand(B, num_moveable_objs, max_bodies*3) * MAX_DEG
 
-    return rand_state, rand_dstate, rand_bodies, rand_obj_state, rand_obj_dstate
+    # Convert everything to non-dim units for the sim:
+    rand_state = ND(rand_state)
+    rand_dstate = ND(rand_dstate)
+    rand_obj_state = ND(rand_obj_state)
+    rand_obj_dstate = ND(rand_obj_dstate)
+
+    return StateInfo(rand_state, rand_dstate, rand_bodies, rand_obj_state, rand_obj_dstate)
 
 #---------------------------------------------------------------------- Main
 
@@ -277,7 +310,6 @@ if __name__ == "__main__":
     bodies = torch.full((B, 1), 2)
     init_state_batched(vine_params, vine_state, bodies, init_heading, init_x, init_y)
 
-
     # Run RRT to try to find a path towards the goal region
 
     '''
@@ -295,8 +327,9 @@ if __name__ == "__main__":
     start_state = StateInfo(vine_state, vine_dstate, bodies,
                             moveable_obj_pose, moveable_obj_dstate)
 
-
-    
+    rrt_tree = RRTTree(start_state, distance_function=euclidean_distance,
+                       goal_test=last_body_goal_test)
 
     RRT_ITERS = 10
     for iter in range(1, RRT_ITERS+1):
+        randState = getRandomState(walls, )

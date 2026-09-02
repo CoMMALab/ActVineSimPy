@@ -20,6 +20,9 @@ class StateInfo:
     '''
     Kind of just a dict that holds all info relevant to the state
     Useful to hold when animating gifs and stuff
+
+    NOTE: because what is saved in here is what is spit out by the sim,
+          everything here is in NON-DIM INTERNAL UNITS (when applicable)
     '''
     def __init__(self, state, dstate, bodies, moveable_obj_pose, moveable_obj_dstate):
         self.state = state

@@ -69,7 +69,6 @@ def vine_params_si(max_bodies=40, obstacles_m=None,
 
 def len_to_mm(x):   return x * L0 * 1000.0   # internal length -> millimeters (for display)
 
-
 def _obstacle_to_nd(o):
     """Convert one SI obstacle spec to internal non-dim units. Accepts an axis-aligned box
     [x1,y1,x2,y2] (meters) or an oriented box [cx,cy,theta,hw,hh] (meters, radians for theta --
