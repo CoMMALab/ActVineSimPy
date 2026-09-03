@@ -1,4 +1,4 @@
-import torch, math, matplotlib, random
+import torch, math, matplotlib, random, os
 
 import numpy as np
 
@@ -6,7 +6,7 @@ from collections import namedtuple
 
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Polygon
-from matplotlib.animation import FuncAnimation
+# from matplotlib.animation import FuncAnimation
 
 # Sim modules:
 from dvsim import si
@@ -109,8 +109,60 @@ def find_frame_dims(walls, max_dim):
     return width_in, height_in
 
 
-#NOTE: should probably just move RRT stuff to rrt_util.py later on ...
+def draw_frame(frame_idx, sim_state: StateInfo, walls,
+               static_obj_poses, vine_params, vine_radius_mm,
+               gif_path):
+    '''
+    Draws what the current scene looks like given the StateInfo
+    '''
 
+    width_in, height_in = find_frame_dims(walls, max_dim=12)
+    xlim_mm, ylim_mm = find_borders(walls)
+
+    fig, ax = plt.subplots(figsize=(width_in, height_in))
+
+    vine_state = sim_state["state"]
+    moveable_obj_poses = sim_state["moveable_obj_pose"]
+    num_bodies = sim_state["bodies"]
+
+    # Draw static objs:
+    for (pose, hw, hh) in static_obj_poses:
+        corners = _obb_corners_mm(pose[0], pose[1], pose[2], hw, hh)
+        ax.add_patch(Polygon(corners, closed=True, facecolor=(1, .89, .71), 
+                                edgecolor="k", zorder=1))
+
+    # Draw moveable objs:
+    moveable_obj_poses = sim_state["moveable_obj_pose"]
+
+    for k in range(num_bodies):
+        obj_x, obj_y, obj_theta = [float(v) for v in moveable_obj_poses[0, k]]
+        corners = _obb_corners_mm(obj_x, obj_y, obj_theta, float(vine_params.obj_hw[k]),
+                                    float(vine_params.obj_hh[k]))
+        ax.add_patch(Polygon(corners, closed=True, facecolor=(.55, .8, .95), 
+                                edgecolor="b", lw=2, zorder=3))
+
+    # Draw the vine's bodies:
+    n = int(num_bodies[0])
+    xs = [MM(float(vine_state[0, 3 * j])) for j in range(n)] 
+    ys = [MM(float(vine_state[0, 3 * j + 1])) for j in range(n)]
+
+    ax.plot(xs, ys, "-", color=(.15, .3, .8), lw=2, zorder=5)
+    for x, y in zip(xs, ys):
+        ax.add_patch(Circle((x, y), vine_radius_mm, 
+        facecolor=(.3, .5, .95, .4), edgecolor=(.1, .2, .6), zorder=4))
+
+    ax.plot([init_x[:, 0].item()], [init_y[:, 0].item()], "g^", ms=9, zorder=6)
+    ax.set_xlim(*xlim_mm) 
+    ax.set_ylim(*ylim_mm) 
+    ax.set_aspect("equal")
+    ax.set_xlabel("mm"); ax.set_title(f"Frame {frame_idx}")
+
+    fig.savefig(os.path.join(gif_path, f"f{frame_idx:04d}.png"), dpi=70, bbox_inches="tight")
+    plt.close(fig)
+
+
+
+#NOTE: should probably just move RRT stuff to rrt_util.py later on ...
 #----------------------------------------------------------------------- RRT Distance Funcs
 
 
@@ -341,18 +393,23 @@ if __name__ == "__main__":
     '''
 
     # Initialization for RRT:
+
+    GOAL_COORDS_M = (1.225, 0.3)
+    GOAL_RADIUS_M = 0.2
     
     start_state = StateInfo(vine_state, vine_dstate, bodies,
                             moveable_obj_pose, moveable_obj_dstate)
 
     rrt_tree = RRTTree(start_state, distance_function=euclidean_distance,
-                       goal_test=last_body_goal_test)
+                       goal_test=last_body_goal_test,
+                       vine_radius=radius_m, 
+                       goal_coords=GOAL_COORDS_M, goal_radius=GOAL_RADIUS_M)
     path_to_goal = None
 
     #NOTE: assume each step grows by one body (updated each iter)
     curr_bodies = start_state["bodies"] 
 
-    RRT_ITERS = 10
+    RRT_ITERS = 20
     VEL_CAP = 1000 # for random sampling dstates
 
     BEND_ANGLE_BOUND = 3.33 #NOTE: ripped from sst(); could change?
@@ -403,4 +460,14 @@ if __name__ == "__main__":
             print(f"Error encountered on RRT iter {iter}:\t{e}")
             raise e # just for debugging
 
+
+    # Use the path to create the animation (saved as a gif)
+
+    GIF_PATH="xnew_rrt/sim_animation"
+
+    for frame_idx in len(path_to_goal):
+        draw_frame(frame_idx, path_to_goal[frame_idx],
+                   walls, static_obj_poses, vine_params,
+                   vine_radius_mm=radius_m*1000,
+                   gif_path=GIF_PATH)
     

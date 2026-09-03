@@ -16,6 +16,9 @@ Questions:
           Above kind of changes how the whole structure operates...
 '''
 
+
+#--------------------------------------------------------- Data Structures
+
 class StateInfo:
     '''
     Kind of just a dict that holds all info relevant to the state
@@ -86,11 +89,15 @@ class RRTTree:
           does this need to be done at all? 
     ''' 
 
-    def __init__(self, start_state, distance_function, goal_test):
+    def __init__(self, start_state, distance_function, goal_test,
+                 vine_radius=None, goal_coords=None, goal_radius=None):
         self.root = Node(start_state)
         self.distance_function = distance_function
         self.goal_test = goal_test
 
+        self.vine_radius = vine_radius
+        self.goal_coords = goal_coords
+        self.goal_radius = goal_radius
 
     def find_nearest_to(self, new_state: StateInfo):
 

@@ -114,16 +114,13 @@ def render(i, curr_sim_state=None):
         xs = [MM(float(curr_state[0, 3 * j])) for j in range(n)] 
         ys = [MM(float(curr_state[0, 3 * j + 1])) for j in range(n)]
 
+        # if curr_sim_state==sim_state:
+        #     obj_x, obj_y, obj_theta = [float(v) for v in dyn_obj_poses[0, k]]
+        #     last_body_x = xs[-1]; last_body_y = ys[-1]
 
-        if curr_sim_state==sim_state:
-            obj_x, obj_y, obj_theta = [float(v) for v in dyn_obj_poses[0, k]]
-            last_body_x = xs[-1]; last_body_y = ys[-1]
+        #     # dist = math.sqrt(pow(obj_x - last_body_x, 2) + pow(obj_y - last_body_y, 2))
 
-            # dist = math.sqrt(pow(obj_x - last_body_x, 2) + pow(obj_y - last_body_y, 2))
-
-            print(f"Dist of last body to center of blue obj: {abs(obj_x - last_body_x)}, {abs(obj_y - last_body_y)}")
-
-
+        #     print(f"Dist of last body to center of blue obj: {abs(obj_x - last_body_x)}, {abs(obj_y - last_body_y)}")
 
         ax.plot(xs, ys, "-", color=(.15, .3, .8), lw=2, zorder=5)
 
