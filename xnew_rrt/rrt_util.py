@@ -90,7 +90,8 @@ class RRTTree:
     ''' 
 
     def __init__(self, start_state, distance_function, goal_test,
-                 vine_radius=None, goal_coords=None, goal_radius=None):
+                 vine_radius=None, goal_coords=None, goal_radius=None,
+                 max_bodies=None, num_moveable_objs=None):
         self.root = Node(start_state)
         self.distance_function = distance_function
         self.goal_test = goal_test
@@ -98,6 +99,9 @@ class RRTTree:
         self.vine_radius = vine_radius
         self.goal_coords = goal_coords
         self.goal_radius = goal_radius
+
+        self.max_bodies = max_bodies
+        self.num_moveable_objs = num_moveable_objs
 
     def find_nearest_to(self, new_state: StateInfo):
 
@@ -110,14 +114,11 @@ class RRTTree:
         nearest_state = None
 
         for node in Node.all_nodes:
-            dist = self.distance_function(node.info, new_state)
-
-            print(f"Node {node.info["state"]} with dist {dist}")
+            dist = self.distance_function(node.info, new_state, self.max_bodies, self.num_moveable_objs)
 
             if dist < min_distance:
                 min_distance = dist
                 nearest_state = node
-                print(f"Picking node {nearest_state.info["state"]}")
 
         return nearest_state
 
@@ -135,7 +136,8 @@ class RRTTree:
         new_state_node = Node(new_state, state_in_graph)
         state_in_graph.children.append(new_state_node)
 
-        if (self.goal_test(new_state)):
+        if (self.goal_test(new_state, self.max_bodies, self.vine_radius,
+                           self.goal_coords, self.goal_radius)):
             path = []
             curr_node = new_state_node
 

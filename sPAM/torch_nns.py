@@ -289,7 +289,7 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256, d
 
     # Define model, optimizer, and device
     device = torch.device(device)
-    print("USING THIS DEVICE:", device)
+    # print("USING THIS DEVICE:", device)
 
     model = MLP(num_outputs=2)
     model = model.to(device)

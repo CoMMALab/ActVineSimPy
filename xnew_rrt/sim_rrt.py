@@ -22,7 +22,7 @@ from sPAM.torch_nns import get_or_train_model, get_prediction_function
 from sPAM.spam import params as act_params
 from sPAM.torch_nns_usage import torch_solve as find_actuator_params
 
-scaling_info, model = get_or_train_model()
+scaling_info, model = get_or_train_model(act_params)
 predict = get_prediction_function(scaling_info, model)
 
 find_actuator_params = torch.vmap(find_actuator_params, in_dims=(None, None, 0))
@@ -111,6 +111,7 @@ def find_frame_dims(walls, max_dim):
 
 def draw_frame(frame_idx, sim_state: StateInfo, walls,
                static_obj_poses, vine_params, vine_radius_mm,
+               goal_coords_m, goal_radius_m, 
                gif_path):
     '''
     Draws what the current scene looks like given the StateInfo
@@ -130,6 +131,12 @@ def draw_frame(frame_idx, sim_state: StateInfo, walls,
         corners = _obb_corners_mm(pose[0], pose[1], pose[2], hw, hh)
         ax.add_patch(Polygon(corners, closed=True, facecolor=(1, .89, .71), 
                                 edgecolor="k", zorder=1))
+
+    # Draw goal radius:
+    goal_x = goal_coords_m[0] * 1000; goal_y = goal_coords_m[1] * 1000
+    goal_radius_mm = goal_radius_m * 1000
+    ax.add_patch(Circle(goal_x, goal_y), goal_radius_mm,
+                 facecolor="red", alpha=0.4, edgecolor=(.1, .2, .6), zorder=4)
 
     # Draw moveable objs:
     moveable_obj_poses = sim_state["moveable_obj_pose"]
@@ -258,11 +265,14 @@ def last_body_goal_test(state_obj: StateInfo,
     '''
 
     num_bodies = state_obj["bodies"].reshape(B * 1)
-    last_body_x, last_body_y, last_body_theta = state_obj["state"].reshape(B * max_bodies, 3)[num_bodies - 1]
 
+    # print(state_obj["state"].reshape(B * max_bodies, 3).shape)
+    # print(state_obj["state"].reshape(B * max_bodies, 3)[num_bodies - 1].shape)
+
+    last_body_x, last_body_y, last_body_theta = state_obj["state"].reshape(B * max_bodies, 3)[num_bodies - 1].squeeze()
     min_dist_before_collision = goal_radius + vine_radius
 
-    distance = torch.sqrt((goal_coords[0] - last_body_x)**2, (goal_coords[1] - last_body_y)**2)
+    distance = torch.sqrt((goal_coords[0] - last_body_x)**2 + (goal_coords[1] - last_body_y)**2)
 
     return distance < min_dist_before_collision
 
@@ -311,16 +321,16 @@ def getRandomState(walls, max_bodies, num_moveable_objs,
     rand_bodies = torch.zeros((B, 1)); rand_bodies[:, 0] = curr_bodies + 1
 
     # Randomly sample dynamic objects' state:
-    rand_obj_state = torch.zeros((B, num_moveable_objs, max_bodies*3))
-    rand_obj_state[:, :, 0::3] = MIN_X + torch.rand(B, num_moveable_objs, max_bodies*3) * (MAX_X - MIN_X)
-    rand_obj_state[:, :, 1::3] = MIN_Y + torch.rand(B, num_moveable_objs, max_bodies*3) * (MAX_Y - MIN_Y)
-    rand_obj_state[:, :, 2::3] = torch.rand(B, num_moveable_objs, max_bodies*3) * MAX_DEG
+    rand_obj_state = torch.zeros((B, num_moveable_objs, 3))
+    rand_obj_state[:, :, 0::3] = MIN_X + torch.rand(B, num_moveable_objs, 1) * (MAX_X - MIN_X)
+    rand_obj_state[:, :, 1::3] = MIN_Y + torch.rand(B, num_moveable_objs, 1) * (MAX_Y - MIN_Y)
+    rand_obj_state[:, :, 2::3] = torch.rand(B, num_moveable_objs, 1) * MAX_DEG
 
     # Randomly sample dynamic objects' dstate:
-    rand_obj_dstate = torch.zeros((B, num_moveable_objs, max_bodies*3))
-    rand_obj_dstate[:, :, 0::3] = torch.rand(B, num_moveable_objs, max_bodies*3) * velocity_cap
-    rand_obj_dstate[:, :, 1::3] = torch.rand(B, num_moveable_objs, max_bodies*3) * velocity_cap
-    rand_obj_dstate[:, :, 2::3] = torch.rand(B, num_moveable_objs, max_bodies*3) * MAX_DEG
+    rand_obj_dstate = torch.zeros((B, num_moveable_objs, 3))
+    rand_obj_dstate[:, :, 0::3] = torch.rand(B, num_moveable_objs, 1) * velocity_cap
+    rand_obj_dstate[:, :, 1::3] = torch.rand(B, num_moveable_objs, 1) * velocity_cap
+    rand_obj_dstate[:, :, 2::3] = torch.rand(B, num_moveable_objs, 1) * MAX_DEG
 
     # Convert everything to non-dim units for the sim:
     rand_state = ND(rand_state)
@@ -403,34 +413,37 @@ if __name__ == "__main__":
     rrt_tree = RRTTree(start_state, distance_function=euclidean_distance,
                        goal_test=last_body_goal_test,
                        vine_radius=radius_m, 
-                       goal_coords=GOAL_COORDS_M, goal_radius=GOAL_RADIUS_M)
+                       goal_coords=GOAL_COORDS_M, goal_radius=GOAL_RADIUS_M,
+                       max_bodies=max_bodies, num_moveable_objs=num_moveable_objs)
     path_to_goal = None
 
     #NOTE: assume each step grows by one body (updated each iter)
     curr_bodies = start_state["bodies"] 
 
-    RRT_ITERS = 20
+    RRT_ITERS = 1000
     VEL_CAP = 1000 # for random sampling dstates
 
     BEND_ANGLE_BOUND = 3.33 #NOTE: ripped from sst(); could change?
     bend_length_scale = torch.tensor(0.0018) #FIXME: should vary and depend on actuators, but not sure how to yet
     spam_moment_scale = 1.0                  #FIXME: may be same problem as above
 
+    print("\nStarting RRT!")
+
     for iter in range(1, RRT_ITERS+1):
         rand_state = getRandomState(walls, max_bodies, num_moveable_objs,
                                    velocity_cap=VEL_CAP, curr_bodies=curr_bodies)
 
-        nearest_state = rrt_tree.find_nearest_to(rand_state)
+        nearest_node = rrt_tree.find_nearest_to(rand_state) # Returns Node in graph
+        nearest_state = nearest_node.info
 
         # Propagate from nearest_state by giving random controls to the sim:
         new_bend_angle = np.random.uniform(BEND_ANGLE_BOUND*-1, BEND_ANGLE_BOUND, B)
         new_bend_angle = 1.0 / new_bend_angle
 
+        # Each shaped (1,)
         p, l0 = find_actuator_params(predict, act_params, torch.tensor(new_bend_angle))
-        assert p.shape == (B, 1)
-        assert l0.shape == (B, 1)
 
-        p = p.reshape(B * 1); l0 = l0.reshape(B * 1)
+        # Make shape (max_bodies,), as documented in VineParams
         p = p.repeat(max_bodies)
         l0 = l0.repeat(max_bodies)
 
@@ -451,7 +464,7 @@ if __name__ == "__main__":
             new_tree_state = StateInfo(new_state, new_dstate, new_bodies, new_obj_state, new_obj_dstate,
                                        p, l0)
 
-            path_to_goal = rrt_tree.add_edge(nearest_state, new_tree_state)
+            path_to_goal = rrt_tree.add_edge(nearest_node, new_tree_state)
             if path_to_goal is not None:
                 print("RRT has found a path")
                 break
@@ -460,14 +473,27 @@ if __name__ == "__main__":
             print(f"Error encountered on RRT iter {iter}:\t{e}")
             raise e # just for debugging
 
+        print(f"\r Iteration #{iter:<40}", end="", flush=True)
 
     # Use the path to create the animation (saved as a gif)
 
+    print("\nRRT finished...")
+    
+
     GIF_PATH="xnew_rrt/sim_animation"
 
-    for frame_idx in len(path_to_goal):
-        draw_frame(frame_idx, path_to_goal[frame_idx],
-                   walls, static_obj_poses, vine_params,
-                   vine_radius_mm=radius_m*1000,
-                   gif_path=GIF_PATH)
-    
+    if path_to_goal is not None: 
+
+        print("RRT found a path!")
+        print("Producing gif...")
+
+        for frame_idx in len(path_to_goal):
+            draw_frame(frame_idx, path_to_goal[frame_idx],
+                    walls, static_obj_poses, vine_params,
+                    vine_radius_mm=radius_m*1000,
+                    gif_path=GIF_PATH)
+
+        print("Gif generation complete!")
+
+    else:
+        print("RRT did not find a path!")
