@@ -22,6 +22,9 @@ from sPAM.torch_nns import get_or_train_model, get_prediction_function
 from sPAM.spam import params as act_params
 from sPAM.torch_nns_usage import torch_solve as find_actuator_params
 
+# For creating GIFs:
+from PIL import Image
+
 scaling_info, model = get_or_train_model(act_params)
 predict = get_prediction_function(scaling_info, model)
 
@@ -111,7 +114,7 @@ def find_frame_dims(walls, max_dim):
 
 def draw_frame(frame_idx, sim_state: StateInfo, walls,
                static_obj_poses, vine_params, vine_radius_mm,
-               goal_coords_m, goal_radius_m, 
+               goal_coords_m, goal_radius_m, num_moveable_objs,
                gif_path):
     '''
     Draws what the current scene looks like given the StateInfo
@@ -135,13 +138,14 @@ def draw_frame(frame_idx, sim_state: StateInfo, walls,
     # Draw goal radius:
     goal_x = goal_coords_m[0] * 1000; goal_y = goal_coords_m[1] * 1000
     goal_radius_mm = goal_radius_m * 1000
-    ax.add_patch(Circle(goal_x, goal_y), goal_radius_mm,
-                 facecolor="red", alpha=0.4, edgecolor=(.1, .2, .6), zorder=4)
+    ax.add_patch(Circle((goal_x, goal_y), goal_radius_mm,
+                 facecolor="red", alpha=0.4, edgecolor=(.1, .2, .6), zorder=4))
 
     # Draw moveable objs:
     moveable_obj_poses = sim_state["moveable_obj_pose"]
 
-    for k in range(num_bodies):
+    for k in range(num_moveable_objs):
+
         obj_x, obj_y, obj_theta = [float(v) for v in moveable_obj_poses[0, k]]
         corners = _obb_corners_mm(obj_x, obj_y, obj_theta, float(vine_params.obj_hw[k]),
                                     float(vine_params.obj_hh[k]))
@@ -164,7 +168,9 @@ def draw_frame(frame_idx, sim_state: StateInfo, walls,
     ax.set_aspect("equal")
     ax.set_xlabel("mm"); ax.set_title(f"Frame {frame_idx}")
 
+    # try:
     fig.savefig(os.path.join(gif_path, f"f{frame_idx:04d}.png"), dpi=70, bbox_inches="tight")
+
     plt.close(fig)
 
 
@@ -244,7 +250,6 @@ def euclidean_distance(state_obj1: StateInfo, state_obj2: StateInfo,
            (obj_dstate_diff * obj_dstate_w)
 
 
-
 #----------------------------------------------------------------------- RRT Goal Tests
 
 def last_body_goal_test(state_obj: StateInfo, 
@@ -274,6 +279,24 @@ def last_body_goal_test(state_obj: StateInfo,
 
     return distance < min_dist_before_collision
 
+
+#------------------------------------------------------------------------ RRT Quality Measures
+
+def euclidean_quality(node: Node, max_bodies, goal_coords_m):
+    '''
+    Just sees how far away the goal is from the given state's last body
+    (Except for returned value, it's very similar to last_body_goal_test)
+    '''
+
+    num_bodies = node.info["bodies"].reshape(B * 1)
+    
+    last_body_x, last_body_y, last_body_theta = node.info["state"].reshape(B * max_bodies, 3)[num_bodies - 1].squeeze()
+
+    # Convert internal dims to meters:
+    last_body_x = MM(last_body_x) / 1000; last_body_y = MM(last_body_y) / 1000
+
+    distance = torch.sqrt((goal_coords_m[0] - last_body_x)**2 + (goal_coords_m[1] - last_body_y)**2)
+    return distance.item()
 
 #----------------------------------------------------------------------- Everything else for RRT
 
@@ -347,6 +370,8 @@ Then animate the sim's steps using the path that is returned,
 which saves the information for each state from start to goal.
 '''
 
+
+
 if __name__ == "__main__":
 
     solver.cvxpylayer = None
@@ -408,29 +433,26 @@ if __name__ == "__main__":
     start_state = StateInfo(vine_state, vine_dstate, bodies,
                             moveable_obj_pose, moveable_obj_dstate)
 
-    aux_gaol_test_args = (max_bodies, radius_m, GOAL_COORDS_M, GOAL_RADIUS_M)
+    aux_goal_test_args = (max_bodies, radius_m, GOAL_COORDS_M, GOAL_RADIUS_M)
     aux_distance_func_args = (max_bodies, num_moveable_objs)
 
     rrt_tree = RRTTree(start_state,
                        distance_function=euclidean_distance,
                        goal_test=last_body_goal_test,
-                       aux_goal_test_args=aux_gaol_test_args,
+                       aux_goal_test_args=aux_goal_test_args,
                        aux_distance_func_args=aux_distance_func_args)
     path_to_goal = None
 
     #NOTE: assume each step grows by one body (updated each iter)
     curr_bodies = start_state["bodies"] 
 
-    RRT_ITERS = 200
+    RRT_ITERS = 100
     VEL_CAP = 5 # for random sampling dstates
 
     BEND_ANGLE_BOUND = 3.33 #NOTE: ripped from sst(); could change?
     bend_length_scale = torch.tensor(0.0018) #FIXME: should vary and depend on actuators, but not sure how to yet
     spam_moment_scale = 1.0                  #FIXME: may be same problem as above
 
-
-    # NOTE: ACTUTALLY consider moving this main loop to be part of the
-    # tree object (pack up the args for the loop and random sampler if you need)
     
     print("\nStarting RRT!")
 
@@ -479,38 +501,62 @@ if __name__ == "__main__":
             raise e # just for debugging
 
         print(f"\r Iteration #{iter:<40}", end="", flush=True)
+        # print(f"Iteration #{iter}")
 
     # Use the path to create the animation (saved as a gif)
 
     print("\nRRT finished...")
-    
 
-    GIF_PATH="xnew_rrt/sim_animation"
+    GIF_DIR = "xnew_rrt/sim_animation"
+    NUM_CLOSEST_PATHS = 1
+    GIF_NAME = "test_gif.gif"
 
     if path_to_goal is not None: 
-
         print("RRT found a path!")
-        print("Producing gif...")
-
-        for frame_idx in len(path_to_goal):
-            draw_frame(frame_idx, path_to_goal[frame_idx].info,
-                    walls, static_obj_poses, vine_params,
-                    vine_radius_mm=radius_m*1000,
-                    gif_path=GIF_PATH)
-
-        print("Gif generation complete!")
 
     else:
         print("RRT did not find a path!")
+        print(f"Animating the closest {NUM_CLOSEST_PATHS} paths...")
+
+        aux_args = (max_bodies, GOAL_COORDS_M)
+        path_to_goal = rrt_tree.get_closest_paths(NUM_CLOSEST_PATHS, euclidean_quality,
+                                                  aux_args)[0]
+
+    print("Producing gif...")
+
+    saved_indices = []
+    for frame_idx in range(len(path_to_goal)):
+
+        saved_indices.append(frame_idx)
+
+        draw_frame(frame_idx, path_to_goal[frame_idx].info,
+                walls, static_obj_poses, vine_params,
+                vine_radius_mm=radius_m*1000,
+                goal_coords_m=GOAL_COORDS_M, goal_radius_m=GOAL_RADIUS_M,
+                num_moveable_objs=num_moveable_objs,
+                gif_path=GIF_DIR)
+
+    imgs = [Image.open(os.path.join(GIF_DIR, f"f{s:04d}.png")) for s in saved_indices]
+    out = os.path.join(GIF_DIR, GIF_NAME)
+    print(out)
+    imgs[0].save(out, save_all=True, append_images=imgs[1:], duration=110, loop=0)
+
+
+    # Remove all left over pngs
+    for f in os.listdir(GIF_DIR):
+        if f.endswith(".png"):
+            os.remove(os.path.join(GIF_DIR, f))
+
+    print("GIF generation complete!")
+
 
 
 '''
-On debugging why it can't find paths:
-    1. Get diagnostics on the tree: how far are the last bodies from each
-       Node in the path? Are they even close to the goal?
+Potential problems with RRT found while debugging:
 
-       - get the closest paths you can, then draw those and see what they heck they're doing
-       - realistically, I think you'd want to know what those paths are anyway
-    
-    2. Somehow draw everything (will get messy really fast)
+1. Problems with exploration
+    - one test: 101 node in total, 100 are children of the root node
+    - potential cause: sampling is too random? anyway to bias sampling
+                       so that this doesn't happen? (ask for help here, more theoretical)
+
 '''

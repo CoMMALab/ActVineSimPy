@@ -67,6 +67,8 @@ class Node:
     counter = 0 # for unique id generation
     all_nodes = [] # for find_nearest_to() in O(n)
 
+    all_leaves = set() # tracks which nodes don't have children
+
     def __init__(self, state_info, parent=None):
         self.parent = parent
         self.info = state_info
@@ -76,6 +78,8 @@ class Node:
         Node.counter += 1
 
         Node.all_nodes.append(self)
+
+        Node.all_leaves.add(self)
 
     def __eq__(self, value):
         return (self.node_id == value.node_id)
@@ -87,20 +91,14 @@ class Node:
 class RRTTree:
     '''
     Tree from the start state (root) to some goal state.
-
-    TODO: there is not currently any way to store actions/params
-          corresponding with each path (how to implement this?)
-
-    TODO: for Nodes, there is no check to make sure that children are unique;
-          does this need to be done at all? 
     ''' 
 
     def __init__(self, start_state, distance_function, goal_test,
                  aux_goal_test_args,
-                 aux_distance_func_args,
-                 num_closest_paths=0):
+                 aux_distance_func_args):
         
         self.root = Node(start_state)
+
         self.distance_function = distance_function
         self.goal_test = goal_test
 
@@ -109,11 +107,6 @@ class RRTTree:
 
         # Packed args for rest of distance func args
         self.distance_func_args = aux_distance_func_args
-
-        # When no path in the tree finds a goal state,
-        # the tree will return "num_closest_paths"-many paths
-        # that were closest to the goal region
-        self.num_closest_paths = num_closest_paths
 
     def find_nearest_to(self, new_state: StateInfo):
 
@@ -136,7 +129,7 @@ class RRTTree:
         return nearest_state
 
 
-    def add_edge(self, state_in_graph: Node, new_state: StateInfo):
+    def add_edge(self, node_in_graph: Node, new_state: StateInfo):
 
         '''
         Add new_state to the adj list of state_in_graph'
@@ -146,11 +139,23 @@ class RRTTree:
                 start_state to goal_state
         '''
 
-        new_state_node = Node(new_state, state_in_graph)
-        state_in_graph.children.append(new_state_node)
+        new_state_node = Node(new_state, node_in_graph)
+
+        # because state_in_graph just got a child, it's no longer a leaf:
+        if len(node_in_graph.children) == 0:
+            Node.all_leaves.remove(node_in_graph)
+
+        node_in_graph.children.append(new_state_node)
+
+
+        # TO DEBUG: put prints everywhere to see if the ref really gets dropped/is changed
+        #           within the set:
+        #   1. nearest_to returning copy, not ref?
+        #   2. static structures somehow changing? look into...
 
         if (self.goal_test(new_state, *self.goal_test_args)):
             path = []
+            Node.all_leaves.remove(new_state_node)
             curr_node = new_state_node
 
             while curr_node != self.root:
@@ -159,7 +164,45 @@ class RRTTree:
 
             path.append(curr_node) # append root
             path.reverse()
+
             return path
         
         else:
             return None
+
+
+    def get_closest_paths(self, num_closest_paths,
+                          measure_quality: callable,
+                          aux_quality_func_args):
+        '''
+        Return a list of paths that is AT MOST "num_closest_paths" long;
+        Returns paths in increasing order determined by the measaure_quality function 
+
+        NOTE: at most one of the leaves should be a goal state, since RRT is meant 
+              to stop the iteration it finds a goal state;
+              For this implementation, the goal state will be popped out of the set of leaves,
+              meaning all paths returned here will not end in goal states. 
+        '''
+        all_leaves = list(Node.all_leaves)
+        all_leaves.sort(key = lambda node: measure_quality(node, *aux_quality_func_args))
+        
+        closest_paths = []
+
+        for i in range(num_closest_paths):
+
+            # if num paths requested > num paths that exist
+            if i >= len(all_leaves):
+                return closest_paths
+
+            path = []
+            curr_node = all_leaves[i]
+
+            while curr_node != self.root:
+                path.append(curr_node)
+                curr_node = curr_node.parent
+
+            path.append(curr_node) # append root
+            path.reverse()
+            closest_paths.append(path)
+
+        return closest_paths
