@@ -298,7 +298,7 @@ def euclidean_quality(node: Node, max_bodies, goal_coords_m):
     distance = torch.sqrt((goal_coords_m[0] - last_body_x)**2 + (goal_coords_m[1] - last_body_y)**2)
     return distance.item()
 
-#----------------------------------------------------------------------- Everything else for RRT
+#----------------------------------------------------------------------- RRT Random State Samplers
 
 def get_random_state(walls, max_bodies, num_moveable_objs,
                     velocity_cap, curr_bodies):
@@ -326,20 +326,21 @@ def get_random_state(walls, max_bodies, num_moveable_objs,
     MIN_X = xlim_mm[0]; MAX_X = xlim_mm[1] + 1
     MIN_Y = ylim_mm[0]; MAX_Y = ylim_mm[1] + 1
 
+    # Grow body:
+    next_bodies = curr_bodies + 1
+    rand_bodies = torch.zeros((B, 1)); rand_bodies[:, 0] = next_bodies
+
     # Randomly sample vine's state (within walls' borders):    
     rand_state = torch.zeros((B, max_bodies*3))
-    rand_state[:, 0::3] = MIN_X + torch.rand(B, max_bodies) * (MAX_X - MIN_X)
-    rand_state[:, 1::3] = MIN_Y + torch.rand(B, max_bodies) * (MAX_Y - MIN_Y)
-    rand_state[:, 2::3] = torch.rand(B, max_bodies) * MAX_DEG
+    rand_state[:, 0:3*next_bodies:3] = MIN_X + torch.rand(B, next_bodies) * (MAX_X - MIN_X)
+    rand_state[:, 1:3*next_bodies:3] = MIN_Y + torch.rand(B, next_bodies) * (MAX_Y - MIN_Y)
+    rand_state[:, 2:3*next_bodies:3] = torch.rand(B, next_bodies) * MAX_DEG
 
     # Randomly sample vine's dstate:
     rand_dstate = torch.zeros((B, max_bodies*3))
-    rand_dstate[:, 0::3] = torch.rand(B, max_bodies) * velocity_cap
-    rand_dstate[:, 1::3] = torch.rand(B, max_bodies) * velocity_cap
-    rand_dstate[:, 2::3] = torch.rand(B, max_bodies) * MAX_DEG
-
-    # Grow body:
-    rand_bodies = torch.zeros((B, 1)); rand_bodies[:, 0] = curr_bodies + 1
+    rand_dstate[:, 0:3*next_bodies:3] = torch.rand(B, next_bodies) * velocity_cap
+    rand_dstate[:, 1:3*next_bodies:3] = torch.rand(B, next_bodies) * velocity_cap
+    rand_dstate[:, 2:3*next_bodies:3] = torch.rand(B, next_bodies) * MAX_DEG
 
     # Randomly sample dynamic objects' state:
     rand_obj_state = torch.zeros((B, num_moveable_objs, 3))
@@ -360,6 +361,8 @@ def get_random_state(walls, max_bodies, num_moveable_objs,
     rand_obj_dstate = ND(rand_obj_dstate)
 
     return StateInfo(rand_state, rand_dstate, rand_bodies, rand_obj_state, rand_obj_dstate)
+
+
 
 
 #---------------------------------------------------------------------- Main
@@ -447,18 +450,26 @@ if __name__ == "__main__":
     curr_bodies = start_state["bodies"] 
 
     RRT_ITERS = 100
-    VEL_CAP = 5 # for random sampling dstates
+    VEL_CAP = 300.0 # for random sampling dstates
 
-    BEND_ANGLE_BOUND = 3.33 #NOTE: ripped from sst(); could change?
+    BEND_ANGLE_BOUND = 3.33                  #NOTE: ripped from sst(); could change?
     bend_length_scale = torch.tensor(0.0018) #FIXME: should vary and depend on actuators, but not sure how to yet
     spam_moment_scale = 1.0                  #FIXME: may be same problem as above
 
-    
+
+    # Run RRT:
+
     print("\nStarting RRT!")
 
     for iter in range(1, RRT_ITERS+1):
+
+        if curr_bodies >= max_bodies:
+            print("Ran out of bodies, could not find a path!")
+            break
+
         rand_state = get_random_state(walls, max_bodies, num_moveable_objs,
                                    velocity_cap=VEL_CAP, curr_bodies=curr_bodies)
+        curr_bodies += 1
 
         nearest_node = rrt_tree.find_nearest_to(rand_state) # Returns Node in graph
         nearest_state = nearest_node.info
@@ -556,7 +567,10 @@ Potential problems with RRT found while debugging:
 
 1. Problems with exploration
     - one test: 101 node in total, 100 are children of the root node
+        - ran similar test with 1000 iters... I suspect a similar thing happened
     - potential cause: sampling is too random? anyway to bias sampling
                        so that this doesn't happen? (ask for help here, more theoretical)
 
+                       
+2. 
 '''

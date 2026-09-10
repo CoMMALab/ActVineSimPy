@@ -56,6 +56,10 @@ class StateInfo:
             return self.moveable_obj_pose
         elif key == "moveable_obj_dstate":
             return self.moveable_obj_dstate
+        elif key == "p_control":
+            return self.p_control
+        elif key == "l0_control":
+            return self.l0_control
 
 
 class Node:

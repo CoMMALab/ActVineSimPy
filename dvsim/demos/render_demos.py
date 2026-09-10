@@ -84,6 +84,9 @@ def render(name, gifname, objs_m, masses_kg, frames, xlim_mm, ylim_mm=(-45, 45),
         try:
             state, dstate, bodies, obj_pose, obj_dstate = step(
                 params, ih, ix, iy, state, dstate, bodies, obj_pose, obj_dstate)
+
+            print(dstate, obj_dstate)
+            
         except Exception as e:
             print(f"  {name}: stopped at frame {i} ({type(e).__name__})"); break
         if not torch.isfinite(state).all():
