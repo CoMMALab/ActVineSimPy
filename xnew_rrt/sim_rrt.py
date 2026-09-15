@@ -254,7 +254,7 @@ def euclidean_distance(state_obj1: StateInfo, state_obj2: StateInfo,
 
 def last_body_goal_test(state_obj: StateInfo, 
                         max_bodies,
-                        vine_radius, # in m, for consistency
+                        body_radius, # in m, for consistency
                         goal_coords, # (x, y) given in m
                         goal_radius  # given in m
                         ):
@@ -270,10 +270,10 @@ def last_body_goal_test(state_obj: StateInfo,
 
     last_body_x, last_body_y, last_body_theta = state_obj["state"].reshape(B * max_bodies, 3)[num_bodies - 1].squeeze()
 
-    # Convert internal dims to meters:
+    # Convert internal non-dims to meters:
     last_body_x = MM(last_body_x) / 1000; last_body_y = MM(last_body_y) / 1000
 
-    min_dist_before_collision = goal_radius + vine_radius
+    min_dist_before_collision = goal_radius + body_radius
 
     distance = torch.sqrt((goal_coords[0] - last_body_x)**2 + (goal_coords[1] - last_body_y)**2)
 
@@ -292,7 +292,7 @@ def euclidean_quality(node: Node, max_bodies, goal_coords_m):
     
     last_body_x, last_body_y, last_body_theta = node.info["state"].reshape(B * max_bodies, 3)[num_bodies - 1].squeeze()
 
-    # Convert internal dims to meters:
+    # Convert internal non-dims to meters:
     last_body_x = MM(last_body_x) / 1000; last_body_y = MM(last_body_y) / 1000
 
     distance = torch.sqrt((goal_coords_m[0] - last_body_x)**2 + (goal_coords_m[1] - last_body_y)**2)
@@ -363,8 +363,6 @@ def get_random_state(walls, max_bodies, num_moveable_objs,
     return StateInfo(rand_state, rand_dstate, rand_bodies, rand_obj_state, rand_obj_dstate)
 
 
-
-
 #---------------------------------------------------------------------- Main
 
 '''
@@ -372,7 +370,6 @@ Basically, run RRT to try to reach a goal state.
 Then animate the sim's steps using the path that is returned,
 which saves the information for each state from start to goal.
 '''
-
 
 
 if __name__ == "__main__":
@@ -533,6 +530,9 @@ if __name__ == "__main__":
         path_to_goal = rrt_tree.get_closest_paths(NUM_CLOSEST_PATHS, euclidean_quality,
                                                   aux_args)[0]
 
+
+    rrt_tree.print_diagnostics(euclidean_quality, aux_args)
+
     print("Producing gif...")
 
     saved_indices = []
@@ -563,14 +563,18 @@ if __name__ == "__main__":
 
 
 '''
-Potential problems with RRT found while debugging:
+Things to fix/debug:
 
-1. Problems with exploration
-    - one test: 101 node in total, 100 are children of the root node
-        - ran similar test with 1000 iters... I suspect a similar thing happened
-    - potential cause: sampling is too random? anyway to bias sampling
-                       so that this doesn't happen? (ask for help here, more theoretical)
+1. Random sampling: just the last body
+    - not the entire sim state: use distance to check which node is nearest based
+      off of the last body of the vine
 
-                       
-2. 
+2. Curr bodies should be invisible to the planner
+   - that stuff should be agnostic to the planner
+   - every time you get nearest_node, just use its curr_bodies, no need to keep track of stuff globally
+
+3. Draw K nearest paths closest to the goal just like ActVine
+   - need to see that all the paths actually make sense
+   - 
+
 '''
