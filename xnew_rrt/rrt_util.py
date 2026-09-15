@@ -97,22 +97,26 @@ class RRTTree:
     Tree from the start state (root) to some goal state.
     ''' 
 
-    def __init__(self, start_state, distance_function, goal_test,
+    def __init__(self, start_state, 
+                #  distance_function,
+                 goal_test,
                  aux_goal_test_args,
-                 aux_distance_func_args):
+                #  aux_distance_func_args
+                 ):
         
         self.root = Node(start_state)
 
-        self.distance_function = distance_function
+        # self.distance_function = distance_function
         self.goal_test = goal_test
 
         # Packed args for rest of goal test args
         self.goal_test_args = aux_goal_test_args
 
         # Packed args for rest of distance func args
-        self.distance_func_args = aux_distance_func_args
+        # self.distance_func_args = aux_distance_func_args
 
-    def find_nearest_to(self, new_state: StateInfo):
+    def find_nearest_to(self, random_pose: torch.tensor,
+                        distance_function: callable):
 
         '''
         Returns the nearest state to new_state that is currently in the graph;
@@ -123,8 +127,7 @@ class RRTTree:
         nearest_state = None
 
         for node in Node.all_nodes:
-            dist = self.distance_function(node.info, new_state, 
-                                          *self.distance_func_args)
+            dist = distance_function(node.info, random_pose)
 
             if dist < min_distance:
                 min_distance = dist
@@ -150,12 +153,6 @@ class RRTTree:
             Node.all_leaves.remove(node_in_graph)
 
         node_in_graph.children.append(new_state_node)
-
-
-        # TO DEBUG: put prints everywhere to see if the ref really gets dropped/is changed
-        #           within the set:
-        #   1. nearest_to returning copy, not ref?
-        #   2. static structures somehow changing? look into...
 
         if (self.goal_test(new_state, *self.goal_test_args)):
             path = []

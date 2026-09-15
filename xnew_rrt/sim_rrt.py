@@ -174,7 +174,7 @@ def draw_frame(frame_idx, sim_state: StateInfo, walls,
     plt.close(fig)
 
 
-#----------------------------------------------------------------------- RRT Distance Funcs
+#----------------------------------------------------------------------- Old RRT Funcs (will be replaced)
 
 def euclidean_distance(state_obj1: StateInfo, state_obj2: StateInfo, 
                  max_bodies, num_moveable_objs,
@@ -250,56 +250,6 @@ def euclidean_distance(state_obj1: StateInfo, state_obj2: StateInfo,
            (obj_dstate_diff * obj_dstate_w)
 
 
-#----------------------------------------------------------------------- RRT Goal Tests
-
-def last_body_goal_test(state_obj: StateInfo, 
-                        max_bodies,
-                        body_radius, # in m, for consistency
-                        goal_coords, # (x, y) given in m
-                        goal_radius  # given in m
-                        ):
-    '''
-    Simple goal test: if the last body is anywhere within the 
-    goal region, then returns True (otherwise returns False).
-
-    NOTE: assumes both the vine body's and the goal region's geometries
-          are simple circles.
-    '''
-
-    num_bodies = state_obj["bodies"].reshape(B * 1)
-
-    last_body_x, last_body_y, last_body_theta = state_obj["state"].reshape(B * max_bodies, 3)[num_bodies - 1].squeeze()
-
-    # Convert internal non-dims to meters:
-    last_body_x = MM(last_body_x) / 1000; last_body_y = MM(last_body_y) / 1000
-
-    min_dist_before_collision = goal_radius + body_radius
-
-    distance = torch.sqrt((goal_coords[0] - last_body_x)**2 + (goal_coords[1] - last_body_y)**2)
-
-    return distance < min_dist_before_collision
-
-
-#------------------------------------------------------------------------ RRT Quality Measures
-
-def euclidean_quality(node: Node, max_bodies, goal_coords_m):
-    '''
-    Just sees how far away the goal is from the given state's last body
-    (Except for returned value, it's very similar to last_body_goal_test)
-    '''
-
-    num_bodies = node.info["bodies"].reshape(B * 1)
-    
-    last_body_x, last_body_y, last_body_theta = node.info["state"].reshape(B * max_bodies, 3)[num_bodies - 1].squeeze()
-
-    # Convert internal non-dims to meters:
-    last_body_x = MM(last_body_x) / 1000; last_body_y = MM(last_body_y) / 1000
-
-    distance = torch.sqrt((goal_coords_m[0] - last_body_x)**2 + (goal_coords_m[1] - last_body_y)**2)
-    return distance.item()
-
-#----------------------------------------------------------------------- RRT Random State Samplers
-
 def get_random_state(walls, max_bodies, num_moveable_objs,
                     velocity_cap, curr_bodies):
     '''
@@ -361,6 +311,103 @@ def get_random_state(walls, max_bodies, num_moveable_objs,
     rand_obj_dstate = ND(rand_obj_dstate)
 
     return StateInfo(rand_state, rand_dstate, rand_bodies, rand_obj_state, rand_obj_dstate)
+
+#----------------------------------------------------------------------- RRT Goal Tests
+
+def last_body_goal_test(state_obj: StateInfo, 
+                        max_bodies,
+                        body_radius, # in m, for consistency
+                        goal_coords, # (x, y) given in m
+                        goal_radius  # given in m
+                        ):
+    '''
+    Simple goal test: if the last body is anywhere within the 
+    goal region, then returns True (otherwise returns False).
+
+    NOTE: assumes both the vine body's and the goal region's geometries
+          are simple circles.
+    '''
+
+    num_bodies = state_obj["bodies"].reshape(B * 1)
+
+    last_body_x, last_body_y, last_body_theta = state_obj["state"].reshape(B * max_bodies, 3)[num_bodies - 1].squeeze()
+
+    # Convert internal non-dims to meters:
+    last_body_x = MM(last_body_x) / 1000; last_body_y = MM(last_body_y) / 1000
+
+    min_dist_before_collision = goal_radius + body_radius
+
+    distance = torch.sqrt((goal_coords[0] - last_body_x)**2 + (goal_coords[1] - last_body_y)**2)
+
+    return distance < min_dist_before_collision
+
+
+#------------------------------------------------------------------------ RRT Quality Measures
+
+def euclidean_quality(node: Node, max_bodies, goal_coords_m):
+    '''
+    Just sees how far away the goal is from the given state's last body
+    (Except for returned value, it's very similar to last_body_goal_test)
+    '''
+
+    num_bodies = node.info["bodies"].reshape(B * 1)
+    
+    last_body_x, last_body_y, last_body_theta = node.info["state"].reshape(B * max_bodies, 3)[num_bodies - 1].squeeze()
+
+    # Convert internal non-dims to meters:
+    last_body_x = MM(last_body_x) / 1000; last_body_y = MM(last_body_y) / 1000
+
+    distance = torch.sqrt((goal_coords_m[0] - last_body_x)**2 + (goal_coords_m[1] - last_body_y)**2)
+    return distance.item()
+
+
+
+#----------------------------------------------------------------------- New Distance Func/Random Sampler (based on last body)
+
+def get_random_body_position(walls):
+    '''
+    Samples random last body position/orientation within the wall boundaries.
+    
+    NOTE: pose is kept in mm
+    '''
+
+    xlim_mm, ylim_mm = find_borders(walls)
+    MAX_DEG = 360
+    MIN_X = xlim_mm[0]; MAX_X = xlim_mm[1] + 1
+    MIN_Y = ylim_mm[0]; MAX_Y = ylim_mm[1] + 1
+
+    random_last_body = torch.zeros((B, 3))
+
+    random_last_body[:, 0] = MIN_X + torch.rand(B, 1) * (MAX_X - MIN_X)
+    random_last_body[:, 1] = MIN_Y + torch.rand(B, 1) * (MAX_Y - MIN_Y)
+    random_last_body[:, 2] = torch.rand(B, 1) * MAX_DEG
+
+    return random_last_body
+
+
+def get_last_body_distance(state_obj1: StateInfo, random_last_body: torch.tensor):
+    '''
+    Gets the distance of the given vine's last body and the randomly generated
+    body (2nd arg)
+    '''
+
+    x2, y2, theta2 = random_last_body.squeeze()
+    
+
+    num_bodies1 = state_obj1["bodies"]
+    x1, y1, theta1 = state_obj1["state"].reshape(B * max_bodies, 3)[num_bodies1 - 1].squeeze()
+
+    # Convert vine last body pose to mm:
+    x1 = MM(x1)
+    y1 = MM(y1)
+    theta1 = MM(theta1)
+
+    # Find diff btw the two args:
+    euclid_dist = torch.sqrt((x1 - x2)**2 + (y1 - y2)**2)
+    theta_diff = torch.atan2(torch.sin(theta1 - theta2),
+                             torch.cos(theta1 - theta2))
+
+    return euclid_dist + theta_diff
 
 
 #---------------------------------------------------------------------- Main
@@ -434,17 +481,11 @@ if __name__ == "__main__":
                             moveable_obj_pose, moveable_obj_dstate)
 
     aux_goal_test_args = (max_bodies, radius_m, GOAL_COORDS_M, GOAL_RADIUS_M)
-    aux_distance_func_args = (max_bodies, num_moveable_objs)
 
     rrt_tree = RRTTree(start_state,
-                       distance_function=euclidean_distance,
                        goal_test=last_body_goal_test,
-                       aux_goal_test_args=aux_goal_test_args,
-                       aux_distance_func_args=aux_distance_func_args)
+                       aux_goal_test_args=aux_goal_test_args)
     path_to_goal = None
-
-    #NOTE: assume each step grows by one body (updated each iter)
-    curr_bodies = start_state["bodies"] 
 
     RRT_ITERS = 100
     VEL_CAP = 300.0 # for random sampling dstates
@@ -453,33 +494,29 @@ if __name__ == "__main__":
     bend_length_scale = torch.tensor(0.0018) #FIXME: should vary and depend on actuators, but not sure how to yet
     spam_moment_scale = 1.0                  #FIXME: may be same problem as above
 
-
     # Run RRT:
 
     print("\nStarting RRT!")
 
     for iter in range(1, RRT_ITERS+1):
 
-        if curr_bodies >= max_bodies:
-            print("Ran out of bodies, could not find a path!")
-            break
+        random_last_body_pose = get_random_body_position(walls)
 
-        rand_state = get_random_state(walls, max_bodies, num_moveable_objs,
-                                   velocity_cap=VEL_CAP, curr_bodies=curr_bodies)
-        curr_bodies += 1
-
-        nearest_node = rrt_tree.find_nearest_to(rand_state) # Returns Node in graph
+        nearest_node = rrt_tree.find_nearest_to(random_last_body_pose,
+                                                get_last_body_distance)
         nearest_state = nearest_node.info
+
+        # Try random sampling again if nearest state exceeds max bodies:
+        if nearest_state["bodies"] >= max_bodies:
+            continue
 
         # Propagate from nearest_state by giving random controls to the sim:
         new_bend_angle = np.random.uniform(BEND_ANGLE_BOUND*-1, BEND_ANGLE_BOUND, B)
         new_bend_angle = 1.0 / new_bend_angle
 
-        # Each shaped (1,)
-        p, l0 = find_actuator_params(predict, act_params, torch.tensor(new_bend_angle))
+        p, l0 = find_actuator_params(predict, act_params, torch.tensor(new_bend_angle)) # each (1,)
 
-        # Make shape (max_bodies,), as documented in VineParams
-        p = p.repeat(max_bodies)
+        p = p.repeat(max_bodies)   # Make shape (max_bodies,), as documented in VineParams
         l0 = l0.repeat(max_bodies)
 
         vine_params.spam_p = p
@@ -565,16 +602,16 @@ if __name__ == "__main__":
 '''
 Things to fix/debug:
 
-1. Random sampling: just the last body
+
+1. Random sampling: just the last body (#NOTE: DONE)
     - not the entire sim state: use distance to check which node is nearest based
       off of the last body of the vine
 
-2. Curr bodies should be invisible to the planner
+2. Curr bodies should be invisible to the planner (#NOTE: DONE)
    - that stuff should be agnostic to the planner
    - every time you get nearest_node, just use its curr_bodies, no need to keep track of stuff globally
 
 3. Draw K nearest paths closest to the goal just like ActVine
    - need to see that all the paths actually make sense
-   - 
 
 '''
