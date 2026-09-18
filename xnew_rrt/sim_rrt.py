@@ -6,7 +6,7 @@ from collections import namedtuple
 
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Polygon
-# from matplotlib.animation import FuncAnimation
+import colorsys
 
 # Sim modules:
 from dvsim import si
@@ -112,22 +112,19 @@ def find_frame_dims(walls, max_dim):
     return width_in, height_in
 
 
-def draw_frame(frame_idx, sim_state: StateInfo, walls,
+def draw_frame(frame_idx, sim_states: list[StateInfo], walls,
                static_obj_poses, vine_params, vine_radius_mm,
                goal_coords_m, goal_radius_m, num_moveable_objs,
                gif_path):
     '''
-    Draws what the current scene looks like given the StateInfo
+    Given a list of sim_states (all states at the timestep = frame_idx),
+    draw what all the explored scenes look like, all in one gif (similar to ActVine)
     '''
 
     width_in, height_in = find_frame_dims(walls, max_dim=12)
     xlim_mm, ylim_mm = find_borders(walls)
 
     fig, ax = plt.subplots(figsize=(width_in, height_in))
-
-    vine_state = sim_state["state"]
-    moveable_obj_poses = sim_state["moveable_obj_pose"]
-    num_bodies = sim_state["bodies"]
 
     # Draw static objs:
     for (pose, hw, hh) in static_obj_poses:
@@ -141,38 +138,49 @@ def draw_frame(frame_idx, sim_state: StateInfo, walls,
     ax.add_patch(Circle((goal_x, goal_y), goal_radius_mm,
                  facecolor="red", alpha=0.4, edgecolor=(.1, .2, .6), zorder=4))
 
-    # Draw moveable objs:
-    moveable_obj_poses = sim_state["moveable_obj_pose"]
 
-    for k in range(num_moveable_objs):
+    # Draw what actually changes per frame for this timestep:
 
-        obj_x, obj_y, obj_theta = [float(v) for v in moveable_obj_poses[0, k]]
-        corners = _obb_corners_mm(obj_x, obj_y, obj_theta, float(vine_params.obj_hw[k]),
-                                    float(vine_params.obj_hh[k]))
-        ax.add_patch(Polygon(corners, closed=True, facecolor=(.55, .8, .95), 
-                                edgecolor="b", lw=2, zorder=3))
+    for sim_state in sim_states:
 
-    # Draw the vine's bodies:
-    n = int(num_bodies[0])
-    xs = [MM(float(vine_state[0, 3 * j])) for j in range(n)] 
-    ys = [MM(float(vine_state[0, 3 * j + 1])) for j in range(n)]
+        if sim_state is None: continue
 
-    ax.plot(xs, ys, "-", color=(.15, .3, .8), lw=2, zorder=5)
-    for x, y in zip(xs, ys):
-        ax.add_patch(Circle((x, y), vine_radius_mm, 
-        facecolor=(.3, .5, .95, .4), edgecolor=(.1, .2, .6), zorder=4))
+        vine_state = sim_state.info["state"]
+        moveable_obj_poses = sim_state.info["moveable_obj_pose"]
+        num_bodies = sim_state.info["bodies"]    
 
+        # Draw moveable objs:
+        moveable_obj_poses = sim_state.info["moveable_obj_pose"]
+
+        for k in range(num_moveable_objs):
+
+            obj_x, obj_y, obj_theta = [float(v) for v in moveable_obj_poses[0, k]]
+            corners = _obb_corners_mm(obj_x, obj_y, obj_theta, float(vine_params.obj_hw[k]),
+                                        float(vine_params.obj_hh[k]))
+            ax.add_patch(Polygon(corners, closed=True, facecolor=(.55, .8, .95), 
+                                    edgecolor="b", lw=2, zorder=3))
+
+        # Draw the vine's bodies:
+        n = int(num_bodies[0])
+        xs = [MM(float(vine_state[0, 3 * j])) for j in range(n)] 
+        ys = [MM(float(vine_state[0, 3 * j + 1])) for j in range(n)]
+
+        ax.plot(xs, ys, "-", color=(.15, .3, .8), lw=2, zorder=5)
+        for x, y in zip(xs, ys):
+            ax.add_patch(Circle((x, y), vine_radius_mm, 
+            facecolor=(.3, .5, .95, .4), edgecolor=(.1, .2, .6), zorder=4))
+
+    # Set axes properties:
     ax.plot([init_x[:, 0].item()], [init_y[:, 0].item()], "g^", ms=9, zorder=6)
     ax.set_xlim(*xlim_mm) 
     ax.set_ylim(*ylim_mm) 
     ax.set_aspect("equal")
     ax.set_xlabel("mm"); ax.set_title(f"Frame {frame_idx}")
 
-    # try:
+    # Create the png for this timestep (will be used to compile into gif later)
     fig.savefig(os.path.join(gif_path, f"f{frame_idx:04d}.png"), dpi=70, bbox_inches="tight")
 
     plt.close(fig)
-
 
 #----------------------------------------------------------------------- Old RRT Funcs (will be replaced)
 
@@ -553,8 +561,10 @@ if __name__ == "__main__":
     print("\nRRT finished...")
 
     GIF_DIR = "xnew_rrt/sim_animation"
-    NUM_CLOSEST_PATHS = 1
+    NUM_CLOSEST_PATHS = rrt_tree.get_num_leaves()
     GIF_NAME = "test_gif.gif"
+
+    approx_paths_to_goal = []
 
     if path_to_goal is not None: 
         print("RRT found a path!")
@@ -564,31 +574,55 @@ if __name__ == "__main__":
         print(f"Animating the closest {NUM_CLOSEST_PATHS} paths...")
 
         aux_args = (max_bodies, GOAL_COORDS_M)
-        path_to_goal = rrt_tree.get_closest_paths(NUM_CLOSEST_PATHS, euclidean_quality,
-                                                  aux_args)[0]
-
+        approx_paths_to_goal = rrt_tree.get_closest_paths(NUM_CLOSEST_PATHS, euclidean_quality,
+                                                  aux_args)
 
     rrt_tree.print_diagnostics(euclidean_quality, aux_args)
 
     print("Producing gif...")
 
-    saved_indices = []
-    for frame_idx in range(len(path_to_goal)):
+    # Find max timesteps you need to draw:
 
+    saved_indices = []
+    len_to_use = None
+    if path_to_goal is not None: len_to_use = len(path_to_goal)
+    else:
+        approx_path_lens = [len(approx_path) for approx_path in approx_paths_to_goal]
+        len_to_use = max(approx_path_lens)
+        
+    # Actually draw the gif:
+
+    for frame_idx in range(len_to_use):
+
+        # Creates a buncha images that are used to create the gif:
         saved_indices.append(frame_idx)
 
-        draw_frame(frame_idx, path_to_goal[frame_idx].info,
-                walls, static_obj_poses, vine_params,
+        states_to_draw = []
+
+        # Use real path to goal if it's available:
+        if path_to_goal is not None:
+            states_to_draw.append(path_to_goal[frame_idx])
+
+        # Otherwise, draw closest ones based on NUM_CLOSEST_PATHS
+        else:
+            for path in approx_paths_to_goal:
+                try:
+                    states_to_draw.append(path[frame_idx])
+                except IndexError:
+                    # path is shorter than others, so just throw this in:
+                    states_to_draw.append(None)
+
+        draw_frame(frame_idx, sim_states=states_to_draw,
+                walls=walls, static_obj_poses=static_obj_poses, vine_params=vine_params,
                 vine_radius_mm=radius_m*1000,
                 goal_coords_m=GOAL_COORDS_M, goal_radius_m=GOAL_RADIUS_M,
                 num_moveable_objs=num_moveable_objs,
                 gif_path=GIF_DIR)
 
+
     imgs = [Image.open(os.path.join(GIF_DIR, f"f{s:04d}.png")) for s in saved_indices]
     out = os.path.join(GIF_DIR, GIF_NAME)
-    print(out)
     imgs[0].save(out, save_all=True, append_images=imgs[1:], duration=110, loop=0)
-
 
     # Remove all left over pngs
     for f in os.listdir(GIF_DIR):
@@ -596,8 +630,6 @@ if __name__ == "__main__":
             os.remove(os.path.join(GIF_DIR, f))
 
     print("GIF generation complete!")
-
-
 
 '''
 Things to fix/debug:
@@ -613,5 +645,8 @@ Things to fix/debug:
 
 3. Draw K nearest paths closest to the goal just like ActVine
    - need to see that all the paths actually make sense
+
+   #FIXME: why does it look like the vine doesn't explore enough? 
+            - maybe draw vines in diff colors to see? (push changes before that)
 
 '''
