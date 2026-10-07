@@ -115,7 +115,7 @@ def find_frame_dims(walls, max_dim):
 def draw_frame(frame_idx, sim_states: list[StateInfo], walls,
                static_obj_poses, vine_params, vine_radius_mm,
                goal_coords_m, goal_radius_m, num_moveable_objs,
-               gif_path):
+               gif_path, vine_alpha):
     '''
     Given a list of sim_states (all states at the timestep = frame_idx),
     draw what all the explored scenes look like, all in one gif (similar to ActVine)
@@ -141,9 +141,16 @@ def draw_frame(frame_idx, sim_states: list[StateInfo], walls,
 
     # Draw what actually changes per frame for this timestep:
 
-    for sim_state in sim_states:
+    for path_idx, sim_state in enumerate(sim_states):
 
         if sim_state is None: continue
+
+        # NOTE: for debugging, make each vine a diff color
+
+        cmap = plt.get_cmap("tab20"); 
+        VINE_COLOR = cmap(path_idx % 20)
+
+        # default blue: facecolor = (.3, .5, .95)
 
         vine_state = sim_state.info["state"]
         moveable_obj_poses = sim_state.info["moveable_obj_pose"]
@@ -168,7 +175,8 @@ def draw_frame(frame_idx, sim_states: list[StateInfo], walls,
         ax.plot(xs, ys, "-", color=(.15, .3, .8), lw=2, zorder=5)
         for x, y in zip(xs, ys):
             ax.add_patch(Circle((x, y), vine_radius_mm, 
-            facecolor=(.3, .5, .95, .4), edgecolor=(.1, .2, .6), zorder=4))
+            facecolor=VINE_COLOR, edgecolor=(.1, .2, .6), zorder=4,
+            alpha=vine_alpha))
 
     # Set axes properties:
     ax.plot([init_x[:, 0].item()], [init_y[:, 0].item()], "g^", ms=9, zorder=6)
@@ -182,143 +190,6 @@ def draw_frame(frame_idx, sim_states: list[StateInfo], walls,
 
     plt.close(fig)
 
-#----------------------------------------------------------------------- Old RRT Funcs (will be replaced)
-
-def euclidean_distance(state_obj1: StateInfo, state_obj2: StateInfo, 
-                 max_bodies, num_moveable_objs,
-                 theta_weight = 1, 
-                 weight_list = (1, 1, 1, 1, 1)):
-    '''
-    Default distance function for comparing states returned by sim
-    On args:
-        - theta_weight: how much to weight diff in theta compared to diff in position
-        - weight_list: how much to multiply each measure by (arbitrarily decided)
-
-    NOTE: everything stays in non-dim units, but I don't think that really matters... :p
-    '''
-
-    def vmapped_distance(pose1, pose2, theta_weight):
-        # Tentative measure for angle diff: 
-        # dtheta = torch.atan2(torch.sin(theta1 - theta2), torch.cos(theta1 - theta2))
-
-        # Euclidean distance is used otherwise
-
-        x1, y1, theta1 = pose1
-        x2, y2, theta2 = pose2
-
-        euclid_dist = torch.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-        dtheta = torch.atan2(torch.sin(theta2 - theta1), torch.cos(theta2 - theta1))
-
-        return euclid_dist + theta_weight * dtheta
-
-    #NOTE: reshapes are to make things easier for vmap
-
-    vine_state1 = state_obj1["state"].reshape(B * max_bodies, 3)
-    vine_state2 = state_obj2["state"].reshape(B * max_bodies, 3)
-
-    vine_dstate1 = state_obj1["dstate"].reshape(B * max_bodies, 3)
-    vine_dstate2 = state_obj2["dstate"].reshape(B * max_bodies, 3)
-
-    bodies1 = state_obj1["bodies"].reshape(B * 1)
-    bodies2 = state_obj2["bodies"].reshape(B * 1)
-
-    obj_state1 = state_obj1["moveable_obj_pose"].reshape(B * num_moveable_objs, 3)
-    obj_state2 = state_obj2["moveable_obj_pose"].reshape(B * num_moveable_objs, 3)
-
-    obj_dstate1 = state_obj1["moveable_obj_dstate"].reshape(B * num_moveable_objs, 3)
-    obj_dstate2 = state_obj2["moveable_obj_dstate"].reshape(B * num_moveable_objs, 3)
-
-    # Diff for vine states:
-    vine_state_diff = torch.vmap(vmapped_distance, in_dims=(0, 0, None))(vine_state1, vine_state2, theta_weight)
-    vine_state_diff = torch.sum(vine_state_diff)
-
-    # Diff for vine dstates:
-    vine_dstate_diff = torch.vmap(vmapped_distance, in_dims=(0, 0, None))(vine_dstate1, vine_dstate2, theta_weight)
-    vine_dstate_diff = torch.sum(vine_dstate_diff)
-
-    # Diff for bodies:
-    bodies_diff = torch.abs(bodies2 - bodies1)
-
-    # Diff for moveable object states:
-    obj_state_diff = torch.vmap(vmapped_distance, in_dims=(0, 0, None))(obj_state1, obj_state2, theta_weight)
-    obj_state_diff = torch.sum(obj_state_diff)
-
-    # Diff for moveable object dstates:
-    obj_dstate_diff = torch.vmap(vmapped_distance, in_dims=(0, 0, None))(obj_dstate1, obj_dstate2, theta_weight)
-    obj_dstate_diff = torch.sum(obj_dstate_diff)
-
-    # Return one weighted measure:
-
-    state_w, dstate_w, bodies_w, obj_state_w, obj_dstate_w = weight_list
-
-    return (vine_state_diff * state_w) + \
-           (vine_dstate_diff * dstate_w) + \
-           (bodies_diff * bodies_w) + \
-           (obj_state_diff * obj_state_w) + \
-           (obj_dstate_diff * obj_dstate_w)
-
-
-def get_random_state(walls, max_bodies, num_moveable_objs,
-                    velocity_cap, curr_bodies):
-    '''
-    Generates completely random state for kinodynamic RRT. 
-    Does not actually have to be (and isn't likely to be)
-    an achievable state for the sim. Just being used to help the
-    algorithm explore the state space.
-
-    NOTE: everything is randomly sampled in mm, then converted to non-dim units
-          (which is actually what the sim uses)
-
-          state/dstate: (B, max_bodies * 3)
-          bodies: (B, 1)
-          moveable_obj_state/dstate: (B, num_moveable_objs, 3)
-
-    NOTE's on args:
-        - velocity_cap: an arbitrary constraint (change if you wish)
-        - curr_bodies: each step should grow exactly 1 more body, so this is used
-                       as a constraint
-    '''
-
-    xlim_mm, ylim_mm = find_borders(walls)
-    MAX_DEG = 360
-    MIN_X = xlim_mm[0]; MAX_X = xlim_mm[1] + 1
-    MIN_Y = ylim_mm[0]; MAX_Y = ylim_mm[1] + 1
-
-    # Grow body:
-    next_bodies = curr_bodies + 1
-    rand_bodies = torch.zeros((B, 1)); rand_bodies[:, 0] = next_bodies
-
-    # Randomly sample vine's state (within walls' borders):    
-    rand_state = torch.zeros((B, max_bodies*3))
-    rand_state[:, 0:3*next_bodies:3] = MIN_X + torch.rand(B, next_bodies) * (MAX_X - MIN_X)
-    rand_state[:, 1:3*next_bodies:3] = MIN_Y + torch.rand(B, next_bodies) * (MAX_Y - MIN_Y)
-    rand_state[:, 2:3*next_bodies:3] = torch.rand(B, next_bodies) * MAX_DEG
-
-    # Randomly sample vine's dstate:
-    rand_dstate = torch.zeros((B, max_bodies*3))
-    rand_dstate[:, 0:3*next_bodies:3] = torch.rand(B, next_bodies) * velocity_cap
-    rand_dstate[:, 1:3*next_bodies:3] = torch.rand(B, next_bodies) * velocity_cap
-    rand_dstate[:, 2:3*next_bodies:3] = torch.rand(B, next_bodies) * MAX_DEG
-
-    # Randomly sample dynamic objects' state:
-    rand_obj_state = torch.zeros((B, num_moveable_objs, 3))
-    rand_obj_state[:, :, 0::3] = MIN_X + torch.rand(B, num_moveable_objs, 1) * (MAX_X - MIN_X)
-    rand_obj_state[:, :, 1::3] = MIN_Y + torch.rand(B, num_moveable_objs, 1) * (MAX_Y - MIN_Y)
-    rand_obj_state[:, :, 2::3] = torch.rand(B, num_moveable_objs, 1) * MAX_DEG
-
-    # Randomly sample dynamic objects' dstate:
-    rand_obj_dstate = torch.zeros((B, num_moveable_objs, 3))
-    rand_obj_dstate[:, :, 0::3] = torch.rand(B, num_moveable_objs, 1) * velocity_cap
-    rand_obj_dstate[:, :, 1::3] = torch.rand(B, num_moveable_objs, 1) * velocity_cap
-    rand_obj_dstate[:, :, 2::3] = torch.rand(B, num_moveable_objs, 1) * MAX_DEG
-
-    # Convert everything to non-dim units for the sim:
-    rand_state = ND(rand_state)
-    rand_dstate = ND(rand_dstate)
-    rand_obj_state = ND(rand_obj_state)
-    rand_obj_dstate = ND(rand_obj_dstate)
-
-    return StateInfo(rand_state, rand_dstate, rand_bodies, rand_obj_state, rand_obj_dstate)
 
 #----------------------------------------------------------------------- RRT Goal Tests
 
@@ -495,8 +366,7 @@ if __name__ == "__main__":
                        aux_goal_test_args=aux_goal_test_args)
     path_to_goal = None
 
-    RRT_ITERS = 100
-    VEL_CAP = 300.0 # for random sampling dstates
+    RRT_ITERS = 300
 
     BEND_ANGLE_BOUND = 3.33                  #NOTE: ripped from sst(); could change?
     bend_length_scale = torch.tensor(0.0018) #FIXME: should vary and depend on actuators, but not sure how to yet
@@ -554,7 +424,7 @@ if __name__ == "__main__":
             raise e # just for debugging
 
         print(f"\r Iteration #{iter:<40}", end="", flush=True)
-        # print(f"Iteration #{iter}")
+
 
     # Use the path to create the animation (saved as a gif)
 
@@ -564,33 +434,34 @@ if __name__ == "__main__":
     NUM_CLOSEST_PATHS = rrt_tree.get_num_leaves()
     GIF_NAME = "test_gif.gif"
 
-    approx_paths_to_goal = []
-
     if path_to_goal is not None: 
         print("RRT found a path!")
 
     else:
         print("RRT did not find a path!")
-        print(f"Animating the closest {NUM_CLOSEST_PATHS} paths...")
 
-        aux_args = (max_bodies, GOAL_COORDS_M)
-        approx_paths_to_goal = rrt_tree.get_closest_paths(NUM_CLOSEST_PATHS, euclidean_quality,
-                                                  aux_args)
+    print(f"Animating the closest {NUM_CLOSEST_PATHS} paths...")
 
-    rrt_tree.print_diagnostics(euclidean_quality, aux_args)
+    aux_args = (max_bodies, GOAL_COORDS_M)
+    all_paths = rrt_tree.get_closest_paths(NUM_CLOSEST_PATHS, euclidean_quality,
+                                            aux_args)
+
+    rrt_tree.print_diagnostics(euclidean_quality)
 
     print("Producing gif...")
 
     # Find max timesteps you need to draw:
 
     saved_indices = []
-    len_to_use = None
-    if path_to_goal is not None: len_to_use = len(path_to_goal)
-    else:
-        approx_path_lens = [len(approx_path) for approx_path in approx_paths_to_goal]
-        len_to_use = max(approx_path_lens)
+
+    if path_to_goal is not None:
+        all_paths.insert(0, path_to_goal)
+
+    len_to_use = max([len(path) for path in all_paths])
         
     # Actually draw the gif:
+
+    VINE_ALPHA = 0.2
 
     for frame_idx in range(len_to_use):
 
@@ -599,25 +470,23 @@ if __name__ == "__main__":
 
         states_to_draw = []
 
-        # Use real path to goal if it's available:
-        if path_to_goal is not None:
-            states_to_draw.append(path_to_goal[frame_idx])
+        # # Otherwise, draw closest ones based on NUM_CLOSEST_PATHS
+        # else:
+        for path in all_paths:
+            try:
+                states_to_draw.append(path[frame_idx])
+            except IndexError:
+                # path is shorter than others, so just throw this in:
+                states_to_draw.append(None)
 
-        # Otherwise, draw closest ones based on NUM_CLOSEST_PATHS
-        else:
-            for path in approx_paths_to_goal:
-                try:
-                    states_to_draw.append(path[frame_idx])
-                except IndexError:
-                    # path is shorter than others, so just throw this in:
-                    states_to_draw.append(None)
 
         draw_frame(frame_idx, sim_states=states_to_draw,
                 walls=walls, static_obj_poses=static_obj_poses, vine_params=vine_params,
                 vine_radius_mm=radius_m*1000,
                 goal_coords_m=GOAL_COORDS_M, goal_radius_m=GOAL_RADIUS_M,
                 num_moveable_objs=num_moveable_objs,
-                gif_path=GIF_DIR)
+                gif_path=GIF_DIR,
+                vine_alpha=VINE_ALPHA)
 
 
     imgs = [Image.open(os.path.join(GIF_DIR, f"f{s:04d}.png")) for s in saved_indices]
@@ -634,19 +503,12 @@ if __name__ == "__main__":
 '''
 Things to fix/debug:
 
-
-1. Random sampling: just the last body (#NOTE: DONE)
-    - not the entire sim state: use distance to check which node is nearest based
-      off of the last body of the vine
-
-2. Curr bodies should be invisible to the planner (#NOTE: DONE)
-   - that stuff should be agnostic to the planner
-   - every time you get nearest_node, just use its curr_bodies, no need to keep track of stuff globally
-
-3. Draw K nearest paths closest to the goal just like ActVine
+1. Draw K nearest paths closest to the goal just like ActVine
    - need to see that all the paths actually make sense
 
    #FIXME: why does it look like the vine doesn't explore enough? 
             - maybe draw vines in diff colors to see? (push changes before that)
 
+        - based on semi-random colors: VINES ARE POSITIONED RIGHT ON EACH OTHER
+        => exploration problem 
 '''

@@ -213,7 +213,7 @@ class RRTTree:
         return len(Node.all_leaves)
 
 
-    def print_diagnostics(self, measure_quality: callable, aux_quality_func_args):
+    def print_diagnostics(self, measure_quality: callable):
         '''
         Mostly just for debugging
         '''
@@ -223,11 +223,5 @@ class RRTTree:
         print(f"Total number of nodes: {len(Node.all_nodes)}")
         print(f"Number of leaves: {len(Node.all_leaves)}")
         print(f"Number of children of root: {len(self.root.children)}")
-
-        # all_leaves = list(Node.all_leaves)
-        # all_leaves.sort(key = lambda node: measure_quality(node, *aux_quality_func_args))
-
-        # for leaf in all_leaves:
-        #     print(measure_quality(leaf, *aux_quality_func_args))
 
         print("--------------- End Diagnostics ---------------")
