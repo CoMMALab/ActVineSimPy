@@ -1,4 +1,4 @@
-import torch, math, matplotlib, random, os
+import torch, math, matplotlib, random, os, re
 
 import numpy as np
 
@@ -191,6 +191,95 @@ def draw_frame(frame_idx, sim_states: list[StateInfo], walls,
     plt.close(fig)
 
 
+def draw_frame_multi_gif(frame_idx, sim_states: list[StateInfo], walls,
+                        static_obj_poses, vine_params, vine_radius_mm,
+                        goal_coords_m, goal_radius_m, num_moveable_objs,
+                        vine_alpha):
+    '''
+    Similar to draw frame: takes in a sim state from each path,
+    but now each path gets its own gif.
+
+    NOTE: if the goal is found, then it will have idx of 0 in sim_states (so just check that gif)
+    '''
+
+    width_in, height_in = find_frame_dims(walls, max_dim=12)
+    xlim_mm, ylim_mm = find_borders(walls)
+
+    PARENT_FOLDER = "xnew_rrt/sim_animation"
+    VINE_COLOR = (.3, .5, .95) # default to blue
+
+    # Save pngs to separate folders for each path found (all folders under "xnew_rrt/sim_animation")
+    for path_idx, sim_state in enumerate(sim_states):
+
+        if sim_state is None: continue
+
+        fig, ax = plt.subplots(figsize=(width_in, height_in))
+
+        # Draw static objs:
+        for (pose, hw, hh) in static_obj_poses:
+            corners = _obb_corners_mm(pose[0], pose[1], pose[2], hw, hh)
+            ax.add_patch(Polygon(corners, closed=True, facecolor=(1, .89, .71), 
+                                    edgecolor="k", zorder=1))
+
+        # Draw goal radius:
+        goal_x = goal_coords_m[0] * 1000; goal_y = goal_coords_m[1] * 1000
+        goal_radius_mm = goal_radius_m * 1000
+        ax.add_patch(Circle((goal_x, goal_y), goal_radius_mm,
+                        facecolor="red", alpha=0.4, edgecolor=(.1, .2, .6), zorder=4))
+
+        vine_state = sim_state.info["state"]
+        moveable_obj_poses = sim_state.info["moveable_obj_pose"]
+        num_bodies = sim_state.info["bodies"]
+
+
+        # Draw moveable objs:
+        moveable_obj_poses = sim_state.info["moveable_obj_pose"]
+
+        for k in range(num_moveable_objs):
+
+            obj_x, obj_y, obj_theta = [float(v) for v in moveable_obj_poses[0, k]]
+            corners = _obb_corners_mm(obj_x, obj_y, obj_theta, float(vine_params.obj_hw[k]),
+                                        float(vine_params.obj_hh[k]))
+            ax.add_patch(Polygon(corners, closed=True, facecolor=(.55, .8, .95), 
+                                    edgecolor="b", lw=2, zorder=3))
+
+        # Draw the vine's bodies:
+        n = int(num_bodies[0])
+        xs = [MM(float(vine_state[0, 3 * j])) for j in range(n)] 
+        ys = [MM(float(vine_state[0, 3 * j + 1])) for j in range(n)]
+
+        ax.plot(xs, ys, "-", color=(.15, .3, .8), lw=2, zorder=5)
+        for x, y in zip(xs, ys):
+            ax.add_patch(Circle((x, y), vine_radius_mm, 
+            facecolor=VINE_COLOR, edgecolor=(.1, .2, .6), zorder=4,
+            alpha=vine_alpha))
+
+        # Set axes properties:
+        ax.plot([init_x[:, 0].item()], [init_y[:, 0].item()], "g^", ms=9, zorder=6)
+        ax.set_xlim(*xlim_mm) 
+        ax.set_ylim(*ylim_mm) 
+        ax.set_aspect("equal")
+        ax.set_xlabel("mm"); ax.set_title(f"Frame {frame_idx}")
+
+        # Save this gif frame (png) to the rrt path's proper folder:
+
+        rrt_path_folder = os.path.join(PARENT_FOLDER, f"path_{path_idx}")
+
+        if not os.path.exists(rrt_path_folder):
+            os.mkdir(rrt_path_folder)
+
+        if os.path.exists(rrt_path_folder) and frame_idx == 0:
+            # clear out the folder before throwing pngs in there:
+            for root, dirs, files in os.walk(rrt_path_folder, topdown=False):
+                for name in files:
+                    os.remove(os.path.join(root, name))
+
+        new_frame_path = os.path.join(rrt_path_folder, f"path_frame{frame_idx}.png")
+        fig.savefig(new_frame_path, dpi=70, bbox_inches="tight")
+
+        plt.close()
+
+
 #----------------------------------------------------------------------- RRT Goal Tests
 
 def last_body_goal_test(state_obj: StateInfo, 
@@ -238,7 +327,6 @@ def euclidean_quality(node: Node, max_bodies, goal_coords_m):
 
     distance = torch.sqrt((goal_coords_m[0] - last_body_x)**2 + (goal_coords_m[1] - last_body_y)**2)
     return distance.item()
-
 
 
 #----------------------------------------------------------------------- New Distance Func/Random Sampler (based on last body)
@@ -430,9 +518,13 @@ if __name__ == "__main__":
 
     print("\nRRT finished...")
 
-    GIF_DIR = "xnew_rrt/sim_animation"
+    # GIF_DIR = "xnew_rrt/sim_animation" <= previously used for gif with vine overlay
+    # GIF_NAME = "test_gif.gif"
+
+    ANI_FOLDER = "xnew_rrt/sim_animation"
     NUM_CLOSEST_PATHS = rrt_tree.get_num_leaves()
-    GIF_NAME = "test_gif.gif"
+    # NUM_CLOSEST_PATHS = 10
+    
 
     if path_to_goal is not None: 
         print("RRT found a path!")
@@ -448,7 +540,7 @@ if __name__ == "__main__":
 
     rrt_tree.print_diagnostics(euclidean_quality)
 
-    print("Producing gif...")
+    print("Starting to draw frames...")
 
     # Find max timesteps you need to draw:
 
@@ -461,17 +553,15 @@ if __name__ == "__main__":
         
     # Actually draw the gif:
 
-    VINE_ALPHA = 0.2
+    VINE_ALPHA = 0.6
 
     for frame_idx in range(len_to_use):
 
         # Creates a buncha images that are used to create the gif:
-        saved_indices.append(frame_idx)
+        # saved_indices.append(frame_idx)
 
         states_to_draw = []
 
-        # # Otherwise, draw closest ones based on NUM_CLOSEST_PATHS
-        # else:
         for path in all_paths:
             try:
                 states_to_draw.append(path[frame_idx])
@@ -480,35 +570,46 @@ if __name__ == "__main__":
                 states_to_draw.append(None)
 
 
-        draw_frame(frame_idx, sim_states=states_to_draw,
-                walls=walls, static_obj_poses=static_obj_poses, vine_params=vine_params,
-                vine_radius_mm=radius_m*1000,
-                goal_coords_m=GOAL_COORDS_M, goal_radius_m=GOAL_RADIUS_M,
-                num_moveable_objs=num_moveable_objs,
-                gif_path=GIF_DIR,
-                vine_alpha=VINE_ALPHA)
+        # draw_frame(frame_idx, sim_states=states_to_draw,
+        #         walls=walls, static_obj_poses=static_obj_poses, vine_params=vine_params,
+        #         vine_radius_mm=radius_m*1000,
+        #         goal_coords_m=GOAL_COORDS_M, goal_radius_m=GOAL_RADIUS_M,
+        #         num_moveable_objs=num_moveable_objs,
+        #         gif_path=GIF_DIR,
+        #         vine_alpha=VINE_ALPHA)
 
+        draw_frame_multi_gif(frame_idx, states_to_draw, 
+                            walls=walls, static_obj_poses=static_obj_poses, vine_params=vine_params,
+                            vine_radius_mm=radius_m*1000,
+                            goal_coords_m=GOAL_COORDS_M, goal_radius_m=GOAL_RADIUS_M,
+                            num_moveable_objs=num_moveable_objs,
+                            vine_alpha=VINE_ALPHA)
 
-    imgs = [Image.open(os.path.join(GIF_DIR, f"f{s:04d}.png")) for s in saved_indices]
-    out = os.path.join(GIF_DIR, GIF_NAME)
-    imgs[0].save(out, save_all=True, append_images=imgs[1:], duration=110, loop=0)
+    print("Compiling gifs...")
 
-    # Remove all left over pngs
-    for f in os.listdir(GIF_DIR):
-        if f.endswith(".png"):
-            os.remove(os.path.join(GIF_DIR, f))
+    # For sorting files by name:
+    def num_key(name):
+        return int(re.search(r"\d+", name).group())
+
+    for path_idx in range(len(all_paths)):
+
+        path_folder = os.path.join(ANI_FOLDER, f"path_{path_idx}")
+        names = sorted(os.listdir(path_folder), key=num_key)
+
+        imgs = [Image.open(os.path.join(path_folder, name)) for name in names]
+        out = os.path.join(ANI_FOLDER, f"path_{path_idx}.gif")
+        imgs[0].save(out, save_all=True, append_images=imgs[1:], duration=110, loop=0)
+
+    print("Cleaning up...")
+
+    # Delete all the path folders and their pngs
+    for root, dirs, files in os.walk(ANI_FOLDER, topdown=False):
+        for name in files:
+            if name.endswith(".png"):
+                os.remove(os.path.join(root, name))
+        for name in dirs:
+            if name.startswith("path"):
+                full = os.path.join(root, name)
+                os.rmdir(full)
 
     print("GIF generation complete!")
-
-'''
-Things to fix/debug:
-
-1. Draw K nearest paths closest to the goal just like ActVine
-   - need to see that all the paths actually make sense
-
-   #FIXME: why does it look like the vine doesn't explore enough? 
-            - maybe draw vines in diff colors to see? (push changes before that)
-
-        - based on semi-random colors: VINES ARE POSITIONED RIGHT ON EACH OTHER
-        => exploration problem 
-'''
