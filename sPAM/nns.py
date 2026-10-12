@@ -188,6 +188,10 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256):
         # Create a dummy state to restore into
         key = jax.random.PRNGKey(0)
         dummy_state = create_train_state(key, model, learning_rate, input_shape=(1, 2))
+        # restore_checkpoint returns the untrained dummy_state unchanged when there is no finished
+        # checkpoint (e.g. only an interrupted *.orbax-checkpoint-tmp-* save), so check explicitly
+        if checkpoints.latest_checkpoint(ckpt_path) is None:
+            raise FileNotFoundError(f"No finished checkpoint in {ckpt_path}; delete the folder to retrain.")
         state = checkpoints.restore_checkpoint(ckpt_dir=ckpt_path, target=dummy_state)
         
         scaling_info = np.load(f'{ckpt_path}/scaling_info.npy', allow_pickle=True).item()

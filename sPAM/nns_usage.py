@@ -68,7 +68,8 @@ def solve(predict, params: paramstype, radius):
     # Print eps, phi, m in rows
     # jax.debug.print("Actuator design eps {} \n l_0, p, \n {}", eps, jnp.column_stack((l_0, p_act)))
 
-    return p_act[best_idx], radius_sign * l_0[best_idx] * 2.0 
+    # l_0 is returned as designed: solve_fwd evaluates the actuator at exactly this rest length
+    return p_act[best_idx], radius_sign * l_0[best_idx]
 
 def solve_fwd(predict, params: paramstype, radius, p_act, l_0):
     l0_sign = jnp.sign(l_0) # The direction the actuator is meant to curl
