@@ -14,7 +14,9 @@ so pushing a box is just part of the state that gets propagated.
 Headless: while it runs, <out>/tree_live.png is rewritten every --viz-every iterations. Keep it open
 in a VS Code tab (it reloads on change) to watch the tree grow. At the end it writes
     <out>/tree_final.png    the whole tree
-    <out>/tree_growth.gif   the live snapshots as an animation
+    <out>/tree_stages.png   the tree expansion in --stages stages, side by side (tree_stages.py)
+    <out>/tree_stages.gif   the same, one frame per stage (+ tree_stages.html, a player)
+    <out>/tree_log.pkl      enough to redraw the stages: python xnew_rrt/tree_stages.py <out>
     <out>/plan.json         controls of the best branch (replay: python xnew_rrt/rollout.py --plan ...)
     <out>/best_path.gif     the simulation along the best branch
 
@@ -27,6 +29,7 @@ import argparse, json, os, random, shutil, time
 from dataclasses import asdict
 
 from scene import Sim, scene_to_dict  # (puts the repo root on sys.path)
+import tree_stages
 import viz
 from rollout import add_sim_args, render_states, sim_from_args
 from rrt_util import Node, RRTTree, StateInfo
@@ -152,6 +155,9 @@ def main(description=__doc__, default_out="out/rrt", add_args=None, configure=No
     parser.add_argument("--goal-bias", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--viz-every", type=int, default=10, help="redraw tree_live.png every N iterations (0 = never)")
+    parser.add_argument("--stages", type=int, default=8, help="stages in tree_stages.png / .gif")
+    parser.add_argument("--box-spread", type=float, default=tree_stages.BOX_SPREAD_MM,
+                        help="draw a box pose only if its center is this far (mm) from every one already drawn")
     parser.add_argument("--out", default=default_out)
     if add_args is not None:
         add_args(parser)
@@ -164,24 +170,16 @@ def main(description=__doc__, default_out="out/rrt", add_args=None, configure=No
 
     os.makedirs(args.out, exist_ok=True)
     live_path = os.path.join(args.out, "tree_live.png")
-    snap_dir = os.path.join(args.out, "_tree_frames")
-    shutil.rmtree(snap_dir, ignore_errors=True)
-    os.makedirs(snap_dir)
-    snapshots = []
-
-    def draw_tree_to(path, it, tree, best_node, sample_mm=None, new_node=None, status=""):
-        fig, ax = viz.new_figure(sim.scene, max_dim_in=13)
-        title = (f"{sim.scene.name}  |  RRT iter {it}  |  {len(tree.all_nodes)} nodes  |  "
-                 f"closest to goal: {goal_distance(best_node.info) * 1000:.0f} mm{status}")
-        viz.draw_tree(ax, sim, tree, highlight=best_node, sample_mm=sample_mm, new_node=new_node, title=title)
-        viz.save_figure(fig, path)
+    log = tree_stages.TreeLog(sim, goal_distance)
+    last_drawn = [0]
 
     def on_iteration(it, tree, best_node, sample_mm, new_node):
+        log.update(tree, it)
         if args.viz_every > 0 and (it % args.viz_every == 0 or tree.goal_node is not None):
-            draw_tree_to(live_path, it, tree, best_node, sample_mm, new_node)
-            snap = os.path.join(snap_dir, f"t{it:06d}.png")
-            shutil.copyfile(live_path, snap)
-            snapshots.append(snap)
+            fig, ax = viz.new_figure(sim.scene, max_dim_in=13)
+            tree_stages.draw_stage(ax, log, last_drawn[0], it, args.box_spread)
+            viz.save_figure(fig, live_path)
+            last_drawn[0] = it
 
     print(f"Scene '{sim.scene.name}', sim config {asdict(sim.cfg)}")
     print(f"Starting RRT ({args.iters} iterations). Watch {live_path}")
@@ -200,17 +198,9 @@ def main(description=__doc__, default_out="out/rrt", add_args=None, configure=No
 
     # Outputs:
 
-    final_path = os.path.join(args.out, "tree_final.png")
-    draw_tree_to(final_path, len(tree.all_nodes) - 1, tree, best_node,
-                 status="  |  GOAL REACHED" if found else "  |  goal not reached")
-    shutil.copyfile(final_path, live_path)
-    print("wrote", final_path)
-
-    if snapshots:
-        growth_path = os.path.join(args.out, "tree_growth.gif")
-        viz.write_gif(snapshots + [final_path], growth_path, frame_ms=250, hold_last_ms=3000)
-        print("wrote", growth_path)
-    shutil.rmtree(snap_dir)
+    log.save(os.path.join(args.out, "tree_log.pkl"))
+    print("wrote", tree_stages.render_stages(log, args.out, args.stages, args.box_spread))
+    shutil.copyfile(os.path.join(args.out, "tree_final.png"), live_path)
 
     plan_path = os.path.join(args.out, "plan.json")
     with open(plan_path, "w") as f:

@@ -15,12 +15,13 @@ so nodes that have moved a box somewhere new count as different states and get e
 This is the naive version: box positions are sampled uniformly over the workspace (most of
 which no box can reach), and box orientation and velocities are not part of the metric.
 
-Goal: the tip goal of the scene by default. With --box-goal the goal is instead that movable
-box 0's center ends up inside the given disc.
+Goal: movable box 0's center ends up inside the --box-goal disc (on the default scene
+DEFAULT_BOX_GOAL_M unless given). --tip-goal plans for the scene's tip goal instead.
 
 Run from the repo root:
     python xnew_rrt/tip_block_rrt.py
     python xnew_rrt/tip_block_rrt.py --box-goal 0.85 0.60 0.06 --iters 400
+    python xnew_rrt/tip_block_rrt.py --tip-goal
 Outputs are the same as sim_rrt.py, under out/tip_block_rrt/.
 '''
 
@@ -30,6 +31,8 @@ from scene import Sim  # (puts the repo root on sys.path)
 import sim_rrt
 import viz
 from rrt_util import StateInfo
+
+DEFAULT_BOX_GOAL_M = (0.85, 0.60, 0.06)  # (x, y, radius) for the default scene: up and right of the box
 
 
 def box_positions_mm(state: StateInfo):
@@ -74,12 +77,20 @@ def add_args(parser):
     parser.add_argument("--box-weight", type=float, default=1.0,
                         help="weight of box displacement relative to tip displacement in the distance")
     parser.add_argument("--box-goal", type=float, nargs=3, default=None, metavar=("X_M", "Y_M", "RADIUS_M"),
-                        help="plan for movable box 0's center to end inside this disc (instead of the tip goal)")
+                        help=f"plan for movable box 0's center to end inside this disc (default scene: {DEFAULT_BOX_GOAL_M})")
+    parser.add_argument("--tip-goal", action="store_true", help="plan for the scene's tip goal instead of a box goal")
 
 
 def configure(sim: Sim, args):
     kwargs = {"sample_fn": sample_tip_and_boxes,
               "distance_fn": make_tip_block_distance(args.box_weight)}
+
+    if args.tip_goal:
+        args.box_goal = None
+    elif args.box_goal is None:
+        if sim.scene.name != "default":
+            raise SystemExit("give a --box-goal for this scene (or --tip-goal)")
+        args.box_goal = DEFAULT_BOX_GOAL_M
 
     if args.box_goal is not None:
         if sim.num_objs == 0:

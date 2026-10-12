@@ -97,7 +97,7 @@ between batch elements.
 | `scene.py` | `Scene` (walls, movable boxes, start, goal), `default_scene()`, `load_scene(env file)`, and `Sim`, a small wrapper that owns the `dvsim` params and exposes `initial_state()` / `rollout(state, curvature, steps)`. |
 | `rrt_util.py` | `StateInfo` (one full sim state), `Node`, `RRTTree`. |
 | `sim_rrt.py` | The RRT, over the tip position. |
-| `tip_block_rrt.py` | The same RRT over (tip position, box positions), with an optional goal for a box. |
+| `tip_block_rrt.py` | The same RRT over (tip position, box positions), with a goal for a box (or `--tip-goal`). |
 | `batch_tip_block_rrt.py` | That planner with a batch of edges simulated together per iteration. |
 | `pose_search.py` | Launch-pose search for a passive vine pushing a box (for the live demo). |
 | `rollout.py` | Simulate one rollout from a list of controls (or replay an RRT plan) and render it. |
@@ -106,6 +106,7 @@ between batch elements.
 | `master_reference.py` | Run `master`'s PBD vine (jax) on a set of scenarios and save the shapes to `data/master_ref.npz`. |
 | `fit_to_master.py` | Fit dvsim's joint stiffness and damping to those shapes. |
 | `viz.py` | Drawing (matplotlib, Agg backend) and gif / html writers. |
+| `tree_stages.py` | The tree expansion drawn in stages (used by the RRTs; also redraws a finished run). |
 | `test_rrt.py` | Unit tests for the tree. |
 | `just_sim.py`, `scrap.py` | Older interactive viewer (needs a display) and a cleanup snippet. Superseded by `rollout.py`. |
 
@@ -118,14 +119,16 @@ actuators. `sim_rrt.py` samples and measures distance on the tip position only;
 ## Install
 
 ```bash
-conda activate vine
+conda env create -f environment.yml
+conda activate actvine
 ```
 
-The `vine` env on the lab machine has what the live code needs: `torch`, `cvxpy`, `cvxpylayers`,
-`diffcp`, `clarabel`, `scipy`, `matplotlib`, `pillow`, `scikit-learn`, `pandas`, `pytorch-minimize`
-(`torchmin`), `torchimize`. Optional: `qpth` + CUDA for the batched GPU solve, `pytest` for the tests.
-The master-era code (`pbd_vine.py`, `kinodynamic/`, `sPAM/spam.py`, `sPAM/nns.py`) additionally needs
-`jax jaxlib jaxopt flax numba pygame ompl`.
+One env for everything: dvsim and `xnew_rrt/` (`torch`, `cvxpy`, `cvxpylayers`, ...) and master's
+jax code (`pbd_vine.py`, `sPAM/`, `kinodynamic/`: `jax`, `flax`, `optax`, `jaxopt`, `ompl`,
+`pygame`). Activating it makes jax allocate GPU memory only as needed, capped at 20% (the GPU is
+shared); `JAX_PLATFORMS=cpu` keeps jax off it entirely. `qpth`, the optional batched GPU QP
+solver, is not included because it no longer builds with current setuptools. The older `vine`
+env on the lab machine still runs everything except the jax code.
 
 ## Run
 
@@ -153,20 +156,31 @@ python xnew_rrt/sim_rrt.py --env envs/env_dynamics.txt --max-bodies 100 --iters 
 ```
 
 While it runs, `out/rrt/tree_live.png` is rewritten every `--viz-every` iterations. Keep it open in
-an editor tab; VS Code reloads it when it changes. It shows every edge as the path the tip actually
-took (shaded by tree depth), the branch closest to the goal with its vine shape and box pose, where
-the other leaves left the boxes, and the latest sample and new node. At the end you get
-`tree_final.png`, `tree_growth.gif`, `plan.json` and `best_path.gif`.
+an editor tab; VS Code reloads it when it changes. At the end you get `tree_final.png`,
+`tree_stages.png` / `.gif` / `.html`, `tree_log.pkl`, `plan.json` and `best_path.gif`.
+
+The tree drawings show the expansion in stages (`--stages`, default 8): the tip paths added in a
+stage in blue and earlier ones in grey, the branch closest to the goal with its vine and boxes,
+and the push paths of the boxes. Box poses reached by the tree are a dot per node plus a faint
+outline only for poses at least `--box-spread` mm (default 30) from every outline already drawn.
+`tree_stages.png` has every stage side by side; the gif and html step through them. Redraw a
+finished run with other settings without simulating again:
+
+```bash
+python xnew_rrt/tree_stages.py out/batch_tip_block_rrt --stages 6 --box-spread 40
+```
 
 **RRT over tip and box positions**
 
 ```bash
-python xnew_rrt/tip_block_rrt.py                                # tip goal, boxes in the metric
-python xnew_rrt/tip_block_rrt.py --box-goal 0.85 0.60 0.06      # box 0 must end in this disc (x y r, m)
+python xnew_rrt/tip_block_rrt.py                                # box 0 must end in (0.85, 0.60), r 0.06 m
+python xnew_rrt/tip_block_rrt.py --box-goal 0.85 0.60 0.06      # the same, explicitly (x y r, m)
+python xnew_rrt/tip_block_rrt.py --tip-goal                     # tip goal, boxes still in the metric
 ```
 
 Same loop and outputs (under `out/tip_block_rrt/`). A sample is a tip position plus a position for
-every box, and the distance adds the box displacements (`--box-weight`). It is the naive version:
+every box, and the distance adds the box displacements (`--box-weight`). The goal is box 0's
+goal disc (on another scene give `--box-goal`), so "closest to goal" is about the box. It is the naive version:
 box positions are sampled uniformly over the whole workspace, and orientation is ignored.
 
 **Batched RRT**

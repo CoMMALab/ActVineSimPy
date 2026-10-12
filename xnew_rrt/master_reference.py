@@ -17,6 +17,11 @@ start, control schedule and the vine centerline (mm) every RECORD_MM of growth.
 
 import argparse, json, os, sys
 
+# Don't let jax grab most of a shared GPU: allocate on demand, capped at 20% (override from the
+# environment, or JAX_PLATFORMS=cpu to stay off the GPU). Set before jax is imported.
+os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.2")
+
 import numpy as np
 
 RECORD_MM = 20.0

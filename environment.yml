@@ -1,0 +1,50 @@
+# Everything this repo needs, in one env: dvsim (torch + cvxpylayers), the planners and
+# visualizers in xnew_rrt/, and master's jax code (pbd_vine.py, sPAM/, kinodynamic/).
+#
+#   conda env create -f environment.yml
+#   conda activate actvine
+#
+# jax only allocates GPU memory as it needs it, capped at 20% (the GPU is shared); change the
+# `variables` below, or run with JAX_PLATFORMS=cpu to keep jax off the GPU.
+# No CUDA: replace "jax[cuda12]" with "jax" and drop the torch --extra-index-url line.
+name: actvine
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - numpy
+  - scipy
+  - pandas
+  - scikit-learn
+  - matplotlib
+  - seaborn
+  - pillow
+  - imageio
+  - numba
+  - tabulate
+  - line_profiler
+  - pytest
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu126
+      # dvsim
+      - torch
+      - cvxpy
+      - cvxpylayers
+      - diffcp
+      - clarabel
+      - pytorch-minimize
+      - torchimize
+      # qpth (optional batched GPU QP solve) is left out: its sdist no longer builds with current setuptools
+      # master's PBD vine and sPAM surrogate
+      - jax[cuda12]
+      - flax
+      - optax
+      - orbax-checkpoint
+      - jaxopt
+      # master's planners and their display
+      - ompl
+      - pygame
+variables:
+  XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+  XLA_PYTHON_CLIENT_MEM_FRACTION: "0.2"
