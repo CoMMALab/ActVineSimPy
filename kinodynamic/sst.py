@@ -7,48 +7,36 @@ import time
 from typing import List, Tuple
 from queue import PriorityQueue
 
-# import jax
-# import jax.numpy as jnp
-import torch
-if torch.cuda.is_available():
-    torch.set_default_device('cuda')
-
+import jax
+import jax.numpy as jnp
 from kinodynamic.env_loader import load_box_config
 import numpy as np
 
 from render import *
 from kinodynamic.max_cover import max_cover
-from pbd_vine import VineParams, step_vine_batched, SCS_step_vine
+from pbd_vine import VineParams, step_vine_batched
 
 from geometric.biarc_rrtstar import main as geometric_plan
 from kinodynamic.nearest import distance, nearest_neighbor, nearest_neighbor_all
 
 from sPAM.spam import paramstype, params as act_params
+from sPAM.nns import get_or_train_model, get_prediction_function
+from sPAM.nns_usage import solve as find_actuator_params, solve_fwd as actuator_params_fwd_
 
-# from sPAM.nns import get_or_train_model, get_prediction_function
-from sPAM.torch_nns import get_or_train_model, get_prediction_function
+trained_state, scaling_info, model = get_or_train_model(act_params)
+predict = get_prediction_function(trained_state, scaling_info, model)
 
-# from sPAM.nns_usage import solve as find_actuator_params, solve_fwd as actuator_params_fwd_
-from sPAM.torch_nns_usage import torch_solve as find_actuator_params, solve_fwd as actuator_params_fwd_
+find_actuator_params = jax.vmap(find_actuator_params, in_axes=(None, None, 0))
+find_actuator_params = jax.jit(find_actuator_params, static_argnames=('predict', 'params'))
 
-scaling_info, model = get_or_train_model(act_params)
-predict = get_prediction_function(scaling_info, model)
-
-# find_actuator_params = jax.vmap(find_actuator_params, in_axes=(None, None, 0))
-find_actuator_params = torch.vmap(find_actuator_params, in_dims=(None, None, 0))
-
-# find_actuator_params = jax.jit(find_actuator_params, static_argnames=('predict', 'params'))
-
-#FIXME: figure out why compile doesn't work, because you're missing out on optimizations
-# find_actuator_params = torch.compile(find_actuator_params)
-
-# actuator_params_fwd = jax.vmap(lambda a, b, c: actuator_params_fwd_(predict, act_params, a, b, c), 
-# #                                in_axes=(0, 0, 0))
-actuator_params_fwd = torch.vmap(lambda a, b, c: actuator_params_fwd_(predict, act_params, a, b, c), 
-                               in_dims=(0, 0, 0))
-
+actuator_params_fwd = jax.vmap(lambda a, b, c: actuator_params_fwd_(predict, act_params, a, b, c), 
+                               in_axes=(0, 0, 0))
+# Jax prints like this
+# jax.debug.print("penalty_grad {}", penalty_grad)
 
 tiebreak_factor = 0.0001 # FIXME put this somewhere better
+
+
 
 bending_controls_size = 2
 
@@ -150,17 +138,14 @@ def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray,
     Returns:
         Shape (batch, 3) with the tip coordinates (x, y, theta)
     """
-    assert cspace.shape == (batch_size, params.max_bodies + 1, 3), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
+    assert cspace.shape == (batch_size, params.max_bodies + 1,), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
     assert n_bodies.shape == (batch_size,)
-
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    angles = cspace[:, :-1, -1]        # shape (n_bodies,)
-    last_len = cspace[:, params.max_bodies, -1] 
+    angles = cspace[:, :-1]        # shape (n_bodies,)
+    last_len = cspace[:, params.max_bodies] 
     
     # Step 1: compute global angles for each segment center
-    # global_angle_full = heading0 + jnp.cumsum(angles, axis=1)   # shape (batch_size, n_bodies,)
-    global_angle_full = heading0 + torch.cumsum(torch.tensor(angles), dim=1)
+    global_angle_full = heading0 + jnp.cumsum(angles, axis=1)   # shape (batch_size, n_bodies,)
         
     # Step 2: compute the center of each segment
     #   For the i-th segment, the center is offset from the anchor by
@@ -168,41 +153,25 @@ def cspace_to_tip(params: VineParams, batch_size, cspace: np.ndarray,
     #   But we can do that more efficiently. We'll build an array of cos/sin, then do a cumsum.
 
     # Cosines and sines of each segment angle:
-    # c_ = jnp.cos(global_angle_full)
-    c_ = torch.cos(global_angle_full)
-
-    # s_ = jnp.sin(global_angle_full)
-    s_ = torch.sin(global_angle_full)
+    c_ = jnp.cos(global_angle_full)
+    s_ = jnp.sin(global_angle_full)
 
     # Prepare the lengths of each segment
-    # full_lengths = jnp.full((batch_size, params.max_bodies,), fill_value=params.body_length)
-    full_lengths = torch.full((batch_size, params.max_bodies), fill_value=params.body_length)
-
-    # arange = jnp.arange(batch_size)
-    arange = torch.arange(batch_size)
-
-    full_lengths[arange, n_bodies-1] = torch.tensor(last_len, dtype=torch.float32)
+    full_lengths = jnp.full((batch_size, params.max_bodies,), fill_value=params.body_length)
+    arange = jnp.arange(batch_size)
+    full_lengths = full_lengths.at[arange, n_bodies-1].set(last_len)
     
     
     # Now we do a cumulative sum of to get the tip coords of each segment
-    # tip_x = x0 + jnp.cumsum(full_lengths * c_, axis=1)
-    tip_x = x0 + torch.cumsum(full_lengths * c_, dim=1)
-
-    # tip_y = y0 + jnp.cumsum(full_lengths * s_, axis=1)
-    tip_y = y0 + torch.cumsum(full_lengths * s_, dim=1)
+    tip_x = x0 + jnp.cumsum(full_lengths * c_, axis=1)
+    tip_y = y0 + jnp.cumsum(full_lengths * s_, axis=1)
             
     # Return the tip coordinates for each segment as (N, 3)
-    # arange = jnp.arange(batch_size)
-    arange = torch.arange(batch_size)
-
-    # ret = jnp.stack([tip_x[arange, n_bodies-1], 
-    #                  tip_y[arange, n_bodies-1], 
-    #                  global_angle_full[arange, n_bodies-1]
-    #                 ]).T
-    ret = torch.stack([tip_x[arange, n_bodies-1],
-                       tip_y[arange, n_bodies-1],
-                       global_angle_full[arange, n_bodies-1]
-                       ]).transpose(0, 1)
+    arange = jnp.arange(batch_size)
+    ret = jnp.stack([tip_x[arange, n_bodies-1], 
+                     tip_y[arange, n_bodies-1], 
+                     global_angle_full[arange, n_bodies-1]
+                    ]).T
         
     assert ret.shape == (batch_size, 3), f"ret shape: {ret.shape}"
     
@@ -222,14 +191,14 @@ def length(params: VineParams, cspace: np.ndarray, n_bodies: np.ndarray):
     """
     
     batch_size = cspace.shape[0]
-    assert cspace.shape == (batch_size, params.max_bodies + 1, 3), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
+    assert cspace.shape == (batch_size, params.max_bodies + 1,), f"cspace shape: {cspace.shape}, batch_size: {batch_size}, max_bodies: {params.max_bodies}"
     assert n_bodies.shape == (batch_size,)
     
     # Standard bodies (all except the last one) have fixed length
     fixed_length_bodies = (n_bodies - 1) * params.body_length
     
     # Last body has variable length from the cspace
-    last_body_length = cspace[:, params.max_bodies, -1]
+    last_body_length = cspace[:, params.max_bodies]
     
     # Total length is the sum
     total_lengths = fixed_length_bodies + last_body_length
@@ -248,11 +217,9 @@ class StatesStruct:
     Use the function call (ie isactive()) to get the data, truncated to the last valid item.
     '''
     
-    def __init__(self, max_bodies, num_dynamic_objs):
+    def __init__(self, max_bodies):
         self.init_size = 64
         self.max_bodies = max_bodies
-        self.num_dynamic_objs = num_dynamic_objs
-        self.dstate_len = max_bodies + 1 + num_dynamic_objs
         
         # --------- States ---------
         self.num_states = 0
@@ -260,17 +227,11 @@ class StatesStruct:
         self._isactive = np.zeros((self.init_size), dtype=bool)
         self._kil = np.zeros((self.init_size), dtype=bool)
         
-        self._c_spaces = np.zeros((self.init_size, max_bodies+1, 3), dtype=np.float32)
+        self._c_spaces = np.zeros((self.init_size, max_bodies+1), dtype=np.float32)
         self._bodies = np.zeros((self.init_size), dtype=np.int32)
         self._times = np.zeros((self.init_size), dtype=np.float32)
         self._bending_controls = np.zeros((self.init_size, max_bodies, bending_controls_size), dtype=np.float32)
-
-        self._dynamic_positions = np.zeros((self.init_size, num_dynamic_objs, 4), 
-                                           dtype=np.float32)
         
-        self._dstates = np.zeros((self.init_size, self.dstate_len, 3),
-                                 dtype=np.float32)
-
         # Heuristic stuff
         self._cost_to_come = np.zeros((self.init_size), dtype=np.int32) # Cost to come
         self._cost_total = np.zeros((self.init_size), dtype=np.int32)
@@ -291,10 +252,6 @@ class StatesStruct:
     def bodies(self): return self._bodies[:self.num_states]
     def times(self): return self._times[:self.num_states]
     def bending_controls(self): return self._bending_controls[:self.num_states]
-
-    def dynamic_positions(self): return self._dynamic_positions
-    
-    def dstates(self): return self._dstates
     
     def cost_to_come(self): return self._cost_to_come[:self.num_states]
     def tip(self): return self._tips[:self.num_states]
@@ -312,16 +269,11 @@ class StatesStruct:
         self._isactive = np.concatenate([self._isactive, np.zeros(current_size, dtype=bool)], axis=0)
         self._kil = np.concatenate([self._kil, np.zeros(current_size, dtype=bool)], axis=0)
         
-        self._c_spaces = np.concatenate([self._c_spaces, np.zeros((current_size, self.max_bodies+1, 3), dtype=np.float32)], axis=0)
+        self._c_spaces = np.concatenate([self._c_spaces, np.zeros((current_size, self.max_bodies+1), dtype=np.float32)], axis=0)
         self._bodies = np.concatenate([self._bodies, np.zeros(current_size, dtype=np.int32)], axis=0)
         self._times = np.concatenate([self._times, np.zeros(current_size, dtype=np.float32)], axis=0)
         self._bending_controls = np.concatenate([self._bending_controls, np.zeros((current_size, self.max_bodies, bending_controls_size), dtype=np.float32)], axis=0)
         
-        self._dynamic_positions = np.concatenate([self._dynamic_positions, np.zeros((current_size, self.num_dynamic_objs, 4), dtype=np.float32)], 
-                                                 axis=0)
-        
-        self._dstates = np.concatenate([self._dstates, np.zeros((current_size, self.dstate_len, 3), dtype=np.float32)])
-
         self._cost_to_come = np.concatenate([self._cost_to_come, np.zeros(current_size, dtype=np.int32)], axis=0)
         self._cost_total = np.concatenate([self._cost_total, np.zeros(current_size, dtype=np.int32)], axis=0)
         self._tips = np.concatenate([self._tips, np.zeros((current_size, 3), dtype=np.float32)], axis=0)
@@ -329,15 +281,10 @@ class StatesStruct:
         self._parent_idxs = np.concatenate([self._parent_idxs, np.zeros(current_size, dtype=np.int32)], axis=0)
         self._num_children = np.concatenate([self._num_children, np.zeros(current_size, dtype=np.int32)], axis=0)
                 
-    def add_state(self, isactive, c_space, dstate, dynamic_obj_positions, bodies, time, bending_control, cost_to_come, cost_total, tip, parent_idx, num_children):
+    def add_state(self, isactive, c_space, bodies, time, bending_control, cost_to_come, cost_total, tip, parent_idx, num_children):
         if self.num_states == self._c_spaces.shape[0]:
             self.extend_states()
         
-        
-        # Convert to cpu tensor before co
-        if torch.cuda.is_available():
-            tip = tip.cpu().numpy()
-
         idx = self.num_states
         
         self._isactive[idx] = isactive
@@ -346,11 +293,6 @@ class StatesStruct:
         self._bodies[idx] = bodies
         self._times[idx] = time
         self._bending_controls[idx] = bending_control
-
-        self._dstates[idx] = dstate
-
-        if self.num_dynamic_objs != 0:
-            self._dynamic_positions[idx] = dynamic_obj_positions
                 
         self._cost_to_come[idx] = cost_to_come
         self._cost_total[idx] = cost_total
@@ -363,18 +305,13 @@ class StatesStruct:
         
         return idx
     
-    def add_states(self, isactive, c_space, dstate, dynamic_obj_positions, bodies, time, bending_control, cost_to_come, cost_total, tip, parent_idx, num_children):
+    def add_states(self, isactive, c_space, bodies, time, bending_control, cost_to_come, cost_total, tip, parent_idx, num_children):
         num_to_add = c_space.shape[0]
         
-        assert c_space.shape == (num_to_add, self.max_bodies + 1, 3)
+        assert c_space.shape == (num_to_add, self.max_bodies + 1)
         assert bodies.shape == (num_to_add,)
         assert time.shape == (num_to_add,)
         assert bending_control.shape == (num_to_add, self.max_bodies, 2)
-
-        assert dstate.shape == (num_to_add, self.dstate_len, 3)
-
-        if self.num_dynamic_objs != 0:
-            assert dynamic_obj_positions.shape == (num_to_add, self.num_dynamic_objs, 4)
         
         assert cost_to_come.shape == (num_to_add,)
         assert cost_total.shape == (num_to_add,)
@@ -394,11 +331,6 @@ class StatesStruct:
         self._bodies[to_add_slice] = bodies
         self._times[to_add_slice] = time
         self._bending_controls[to_add_slice] = bending_control
-
-        self._dstates[to_add_slice] = dstate
-
-        if self.num_dynamic_objs != 0:
-            self._dynamic_positions[to_add_slice] = dynamic_obj_positions
         
         self._cost_to_come[to_add_slice] = cost_to_come
         self._cost_total[to_add_slice] = cost_total
@@ -433,10 +365,6 @@ class StatesStruct:
         self._bodies = self._bodies[keep_states]
         self._times = self._times[keep_states]
         self._bending_controls = self._bending_controls[keep_states]
-
-        self._dynamic_positions = self._dynamic_positions[keep_states]
-        
-        self._dstates = self._dstates[keep_states]
         
         self._cost_to_come = self._cost_to_come[keep_states]
         self._cost_total = self._cost_total[keep_states]
@@ -493,15 +421,11 @@ class StatesStruct:
         
         return np.arange(to_add_slice.start, to_add_slice.stop, dtype=np.int32)
 
-# forward = jax.jit(step_vine_batched, static_argnames=['params', 'x0_list', 'y0_list', 'heading0_list', 'bend_energy_func']) 
-# forward = torch.compile(SCS_step_vine_batched)
-
-forward = SCS_step_vine
-# forward = SCS_step_vine_batched
-
+forward = jax.jit(step_vine_batched, static_argnames=['params', 'x0_list', 'y0_list', 'heading0_list', 'bend_energy_func']) 
+        
 def rollout(sst_params, simparams, batch_size, 
             time_to_evolve,
-            curr_time, cspace, dstate, dynamic_obj_positions, bodies, bending_control, 
+            curr_time, cspace, bodies, bending_control, 
             init_x, init_y, init_heading,
             ):
     """
@@ -513,12 +437,9 @@ def rollout(sst_params, simparams, batch_size,
     Args:
         Left as an exercise for the reader.
     Returns:
-
-        cspace_record : shape (steps_to_iter, batch_size, max_bodies + 1, 3)
+        cspace_record : shape (steps_to_iter, batch_size, max_bodies + 1)
         bodies_record  : shape (steps_to_iter, batch_size)
         time_record    : shape (steps_to_iter, batch_size)
-
-        dynamic_obj_record : shape (steps_to_iter, batch_size, num_dynamic_objs, 4 (for the coords))
     """
     
     # Record every δs distance, to reduce pressure on the set cover
@@ -526,49 +447,35 @@ def rollout(sst_params, simparams, batch_size,
     steps_to_iter = int(ceil((time_to_evolve) / simparams.dt))        
     
     history_size = steps_to_iter // record_every + 1
-    cspace_record = np.zeros((history_size, batch_size, simparams.max_bodies + 1, 3), dtype=np.float32)
+    cspace_record = np.zeros((history_size, batch_size, simparams.max_bodies + 1), dtype=np.float32)
     bodies_record = np.zeros((history_size, batch_size), dtype=np.int32)
     time_record = np.zeros((history_size, batch_size), dtype=np.float32)
-
-    dstate_record = np.zeros((history_size, batch_size, simparams.max_bodies + 1 + int(sim_params.dynamic_objects.size / 4), 3),
-                             dtype=np.float32)
-
-    dynamic_obj_record = np.zeros((history_size, batch_size, int(sim_params.dynamic_objects.size / 4), 4),
-                                  dtype=np.float32)
     
     # Track which batch elements have reached the max_bodies limit,
     # so dont update them anymore
     reached_max = bodies >= simparams.max_bodies - 1
-
-    
-    for i in range(steps_to_iter):
         
-        next_cspace, next_bodies, next_dynamic_positions, next_dstate_solution = forward(
-            simparams, cspace, dstate, dynamic_obj_positions, bodies, bending_control,
+    for i in range(steps_to_iter):
+ 
+        next_cspace, next_bodies = forward(
+            simparams, cspace, bodies, bending_control,
             init_x, init_y, init_heading, actuator_params_fwd
         )
-
+        
         # Check if forward() has caused any vine has hit max length
         reached_max = reached_max | (bodies >= simparams.max_bodies - 1)
         
         # Record the cspace and bodies for this step, but if a vine already
         # hit its limit, reuse the last one
-        cspace = np.where(reached_max[..., None, None], cspace, next_cspace)
-        bodies = np.where(reached_max, bodies, next_bodies)        
-        curr_time = curr_time + simparams.dt                
-        dynamic_obj_positions = np.where(reached_max[..., None, None], 
-                                         dynamic_obj_positions, next_dynamic_positions)
-        dstate = np.where(reached_max[..., None, None], dstate, next_dstate_solution)
-
+        cspace = np.where(reached_max[..., None], cspace, next_cspace)
+        bodies = np.where(reached_max, bodies, next_bodies)
+        curr_time = curr_time + simparams.dt
+        
         if i % record_every == 0:
             # Record the current state
             cspace_record[i // record_every] = cspace
             bodies_record[i // record_every] = bodies
             time_record[i // record_every] = curr_time
-
-            dynamic_obj_record[i // record_every] = dynamic_obj_positions
-
-            dstate_record[i // record_every] = dstate
             
         # All our vines have hit their limit, stop the rollout
         if np.all(reached_max):
@@ -578,13 +485,13 @@ def rollout(sst_params, simparams, batch_size,
     assert np.all(bodies < simparams.max_bodies), f"bodies: {bodies}, max_bodies: {simparams.max_bodies}"
     
     last_index_filled = i // record_every
-
+    
     return cspace_record[:last_index_filled], \
             bodies_record[:last_index_filled], \
             time_record[:last_index_filled], \
-            dynamic_obj_record[:last_index_filled], \
-            dstate_record[:last_index_filled], \
             last_index_filled
+
+# rollout = jax.jit(rollout_raw, static_argnames=['params', 'batch_size', 'time_to_evolve', 'init_x', 'init_y', 'init_heading'])
 
 def sample_3D_state(params, batch_size):
     """
@@ -761,34 +668,21 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
     init_heading = sst_params.start[2]
     
     bodies = 1
-    c_space = np.zeros((sim_params.max_bodies+1, 3))
-
-    c_space[-1, -1] = sim_params.body_length
-    c_space[0, 0], c_space[0, 1] = init_x, init_y
-
-    # dynamic_positions = sim_params.dynamic_objects.copy()
-    dynamic_positions = sim_params.dynamic_objects
-
+    c_space = np.zeros((sim_params.max_bodies+1))
+    c_space[-1] = sim_params.body_length
     bending_control = np.zeros((1, sim_params.max_bodies, 2))
     bending_control[:, :, 0] = 0.0 # pressure
     bending_control[:, :, 1] = 0.025/2 # l0
     tip = cspace_to_tip(sim_params, 1, c_space[None, ...], np.array([bodies]), init_x, init_y, init_heading)
     
     if not tree:
-
-        num_dynamic_objects = int(sim_params.dynamic_objects.size / 4) # each obj has 4 coords (features)
-
-        tree = StatesStruct(sim_params.max_bodies, num_dynamic_objects)
+        tree = StatesStruct(sim_params.max_bodies)
         cost_to_go = 0 if sst_params.points is None else geometric_cost_to_go(sst_params, tip).item()
         state0_idx = tree.add_state(isactive=True,
                     c_space=c_space,
                     bodies=bodies,
                     time=0,
                     bending_control=bending_control,
-                    # Initialize dstate:
-                    dstate=np.zeros((tree.dstate_len, 3)),
-                    # Initial dynamic obj position:
-                    dynamic_obj_positions=dynamic_positions,
                     # Heuristic stuff
                     cost_to_come=0,
                     cost_total= tiebreak_factor * length_unbatched(sim_params, c_space, bodies) + cost_to_go,
@@ -840,14 +734,9 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         # FIXME handle no-copy jax->np
         # NOTE: So the max turning radius is 1/3.33 = 0.3
         new_bend_angle = np.random.uniform(-3.33, 3.33, batch_size) # Shape (B,)
-        new_bend_angle = 1.0 / new_bend_angle
-
         # new_bend_angle = np.random.uniform(-125, 125, batch_size) # Shape (B,)
-        p, l0 = find_actuator_params(predict, act_params, torch.tensor(new_bend_angle)) 
+        p, l0 = find_actuator_params(predict, act_params, 1.0 / new_bend_angle) 
         
-        p = p.cpu().numpy()
-        l0 = l0.cpu().numpy()
-
         assert np.all(np.isfinite(p)), f"p: {p}, l0: {l0}"
         
         current_bending_controls = tree._bending_controls[propagate_origin_idx]
@@ -856,11 +745,10 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         for idx in range(batch_size):
             current_bending_controls[idx, current_bodies[idx]:, 0] = p[idx]        
             current_bending_controls[idx, current_bodies[idx]:, 1] = l0[idx]
-
+        
         print('Starting rollout')
         start_time = time.time()
-        xnew_cspaces, xnew_bodies, xnew_times, xnew_dynamic_positions, xnew_dstates, \
-        steps_to_iter = \
+        xnew_cspaces, xnew_bodies, xnew_times, steps_to_iter = \
                 rollout(sst_params, sim_params,
                         batch_size,
                         time_to_evolve = sst_params.time_to_evolve,
@@ -868,14 +756,11 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
                         cspace = tree._c_spaces[propagate_origin_idx],
                         bodies = tree._bodies[propagate_origin_idx],
                         bending_control = current_bending_controls,
-                        dstate=tree._dstates[propagate_origin_idx],
-                        # For dynamic bodies:
-                        dynamic_obj_positions=tree._dynamic_positions[propagate_origin_idx],
                         init_x = init_x,
                         init_y = init_y,
                         init_heading = init_heading)
         print('Rollout time:', time.time() - start_time)
-
+        
         if not sst_params.do_maximal:
             # Sample one timestep to take from per batch
             take_one_idx = np.random.randint(0, steps_to_iter, batch_size)
@@ -883,38 +768,19 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
             xnew_cspaces = xnew_cspaces[take_one_idx, batch_indices]
             xnew_bodies = xnew_bodies[take_one_idx, batch_indices]
             xnew_times = xnew_times[take_one_idx, batch_indices]
-
-            xnew_dynamic_positions = xnew_dynamic_positions[take_one_idx, batch_indices]
-
-            xnew_dstates = xnew_dstates[take_one_idx, batch_indices]
-
             steps_to_iter = 1
         
-        # Rollout returns a record of position at each timestep, so flatten timestep and batch together                
-        
-        xnew_cspaces = xnew_cspaces.reshape(-1, sim_params.max_bodies + 1, 3)
+        # Rollout returns a record of position at each timestep, so flatten timestep and batch together
+        xnew_cspaces = xnew_cspaces.reshape(-1, sim_params.max_bodies + 1)
         xnew_bodies = xnew_bodies.reshape(-1)
         xnew_times = xnew_times.reshape(-1)
-
-        xnew_dstates = xnew_dstates.reshape(-1, tree.dstate_len, 3)
         
-        if tree.num_dynamic_objs != 0:
-            xnew_dynamic_positions = xnew_dynamic_positions.reshape(-1, tree.num_dynamic_objs, 4)
-        
-        assert xnew_cspaces.shape == (steps_to_iter * batch_size, sim_params.max_bodies + 1, 3), f"xnew_cspaces shape: {xnew_cspaces.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
+        assert xnew_cspaces.shape == (steps_to_iter * batch_size, sim_params.max_bodies + 1), f"xnew_cspaces shape: {xnew_cspaces.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert xnew_bodies.shape == (steps_to_iter * batch_size,), f"xnew_bodies shape: {xnew_bodies.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         assert xnew_times.shape == (steps_to_iter * batch_size,), f"xnew_times shape: {xnew_times.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
         
-        assert xnew_dstates.shape == (steps_to_iter * batch_size, tree.dstate_len, 3), f"xnew_dstates shape: {xnew_dstates.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
-
-        if tree.num_dynamic_objs != 0:
-            assert xnew_dynamic_positions.shape == (steps_to_iter * batch_size, tree.num_dynamic_objs, 4), \
-                                   f"xnew_dynamic_positions shape: {xnew_times.shape}, steps_to_iter: {steps_to_iter}, batch_size: {batch_size}"
-
         # Assert that no new cspace is all zeros
-        # assert np.all(~np.all(xnew_cspaces == 0, axis=1)), f"xnew_cspaces: {xnew_cspaces}"
-        assert np.all(~np.all(xnew_cspaces == 0, axis=(1,2))), f"xnew_cspaces shape: {xnew_cspaces.shape}"
-
+        assert np.all(~np.all(xnew_cspaces == 0, axis=1)), f"xnew_cspaces: {xnew_cspaces}"
         finite_mask = np.all(np.isfinite(xnew_cspaces), axis=1)
         assert np.all(finite_mask), f"{np.sum(finite_mask)} finite cspaces out of {xnew_cspaces.shape[0]}"
         
@@ -941,7 +807,6 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         #   - xnew_costs: shape (steps * B,)
         #   - current_bending_controls: shape (steps * B, max_bodies)
         #   - propagate_origins_idx: shape (steps * B,)
-        #   - xnew_dynamic_positions: shape (steps * B, number of dynamic bodies, 4)
     
         # --------- Find non-overlapping subset of states ---------
         if sst_params.do_set_cover:
@@ -957,11 +822,6 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
             xnew_costs_come = xnew_costs_come[non_overlapping_mask]
             current_bending_controls = current_bending_controls[non_overlapping_mask]
             propagate_origin_idx = propagate_origin_idx[non_overlapping_mask]
-
-            xnew_dstates = xnew_dstates[non_overlapping_mask]
-
-            if tree.num_dynamic_objs != 0:
-                xnew_dynamic_positions = xnew_dynamic_positions[non_overlapping_mask]
             
         if sst_params.do_cost_to_go:
             xnew_costs_total = xnew_costs_come + geometric_cost_to_go(sst_params, xnew_tips) + \
@@ -969,24 +829,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         else:
             xnew_costs_total = xnew_costs_come
         
-        # DEBUGGING PURPOSES (env_dynamics)
-        
-        # print()
-        # print("NEW DYNAMIC POSITION:", xnew_dynamic_positions)
-        # print()
-
-        # tally = 0
-        # for i in range(xnew_dynamic_positions.shape[0]):
-        #     if np.array_equal(xnew_dynamic_positions[i, 0, :], sim_params.dynamic_objects[0]):
-        #         tally += 1
-        # if tally == xnew_dynamic_positions.shape[0]:
-        #     print("DYNAMIC OBJECT HAS NOT MOVED")
-        # else:
-        #     print("IT ACTUALLY MOVED")
-
-        ########        
-
-        draw_dead_state(sim_params, xnew_cspaces, xnew_dynamic_positions, xnew_bodies, init_x, init_y, init_heading)
+        draw_dead_state(sim_params, xnew_cspaces, xnew_bodies, init_x, init_y, init_heading)
         
         # If any states falls in the goal region, add to the solutions
         # Append all info: bodies, cspaces, costs, bending controls
@@ -1038,15 +881,11 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
         # assert np.all(min_tip_dist > sst_params.δs * sst_params.δs)
                 
         # Add new witness-creating states to the tree, and record their indexes      
-
         xnew_fresh_idx = tree.add_states(isactive=True,
                                         c_space=xnew_cspaces[xnew_fresh_mask],
                                         bodies=xnew_bodies[xnew_fresh_mask],
                                         time=xnew_times[xnew_fresh_mask],
                                         bending_control=current_bending_controls[xnew_fresh_mask],
-                                        dstate=xnew_dstates[xnew_fresh_mask],
-                                        dynamic_obj_positions=xnew_dynamic_positions[xnew_fresh_mask] if tree.num_dynamic_objs != 0 \
-                                            else None,
                                         # Heuristic stuff
                                         cost_to_come=xnew_costs_come[xnew_fresh_mask],
                                         cost_total=xnew_costs_total[xnew_fresh_mask],
@@ -1061,9 +900,7 @@ def sst(sst_params: SSTparams, sim_params: VineParams, tree, iters=1000, callbac
                                         bodies=xnew_bodies[xnew_dominating_states_mask],
                                         time=xnew_times[xnew_dominating_states_mask],
                                         bending_control=current_bending_controls[xnew_dominating_states_mask],
-                                        dstate=xnew_dstates[xnew_dominating_states_mask],
-                                        dynamic_obj_positions=xnew_dynamic_positions[xnew_dominating_states_mask] if tree.num_dynamic_objs != 0 \
-                                            else None,
+                                        # Heuristic stuff
                                         cost_to_come=xnew_costs_come[xnew_dominating_states_mask],
                                         cost_total=xnew_costs_total[xnew_dominating_states_mask],
                                         tip=xnew_tips[xnew_dominating_states_mask],
@@ -1217,7 +1054,6 @@ def sst_star(sst_params: SSTparams, sim_params: VineParams, callback=None):
         
         tree.clean_states()
     
-    
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description='Run the SST planner.')
@@ -1234,7 +1070,7 @@ if __name__ == "__main__":
     # Load the config file
     cfg = load_box_config(args.env)
     
-    init_vis(figsize=(12,9), obstacles=cfg['obstacles'], dynamic_obstacles=cfg['dynamic_obstacles'], start=cfg['start'], goal=cfg['goal'],
+    init_vis(figsize=(12,9), obstacles=cfg['obstacles'], start=cfg['start'], goal=cfg['goal'],
             save_pygame_folder=f'pics/live/')
     
     # See if we already have points saved
@@ -1276,30 +1112,24 @@ if __name__ == "__main__":
         point_costs = None
         
     render()
-
-
-
-
+        
     # Safe params
     sim_params = VineParams(
         max_bodies=70,
         body_length=68.0, # 25.0 mm
         radius=50.0, # 16.0,
         dt=1/10,
-        grow_rate=20.0, # was 20
-        grow_force=10.0, # was 15
+        grow_rate=20.0,
+        grow_force=15.0,
         stiffness=20.0,
         damping=50.0,
         # Curiously, decreasing substeps helps prevent penetration bugs. But it doesn't fix the root problem
         substeps=15, # FIXME THIS NUMBER CAN BE MUCH SMALLER IF WE DO LANGRANGE PROPERRLY
         alpha=1e-2,
         obstacle_rects=cfg['obstacles'],
-        dynamic_objects=cfg['dynamic_obstacles'],
         use_tube_obstacle=args.env=='envs/env_tube.txt',
-        dynamic_objs_mass=cfg['dynamic_object_masses'],
-        dynamic_objs_inertia=cfg['dynamic_object_inertias']
     )
-
+    
     # SST params
     sst_params = SSTparams(
         batch_size=100,

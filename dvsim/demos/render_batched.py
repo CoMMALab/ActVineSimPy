@@ -25,7 +25,10 @@ def obb_corners_mm(cx, cy, th, hw, hh):
     return [(MM(cx + c*lx - s*ly), MM(cy + s*lx + c*ly)) for lx, ly in ((-hw,-hh),(hw,-hh),(hw,hh),(-hw,hh))]
 
 
-def main(B=64, frames=44, use_qpth=True):
+def main(B=64, frames=44, use_qpth=None):
+    if use_qpth is None:                # GPU qpth is optional; fall back to the CPU solver without it
+        import importlib.util
+        use_qpth = torch.cuda.is_available() and importlib.util.find_spec("qpth") is not None
     solver.USE_QPTH = use_qpth          # solve the batched per-step QP on the GPU via qpth
     solver.cvxpylayer = None
     params = si.vine_params_si(max_bodies=40, obstacles_m=None, grow_rate_mps=0.3)
@@ -36,7 +39,7 @@ def main(B=64, frames=44, use_qpth=True):
     ih, ix, iy = angles, torch.zeros(B, 1), torch.zeros(B, 1)
     state, dstate = create_state_batched(B, 40)
     bodies = torch.full((B, 1), 2)
-    init_state_batched(params, state, bodies, ih)
+    init_state_batched(params, state, bodies, ih, ix, iy)
     obj_dstate = torch.zeros(B, 1, 3)
 
     tip_paths = [[] for _ in range(B)]        # per-vine tip trajectory

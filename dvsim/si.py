@@ -42,7 +42,7 @@ def torque_to_nd(t):return t / TAU0
 def vine_params_si(max_bodies=40, obstacles_m=None,
                    radius_m=0.0125, seg_len_m=0.018, seg_mass_kg=0.02, seg_inertia_kgm2=1.0e-5,
                    grow_rate_mps=0.3, ang_damp=5.0e-5, lin_damp=0.10, dt_s=1.0 / 90,
-                   stiffness_mode='linear'):
+                   stiffness_mode='linear', grow_force_n=None):
     """Build a VineParams from SI quantities. The returned params carry the internal non-dim
     values used by the (unchanged) solver; `.si` records the scales for downstream conversion.
 
@@ -57,6 +57,9 @@ def vine_params_si(max_bodies=40, obstacles_m=None,
                    stiffness_mode=stiffness_mode)
     # override the DiffVine-hardcoded geometry/inertia with the SI-derived non-dim values
     p.dt = dt_s / T0
+    p.gravity = 9.81 * T0 ** 2 / L0
+    if grow_force_n is not None:         # stall force of growth [N]; None keeps the hard growth equality
+        p.grow_force = force_to_nd(grow_force_n)
     p.radius = radius_m / L0
     p.half_len = torch.tensor(seg_len_m / (2.0 * L0), dtype=torch.float32)
     p.m = torch.tensor([seg_mass_kg / M0], dtype=torch.float32)
@@ -90,7 +93,9 @@ def set_objects_si(params, aabbs_m, masses_kg):
     `masses_kg`: list of masses in kg. Sets params.obj_hw / obj_hh / obj_mass (internal non-dim;
     inertia is derived physically downstream) and returns the initial obj_pose
     (internal, shape (1, n_obj, 3) = (cx, cy, theta=0))."""
-    aabb = torch.tensor(aabbs_m, dtype=torch.float32) / L0          # meters -> internal
+    aabb = torch.tensor(aabbs_m, dtype=torch.float32).reshape(-1, 4) / L0   # meters -> internal
+    # corners may come in either order (the env files list y1 > y2); half-extents must be positive
+    aabb = torch.cat([torch.minimum(aabb[:, :2], aabb[:, 2:]), torch.maximum(aabb[:, :2], aabb[:, 2:])], dim=1)
     n = aabb.shape[0]
     params.obj_hw = (aabb[:, 2] - aabb[:, 0]) / 2
     params.obj_hh = (aabb[:, 3] - aabb[:, 1]) / 2
@@ -102,13 +107,6 @@ def set_objects_si(params, aabbs_m, masses_kg):
 
 
 def spam_moment_to_nd():
-    """Units scale to feed the sPAM force model (which is SI) into the non-dim bending:
-        params.bend_length_scale = segment_length_m   (sPAM's bend-radius input is in METERS)
-        params.spam_moment_scale = spam_moment_to_nd() (SI N*m -> internal non-dim torque)
-    This is the correct DIMENSIONAL conversion, so sPAM 'drops in' with no fudge. HOWEVER, whether
-    the resulting bend MAGNITUDE is physical depends on the vine's stiffness/inertia being on the
-    same SI footing -- which only holds once they are fit by system identification. Pre-sysid the
-    vine still carries DiffVine's fitted (non-SI-consistent) inertia, so the raw sPAM force will
-    over/under-power it; use an empirical spam_moment_scale for visualization until sysid provides
-    matched SI parameters, then switch to this."""
+    """SI N*m -> internal torque: the value of params.spam_moment_scale (the sPAM model gives its
+    actuator moment in N*m)."""
     return 1.0 / TAU0

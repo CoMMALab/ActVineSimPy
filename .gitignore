@@ -2,3 +2,6 @@
 __pycache__/
 dvsim/demos/_frames/
 *.gif
+out/
+.pytest_cache/
+

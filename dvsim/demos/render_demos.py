@@ -85,8 +85,6 @@ def render(name, gifname, objs_m, masses_kg, frames, xlim_mm, ylim_mm=(-45, 45),
             state, dstate, bodies, obj_pose, obj_dstate = step(
                 params, ih, ix, iy, state, dstate, bodies, obj_pose, obj_dstate)
 
-            print(dstate, obj_dstate)
-            
         except Exception as e:
             print(f"  {name}: stopped at frame {i} ({type(e).__name__})"); break
         if not torch.isfinite(state).all():
@@ -99,19 +97,23 @@ def render(name, gifname, objs_m, masses_kg, frames, xlim_mm, ylim_mm=(-45, 45),
     print("wrote", out, f"({len(imgs)} frames)")
 
 
-def render_vine_spam(name, gifname, p, l0, scale, frames=45, xlim_mm=(-15, 160), ylim_mm=(-15, 95),
+def render_vine_spam(name, gifname, design_radius_m, frames=45, xlim_mm=(-15, 160), ylim_mm=(-15, 95),
                      grow_rate_mps=0.3):
-    """A vine with no obstacles that CURVES under sPAM actuation (the ActVine design model, Gao et al.
-    2025). `l0` sign sets the curl direction; `scale` is the actuation-moment SI->non-dim knob
-    (spam_moment_scale, pending sysid) -- its ratio to spam_restore_scale sets the equilibrium curl."""
+    """A vine with no obstacles that CURVES under sPAM actuation: a constant actuator moment on every
+    joint against the vine's linear bending stiffness. The actuator is designed so the two balance at
+    `design_radius_m` (its sign is the curl direction)."""
+    from dvsim.spam import design_actuator, actuation_moment
+    from dvsim.vine import STIFF_FACTOR
     solver.cvxpylayer = None
     mb = 40
-    params = si.vine_params_si(max_bodies=mb, grow_rate_mps=grow_rate_mps)
-    params.stiffness_mode = 'spam'                        # auto-loads params.spam_moment_fn (Eq. 1d actuation)
-    params.bend_length_scale = torch.tensor(0.018)        # segment length in METERS (sPAM input)
-    params.spam_moment_scale = scale
-    params.spam_p = torch.full((mb,), float(p))           # actuator pressure (Pa)
-    params.spam_l0 = torch.full((mb,), float(l0))         # rest length (m); sign = curl direction
+    seg_len_m = 0.018
+    params = si.vine_params_si(max_bodies=mb, grow_rate_mps=grow_rate_mps, seg_len_m=seg_len_m)
+    params.stiffness_mode = 'spam'
+    # moment that holds one joint at the design angle against the vine's stiffness [N*m]
+    stiffness_si = STIFF_FACTOR * float(params.stiffness_val) / params.spam_moment_scale
+    p, l0 = design_actuator(stiffness_si * seg_len_m / design_radius_m, design_radius_m)
+    params.spam_moment = torch.full((mb,), actuation_moment(p, l0, design_radius_m))
+    print(f"  {name}: actuator pressure {p:.1f} Pa, rest length {l0 * 1000:.0f} mm")
 
     B = 1
     ih = torch.zeros(B, 1); ix = torch.zeros(B, 1); iy = torch.zeros(B, 1)
@@ -157,8 +159,8 @@ def render_vine_spam(name, gifname, p, l0, scale, frames=45, xlim_mm=(-15, 160),
 
 if __name__ == "__main__":
     # All geometry in METERS, masses in kg, growth in m/s. Plot windows in mm.
-    render_vine_spam("vine curves (sPAM actuation)", "vine_spam_curve.gif",
-                     p=8000.0, l0=-0.04, scale=22000.0, frames=45)
+    render_vine_spam("vine curves (sPAM actuation, 0.5 m design radius)", "vine_spam_curve.gif",
+                     design_radius_m=0.5, frames=110, xlim_mm=(-15, 560), ylim_mm=(-15, 400))
     render("vine pushes box", "vine_pushes_box.gif",
            objs_m=[[0.045, -0.014, 0.073, 0.014]], masses_kg=[0.05], frames=46, xlim_mm=(-15, 230))
     render("object stops at wall", "obj_wall.gif",

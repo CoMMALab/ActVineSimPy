@@ -1,15 +1,28 @@
-"""sPAM elastic + actuation bending moment for the dvsim vine (the ActVine design model).
+"""sPAM actuation for the dvsim vine.
 
-Wraps the trained torch sPAM surrogate. `make_actuation_fn()` returns the paper's ~constant sPAM
-actuation moment F_t*(2R_vine+R_act) (Gao et al. 2025, Eq. 1d); the curvature-dependent vine
-wrinkling restoring moment (Eq. 2) lives in dvsim.vine.vine_wrinkle_moment, and bending_energy
-combines them as Eq. 3b.
+The actuator's moment on a joint is CONSTANT for a given design: it is evaluated once, at the
+contraction the actuator has at its design bend radius, and does not change with the joint's
+current angle. What changes with the angle is the vine's own bending moment (the linear spring
+in vine.bending_energy). The joint settles where the two cancel.
+
+    eps      = (2 R_vine + R_act) / (design_radius + R_vine)     contraction at the design radius
+    phi, m   = MLP(eps, |l0|)                                     trained surrogate of the sPAM model
+    F_t      = p * pi * R_c^2 * (1 - 2m) / (2m cos^2(phi))        actuator tensile force
+    M_act    = sign(l0) * F_t * (2 R_vine + R_act)                moment about the far wall of the vine
+
+F_t and eps are the same expressions master uses (sPAM/nns_usage.py). The difference from master's
+solve_fwd is WHERE they are evaluated: master re-evaluates them at the joint's current radius every
+step and subtracts a constant vine force; here the actuator is constant and the vine does the varying.
 """
 import math
 import torch
 
 _predict = None
 _act_params = None
+
+# rest lengths master's inverse model searches over [m]
+L0_CANDIDATES = [0.020 + 0.001 * i for i in range(23)]
+P_ACT_MAX = 35e3   # Pa, the pressure limit master's inverse model uses
 
 
 def _load():
@@ -23,25 +36,26 @@ def _load():
     return _predict, _act_params
 
 
-def make_actuation_fn(eps_design=0.25):
-    """Joint-vectorized sPAM ACTUATION moment M_act = F_t*(2R_vine+R_act) (paper Eq. 1d), signed by the
-    actuator's curl direction (sign of l0). F_t = pi*P_act*Rc^2*(1-2m)/(2m*cos^2(phi_Rc)); m (contraction)
-    comes from the trained surrogate. Crucially it is evaluated ONCE at a valid design strain
-    `eps_design` (the surrogate is only valid for m<0.5, i.e. small strain) and is otherwise ~constant
-    for a given pressure -- so it ignores the current joint curvature. The curvature dependence that
-    makes the curl self-limiting is the vine wrinkling restoring moment (Eq. 2), applied separately in
-    bending_energy (Eq. 3b: M_tot = M_act - M_vine(theta)). Returns a callable (turning_radius, p, l0)
-    -> M_act; the turning_radius arg is accepted (bending_energy's moment-fn interface) but unused."""
+def moment_per_pressure(l0, design_radius):
+    """Actuator moment per unit pressure [N*m / Pa] for rest length l0 [m] at a design bend radius [m]
+    (both taken as magnitudes). Negative means the surrogate is outside its valid range (m > 0.5)."""
     predict, ap = _load()
-    Rc, Ract, Rvine = float(ap.R_c), float(ap.R_act_max), float(ap.R_beam)
-    phi_rc = math.acos(Rc / Ract)                       # phi_Rc = acos(Rc/Ract), constant (Eq. 1c)
-    arm = 2.0 * Rvine + Ract
-    cos2 = math.cos(phi_rc) ** 2
-    eps_t = torch.tensor(float(eps_design))
+    eps = (2 * ap.R_beam + ap.R_act_max) / (abs(float(design_radius)) + ap.R_beam)
+    phi, m = predict(torch.tensor([eps, abs(float(l0))], dtype=torch.float32))
+    force_per_pressure = math.pi * ap.R_c ** 2 * (1 - 2 * m) / (2 * m * torch.cos(phi) ** 2)
+    return float(force_per_pressure) * (2 * ap.R_beam + ap.R_act_max)
 
-    def one(r, p, l0):                                  # r (turning_radius) ignored: F_t ~ constant
-        m = predict(torch.stack([eps_t, l0.abs()]))[1]  # contraction from the surrogate at the design strain
-        F_t = math.pi * p * Rc ** 2 * (1.0 - 2.0 * m) / (2.0 * m * cos2)
-        return -torch.sign(l0) * F_t * arm              # actuation moment, +drives the l0<0 curl direction
 
-    return torch.vmap(one, in_dims=(0, 0, 0))
+def actuation_moment(p, l0, design_radius):
+    """Constant moment [N*m] of an actuator with pressure p [Pa] and rest length l0 [m] (its sign is
+    the curl direction), designed for |design_radius| [m]."""
+    return math.copysign(1.0, l0) * float(p) * moment_per_pressure(l0, design_radius)
+
+
+def design_actuator(moment, design_radius):
+    """Inverse: (p [Pa], l0 [m]) of the actuator that gives `moment` [N*m] (signed) at a design bend
+    radius. Picks the rest length that needs the least pressure. Raises if no rest length works."""
+    per_pressure, l0 = max((moment_per_pressure(c, design_radius), c) for c in L0_CANDIDATES)
+    if per_pressure <= 0:
+        raise ValueError(f"no valid sPAM rest length for a {design_radius} m bend radius")
+    return abs(moment) / per_pressure, math.copysign(l0, moment)

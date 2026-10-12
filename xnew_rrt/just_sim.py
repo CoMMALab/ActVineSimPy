@@ -335,6 +335,7 @@ if __name__ == "__main__":
 
     print("Will now create gif, please be patient...")
     save_ani = FuncAnimation(fig, render_saved, frames=len(recorded_frames), interval=50, blit=False)
+    import os; os.makedirs("xnew_rrt/gifs", exist_ok=True)
     save_ani.save("xnew_rrt/gifs/dynamic_contact.gif", writer="pillow", fps=20)
     print("Done, now ending process...")
 

@@ -19,10 +19,11 @@ create_M_obj -> box_inertia (I = m*(hw^2+hh^2)/3), not hand-set. box_mass(densit
 makes object mass scale with size from an areal density. The vine's own m/I keep DiffVine's
 fitted values (do not "physicalize" them -- they are calibrated to real vine data).
 """
+import copy
 import torch
 from functools import partial
 from .vine import (StateTensor, create_M, forward_batched_part,
-                   point_obb_gap, obb_obb_sep, box_inertia, GROW_FACTOR)
+                   point_obb_gap, obb_obb_sep, box_inertia, box_friction_radius, GROW_FACTOR)
 from .solver import init_layers, solve_layers
 
 
@@ -34,6 +35,21 @@ def create_M_obj(obj_mass, obj_hw, obj_hh):
     is the true physical ratio. Same [m, m] scale as the vine's create_M (units are consistent)."""
     per = torch.stack([obj_mass, obj_mass, box_inertia(obj_mass, obj_hw, obj_hh)], dim=1)
     return torch.diag(per.reshape(-1))
+
+
+def object_friction_weights(params):
+    """(n_obj, 3) weights of the per-object ground friction term in the QP objective:
+
+        dt * mu * m * g * || (vx, vy, c * vtheta) ||        c = box_friction_radius
+
+    This is Coulomb friction between the object and the table in impulse form. The object's
+    weight m*g is carried by the table, so friction can resist with a force of at most mu*m*g
+    (or a torque of mu*m*g*c, or a mix of the two). While the push on the object is below that,
+    the cheapest velocity is exactly zero and the object does not move; above it, the object
+    slides and friction keeps taking mu*m*g away. A heavier object therefore needs a
+    proportionally harder push, on top of being harder to accelerate."""
+    w = params.dt * params.obj_friction * params.obj_mass.abs() * params.gravity
+    return torch.stack([w, w, w * box_friction_radius(params.obj_hw, params.obj_hh)], dim=1)
 
 
 # ------------------------------------------------------------------ measures
@@ -160,34 +176,80 @@ def dynamic_solve(params, bodies, dstate, obj_dstate, forces, growth, sdf_now, d
     A = torch.cat([A_joint, A_growth], dim=1)
     b = torch.cat([-dev_now, -g_con.unsqueeze(1)], dim=1)
 
-    init_layers(N, M.shape, p.shape[1:], G.shape[1:], h.shape[1:], A.shape[1:], b.shape[1:])
-    return solve_layers(M, p, G, h, A, b)
+    if params.grow_force is not None:
+        # Growth as a force, not a prescribed speed. One extra variable s = how far the tip link's
+        # lengthening speed falls short of the target (growth row becomes  growth(v) + s = target),
+        # charged 1/2 * c * s^2. The multiplier of that row, c * s, is the growth impulse: zero in
+        # free growth, rising linearly with the shortfall, and dt * grow_force when the tip is
+        # stopped dead. So a blocked vine pushes with a bounded force instead of making the QP
+        # infeasible, and whatever gives first (a box, a bend, the vine itself) moves.
+        c = dt * params.grow_force / (GROW_FACTOR * params.grow_rate)
+        M = torch.block_diag(M, c.reshape(1, 1))
+        p = torch.cat([p, torch.zeros(B, 1)], dim=1)
+        G = torch.cat([G, torch.zeros(B, G.shape[1], 1)], dim=2)
+        slack_col = torch.zeros(B, A.shape[1], 1)
+        slack_col[:, -1] = 1.0                                 # the growth row is the last equality
+        A = torch.cat([A, slack_col], dim=2)
+
+    init_layers(M.shape[0], M.shape, p.shape[1:], G.shape[1:], h.shape[1:], A.shape[1:], b.shape[1:],
+                n_obj=n_obj, obj_start=Nv)
+    sol = solve_layers(M, p, G, h, A, b, fric=object_friction_weights(params) if n_obj > 0 else None)
+    return sol[:, :N]
 
 
-def step(params, init_heading, init_x, init_y, state, dstate, bodies, obj_pose=None, obj_dstate=None):
+def step(params, init_heading, init_x, init_y, state, dstate, bodies, obj_pose=None, obj_dstate=None,
+         return_ok=False, per_batch=None):
     """One full physics step for the vine plus any movable objects -- the sim's single entry point.
     obj_pose is (B, n_obj, 3) = (cx, cy, theta); obj_dstate is (B, n_obj, 3) = (vx, vy, vtheta).
     Both default to the params' object count at zero pose/velocity, so a vine with NO objects is
     just step(params, ih, ix, iy, state, dstate, bodies) and everything downstream degrades to the
-    vine-only QP. Returns (new_state, new_dstate, bodies, new_obj_pose, new_obj_dstate)."""
+    vine-only QP. Returns (new_state, new_dstate, bodies, new_obj_pose, new_obj_dstate), plus an
+    `ok` (B,) bool tensor when return_ok is set (False = that element's QP failed and it was frozen).
+    The inputs are NOT modified (growth promotion happens on a private copy).
+    per_batch: optional {VineParams attribute name: (B, ...) tensor} of parameters that differ
+    between batch elements (e.g. bend_target, spam_moment); everything else in params is shared."""
     B = state.shape[0]
+    # extend() promotes the tip body in place; without the copy that rewrites the caller's tensors
+    # while their `bodies` count stays stale (corrupts any state kept around, e.g. planner tree nodes).
+    state, dstate = state.clone(), dstate.clone()
     n_obj = int(params.obj_mass.shape[0])
     if obj_pose is None:
         obj_pose = torch.zeros(B, n_obj, 3)
     if obj_dstate is None:
         obj_dstate = torch.zeros(B, n_obj, 3)
 
-    fwd = torch.func.vmap(partial(dynamic_forward_part, params), in_dims=(0, 0, 0, 0, 0, 0, 0))
+    names = list(per_batch) if per_batch else []
+
+    def forward_one(ih, ix, iy, s, ds, b, op, *own):
+        p = params
+        if names:                       # this element's own values for the per-batch parameters
+            p = copy.copy(params)
+            for name, value in zip(names, own):
+                setattr(p, name, value)
+        return dynamic_forward_part(p, ih, ix, iy, s, ds, b, op)
+
     bodies, forces, growth, sdf_now, dev_now, L, J, gws, gwd, prox_now, pjs, pjp = \
-        fwd(init_heading, init_x, init_y, state, dstate, bodies, obj_pose)
+        torch.func.vmap(forward_one)(init_heading, init_x, init_y, state, dstate, bodies, obj_pose,
+                                     *[per_batch[name] for name in names])
     ow_now, ow_J, oo_now, oo_J = torch.func.vmap(partial(object_env_constraints, params))(obj_pose)
+    qp_inputs = (bodies, dstate, obj_dstate, forces, growth, sdf_now, dev_now,
+                 L, J, gws, gwd, prox_now, pjs, pjp, ow_now, ow_J, oo_now, oo_J)
+    ok = torch.ones(B, dtype=torch.bool)
     try:
-        sol = dynamic_solve(params, bodies, dstate, obj_dstate, forces, growth, sdf_now, dev_now,
-                            L, J, gws, gwd, prox_now, pjs, pjp, ow_now, ow_J, oo_now, oo_J)
+        sol = dynamic_solve(params, *qp_inputs)
     except Exception:
         # QP infeasible (vine fully blocked, hard growth equality unmeetable): freeze this step
         # rather than crash, so a planner rollout survives. (A softer growth model would buckle.)
-        return state, torch.zeros_like(dstate), bodies, obj_pose, torch.zeros_like(obj_dstate)
+        # The batched solve fails as a whole, so re-solve one by one and freeze only the bad elements.
+        sol = torch.zeros(B, params.max_bodies * 3 + n_obj * 3)
+        ok[:] = False
+        if B > 1:
+            for i in range(B):
+                try:
+                    sol[i] = dynamic_solve(params, *[t[i:i + 1] for t in qp_inputs])[0]
+                    ok[i] = True
+                except Exception:
+                    pass
 
     Nv = params.max_bodies * 3
     # Cap vine velocities: fast FREE growth (no contact to regularize) drives the sliding tip
@@ -202,4 +264,5 @@ def step(params, init_heading, init_x, init_y, state, dstate, bodies, obj_pose=N
     v_obj = torch.cat([v_obj[..., :2].clamp(-vc, vc), v_obj[..., 2:3].clamp(-va, va)], dim=-1)
     new_state = state + v_vine * params.dt
     new_pose = obj_pose + v_obj * params.dt                       # integrate all 3 DOFs (incl. theta)
-    return new_state, v_vine, bodies, new_pose, v_obj
+    out = (new_state, v_vine, bodies, new_pose, v_obj)
+    return (*out, ok) if return_ok else out

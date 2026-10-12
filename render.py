@@ -17,7 +17,6 @@ _sst_surf = None           # For persistent SST stuff
 _sst_active_surf = None    # For non-persistent SST stuff
 
 _obstacles = None          # The obstacle list (x1,y1,x2,y2)
-_dynamic_obstacles = set()  # All unique dynamic object locations (prevents unneccessary redrawing)
 _screen_width = 1200
 _screen_height = 800
 
@@ -58,24 +57,20 @@ def _get_blue_red_color_scale(t, max_val=50.0):
     b = int(255 * (1.0 - ratio))
     return (r, g, b)
 
-def init_vis(figsize=(12, 8), obstacles=None, dynamic_obstacles = None, start=None, goal=None, old=None, save_pygame_folder=None):
+def init_vis(figsize=(12, 8), obstacles=None, start=None, goal=None, old=None, save_pygame_folder=None):
     """
     Initialize pygame, create a main display, create the 
     surfaces for tree and live states, draw obstacles, etc.
     The 'figsize' from old code is used to set the window size in 'inches',
     so we just multiply to get pixel dimensions. (12,8) -> (1200,800).
     """
-
-    # In case there are no dynamic obstacles in the scene:
-    if dynamic_obstacles.size == 0: dynamic_obstacles = None
     
     global _display_surf, _text_surf, _tree_surf, _live_surf, _sst_surf, _sst_active_surf
     global _screen_width, _screen_height
-    global _obstacles, _dynamic_obstacles, _old
+    global _obstacles, _old
     global save_pygame_folder_path
     
     # Set the offset and scale to fit the obstacles
-    # NOTE: not updated for dynamic obstacles (since static walls are more likely to affect scaling)
     global _offset_x, _offset_y, _scale
     margin = 60
     min_x = min(o[0] for o in obstacles)
@@ -128,7 +123,6 @@ def init_vis(figsize=(12, 8), obstacles=None, dynamic_obstacles = None, start=No
 
     # Optionally draw obstacles on the tree surface immediately (so they are behind everything)
     _draw_obstacles()
-    _draw_dynamic_obstacles(dynamic_obstacles)
     
     save_pygame_folder_path = save_pygame_folder
 
@@ -147,9 +141,7 @@ def clear_all_surfaces():
     _sst_surf.fill((0, 0, 0, 0))
     _sst_active_surf.fill((0, 0, 0, 0))
     _display_surf.fill((255, 250, 240)) 
-    _draw_obstacles()
-
-    _draw_dynamic_obstacles()   
+    _draw_obstacles()   
 
 def _draw_obstacles():
     """
@@ -187,86 +179,11 @@ def _draw_obstacles():
             # Draw a black border around the obstacle
             pygame.draw.rect(_tree_surf, (0, 0, 0, 128), (left, top, width, height), 3)
     
-def _draw_dynamic_obstacles(new_dynamic_obstacles = None):
-    '''
-    Similar to draw_obstacles, but for dynamic obstacles,
-    whose position may be changed over time (thus requiring them to be re-drawn).
-    '''
-
-    # If None, just redraw all stored unique positions
-    if new_dynamic_obstacles is None:
-        
-        for obs in _dynamic_obstacles:
-            x1, y1, x2, y2 = obs
-            
-            # Convert to screen coordinates
-            left, top = _to_screen(x1, y1)
-            width = int((x2 - x1) * _scale)
-            height = int((y2 - y1) * _scale)
-            
-            # Draw a blue rectangle for the obstacle
-            pygame.draw.rect(_tree_surf, (173, 216, 230), (left, top, width, height))
-            
-            # Draw a black border around the obstacle
-            pygame.draw.rect(_tree_surf, (0,0,0), (left, top, width, height), 4)
-
-    # For initial drawing:
-    if new_dynamic_obstacles is not None and new_dynamic_obstacles.ndim == 2:
-
-        for obs in new_dynamic_obstacles:
-
-            if tuple(obs) in _dynamic_obstacles:
-                # Prevents unneccessary redrawing
-                continue
-
-            _dynamic_obstacles.add(tuple(obs))
-            x1, y1, x2, y2 = obs
-            
-            # Convert to screen coordinates
-            left, top = _to_screen(x1, y1)
-            width = int((x2 - x1) * _scale)
-            height = int((y2 - y1) * _scale)
-            
-            # Draw a blue rectangle for the obstacle
-            pygame.draw.rect(_tree_surf, (173, 216, 230), (left, top, width, height))
-            
-            # Draw a black border around the obstacle
-            pygame.draw.rect(_tree_surf, (0,0,0), (left, top, width, height), 4)
-
-    # For drawing with shape is (batches * timestamps, num_objs, coords)
-    # (Do we draw everything? Or draw things as their updated through time?)
-    if new_dynamic_obstacles is not None and new_dynamic_obstacles.ndim == 3:
-
-        for i in range(new_dynamic_obstacles.shape[0]):
-            
-            for obs in new_dynamic_obstacles[i]:
-
-                if tuple(obs) in _dynamic_obstacles:
-                    # Prevents unneccessary redrawing
-                    continue
-
-                _dynamic_obstacles.add(tuple(obs))
-                x1, y1, x2, y2 = obs
-                
-                # Convert to screen coordinates
-                left, top = _to_screen(x1, y1)
-                width = int((x2 - x1) * _scale)
-                height = int((y2 - y1) * _scale)
-                
-                # Draw a blue rectangle for the obstacle
-                pygame.draw.rect(_tree_surf, (173, 216, 230), (left, top, width, height))
-                
-                # Draw a black border around the obstacle
-                pygame.draw.rect(_tree_surf, (0,0,0), (left, top, width, height), 4)
-                
-
-
-
 def _compute_vine_points(params, cspace, bodies, x0, y0, heading0):
     
     batch_size = cspace.shape[0]
     
-    assert cspace.ndim == 3
+    assert cspace.ndim == 2
     assert cspace.shape[1] == params.max_bodies + 1
     assert bodies.shape == (batch_size,)
     
@@ -276,8 +193,8 @@ def _compute_vine_points(params, cspace, bodies, x0, y0, heading0):
     bodies = np.asarray(bodies, dtype=np.int32)
     cspace = np.asarray(cspace, dtype=np.float32)
         
-    angles = cspace[:, :-1, -1]
-    last_len = cspace[:, params.max_bodies, -1]
+    angles = cspace[:, :-1]
+    last_len = cspace[:, params.max_bodies]
     n_bodies = bodies
 
     global_angle_full = heading0 + np.cumsum(angles, axis=1)
@@ -347,12 +264,9 @@ def _draw_vine(surface, params, points, circle_col=None, alpha=255, draw_circles
                 pygame.draw.circle(surface, this_circle_col_dark, (cx[i, j], cy[i, j]), circle_radius, 3)
                 
                 
-def draw_dead_state(params, state, dynamic_positions, bodies, x0, y0, heading0):
+def draw_dead_state(params, state, bodies, x0, y0, heading0):
     points = _compute_vine_points(params, state, bodies, x0, y0, heading0)
     _draw_vine(_tree_surf, params, points, alpha=120)
-    _draw_dynamic_obstacles(dynamic_positions)
-
-    
 
 def draw_live_state(params, cspace, bodies, x0, y0, heading0, draw_circles=False, actuator_colors=None):
     """

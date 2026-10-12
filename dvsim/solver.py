@@ -36,9 +36,11 @@ cvxpylayer = None   # built once per process on the first init_layers() for a gi
 sqrtm_module = MatrixSquareRoot()
 
 
-def init_layers(sol_size, Q_size, p_size, G_size, h_size, A_size, b_size):
+def init_layers(sol_size, Q_size, p_size, G_size, h_size, A_size, b_size, n_obj=0, obj_start=0):
     """Set up the differentiable cvxpylayer for the QP (inputs are unbatched sizes).
-    No-op if already built -- reset the module global `cvxpylayer` to None to rebuild."""
+    No-op if already built -- reset the module global `cvxpylayer` to None to rebuild.
+    With n_obj > 0 the objective also has one Coulomb friction term per movable object (see
+    dynamic_vine.object_friction_weights); the objects are the 3 * n_obj variables from obj_start."""
     global cvxpylayer
     if cvxpylayer is not None:
         return
@@ -51,11 +53,22 @@ def init_layers(sol_size, Q_size, p_size, G_size, h_size, A_size, b_size):
     A = cp.Parameter(A_size)
     b = cp.Parameter(b_size)
 
-    objective = cp.Minimize(0.5 * cp.sum_squares(Q_sqrt @ next_dstate) + p @ next_dstate)
+    cost = 0.5 * cp.sum_squares(Q_sqrt @ next_dstate) + p @ next_dstate
+    parameters = [Q_sqrt, p, G, h, A, b]
+    if n_obj > 0:
+        # ground friction on each object: weight * || (vx, vy, c * vtheta) ||, the weights (and the
+        # c factor) come in as the rows of `fric`. The norm's kink at zero velocity is what makes
+        # an object stay put until it is pushed harder than friction can resist.
+        fric = cp.Parameter((n_obj, 3), nonneg=True)
+        for k in range(n_obj):
+            cost = cost + cp.norm(cp.multiply(fric[k], next_dstate[obj_start + 3 * k: obj_start + 3 * k + 3]))
+        parameters.append(fric)
+
+    objective = cp.Minimize(cost)
     constraints = [A @ next_dstate == b, G @ next_dstate <= h]
     problem = cp.Problem(objective, constraints)
 
-    cvxpylayer = CvxpyLayer(problem, parameters=[Q_sqrt, p, G, h, A, b],
+    cvxpylayer = CvxpyLayer(problem, parameters=parameters,
                             variables=[next_dstate], solver=BACKEND)
     # GPU: also `.to("cuda")` the layer here once BACKEND is a GPU backend.
 
@@ -112,14 +125,20 @@ def _solve_qpth(Q, p, G, h, A, b):
     return z.to("cpu", torch.float32)
 
 
-def solve_layers(Q, p, G, h, A, b):
+def solve_layers(Q, p, G, h, A, b, fric=None):
     """Batched QP solve. Returns the primal solution (batch, N) as float32. Uses cvxpylayers (CPU,
-    default) or the robust GPU qpth dense-KKT path when USE_QPTH is set."""
+    default) or the robust GPU qpth dense-KKT path when USE_QPTH is set.
+    fric: (n_obj, 3) object friction weights, required when the layer was built with n_obj > 0."""
+    has_friction = fric is not None and fric.numel() > 0
     if USE_QPTH:
+        if has_friction and bool((fric > 0).any()):
+            raise NotImplementedError("object friction is a norm term, which the qpth (pure QP) path "
+                                      "cannot solve: set params.obj_friction = 0 or USE_QPTH = False")
         return _solve_qpth(Q, p, G, h, A, b)
     batch_size = p.shape[0]
     Q_batched = sqrtm_module.apply(Q).unsqueeze(0).expand(batch_size, -1, -1)
+    extra = [fric.unsqueeze(0).expand(batch_size, -1, -1)] if has_friction else []
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="Solved/Inaccurate.")
-        solution = cvxpylayer(Q_batched, p, G, h, A, b, solver_args=_SOLVER_ARGS.get(BACKEND, {}))
+        solution = cvxpylayer(Q_batched, p, G, h, A, b, *extra, solver_args=_SOLVER_ARGS.get(BACKEND, {}))
     return solution[0].float()   # diffcp returns float64 under numpy2; keep float32
