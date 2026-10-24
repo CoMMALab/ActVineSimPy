@@ -1,0 +1,42 @@
+{
+ "name": "1a",
+ "category": "b2g_unretractable",
+ "description": "one block, straight push into a goal just past it",
+ "board_mm": [
+  1200.0,
+  900.0
+ ],
+ "walls": [],
+ "boxes": [
+  {
+   "center": [
+    565.3,
+    462.9
+   ],
+   "angle_deg": 37.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  }
+ ],
+ "start": {
+  "xy": [
+   150.0,
+   150.0
+  ],
+  "heading_deg": 37.0
+ },
+ "goal": {
+  "type": "box",
+  "box": 0,
+  "center": [
+   693.1,
+   559.2
+  ],
+  "radius": 60
+ },
+ "planner": {},
+ "notes": ""
+}

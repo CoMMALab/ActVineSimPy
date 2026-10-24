@@ -1,0 +1,44 @@
+{
+ "name": "1c",
+ "category": "b2g_unretractable",
+ "description": "precise block pose: a short push that also turns the block 20 deg",
+ "board_mm": [
+  1200.0,
+  900.0
+ ],
+ "walls": [],
+ "boxes": [
+  {
+   "center": [
+    565.3,
+    462.9
+   ],
+   "angle_deg": 37.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  }
+ ],
+ "start": {
+  "xy": [
+   150.0,
+   150.0
+  ],
+  "heading_deg": 37.0
+ },
+ "goal": {
+  "type": "box",
+  "box": 0,
+  "center": [
+   612.2,
+   517.1
+  ],
+  "radius": 20,
+  "angle_deg": 57.0,
+  "angle_tol_deg": 7
+ },
+ "planner": {},
+ "notes": "goal: center within 20 mm and heading within 7 deg (mod 90) of the goal pose"
+}

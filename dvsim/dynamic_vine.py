@@ -37,7 +37,7 @@ def create_M_obj(obj_mass, obj_hw, obj_hh):
     return torch.diag(per.reshape(-1))
 
 
-def object_friction_weights(params):
+def object_friction_weights(params, mu=None):
     """(n_obj, 3) weights of the per-object ground friction term in the QP objective:
 
         dt * mu * m * g * || (vx, vy, c * vtheta) ||        c = box_friction_radius
@@ -47,9 +47,12 @@ def object_friction_weights(params):
     (or a torque of mu*m*g*c, or a mix of the two). While the push on the object is below that,
     the cheapest velocity is exactly zero and the object does not move; above it, the object
     slides and friction keeps taking mu*m*g away. A heavier object therefore needs a
-    proportionally harder push, on top of being harder to accelerate."""
-    w = params.dt * params.obj_friction * params.obj_mass.abs() * params.gravity
-    return torch.stack([w, w, w * box_friction_radius(params.obj_hw, params.obj_hh)], dim=1)
+    proportionally harder push, on top of being harder to accelerate.
+    mu: (B, 1) friction coefficients, one per batch element, instead of params.obj_friction ->
+    (B, n_obj, 3) weights."""
+    mu = params.obj_friction if mu is None else mu
+    w = params.dt * mu * params.obj_mass.abs() * params.gravity
+    return torch.stack([w, w, w * box_friction_radius(params.obj_hw, params.obj_hh)], dim=-1)
 
 
 # ------------------------------------------------------------------ measures
@@ -114,7 +117,7 @@ def dynamic_forward_part(params, init_heading, init_x, init_y, state, dstate, bo
 
 # ------------------------------------------------------------------ solve
 def dynamic_solve(params, bodies, dstate, obj_dstate, forces, growth, sdf_now, dev_now, L, J, gws, gwd,
-                  prox_now, prox_J_state, prox_J_pose, ow_now, ow_J, oo_now, oo_J):
+                  prox_now, prox_J_state, prox_J_pose, ow_now, ow_J, oo_now, oo_J, obj_mu=None):
     B = forces.shape[0]
     dt = params.dt
     mb = params.max_bodies
@@ -193,7 +196,7 @@ def dynamic_solve(params, bodies, dstate, obj_dstate, forces, growth, sdf_now, d
 
     init_layers(M.shape[0], M.shape, p.shape[1:], G.shape[1:], h.shape[1:], A.shape[1:], b.shape[1:],
                 n_obj=n_obj, obj_start=Nv)
-    sol = solve_layers(M, p, G, h, A, b, fric=object_friction_weights(params) if n_obj > 0 else None)
+    sol = solve_layers(M, p, G, h, A, b, fric=object_friction_weights(params, obj_mu) if n_obj > 0 else None)
     return sol[:, :N]
 
 
@@ -207,7 +210,8 @@ def step(params, init_heading, init_x, init_y, state, dstate, bodies, obj_pose=N
     `ok` (B,) bool tensor when return_ok is set (False = that element's QP failed and it was frozen).
     The inputs are NOT modified (growth promotion happens on a private copy).
     per_batch: optional {VineParams attribute name: (B, ...) tensor} of parameters that differ
-    between batch elements (e.g. bend_target, spam_moment); everything else in params is shared."""
+    between batch elements (e.g. bend_target, spam_moment, obj_friction); everything else in params
+    is shared."""
     B = state.shape[0]
     # extend() promotes the tip body in place; without the copy that rewrites the caller's tensors
     # while their `bodies` count stays stale (corrupts any state kept around, e.g. planner tree nodes).
@@ -234,9 +238,11 @@ def step(params, init_heading, init_x, init_y, state, dstate, bodies, obj_pose=N
     ow_now, ow_J, oo_now, oo_J = torch.func.vmap(partial(object_env_constraints, params))(obj_pose)
     qp_inputs = (bodies, dstate, obj_dstate, forces, growth, sdf_now, dev_now,
                  L, J, gws, gwd, prox_now, pjs, pjp, ow_now, ow_J, oo_now, oo_J)
+    # the box friction enters the QP's objective, outside the per-element part above
+    mu = per_batch["obj_friction"].reshape(B, 1) if per_batch and "obj_friction" in per_batch else None
     ok = torch.ones(B, dtype=torch.bool)
     try:
-        sol = dynamic_solve(params, *qp_inputs)
+        sol = dynamic_solve(params, *qp_inputs, obj_mu=mu)
     except Exception:
         # QP infeasible (vine fully blocked, hard growth equality unmeetable): freeze this step
         # rather than crash, so a planner rollout survives. (A softer growth model would buckle.)
@@ -246,7 +252,8 @@ def step(params, init_heading, init_x, init_y, state, dstate, bodies, obj_pose=N
         if B > 1:
             for i in range(B):
                 try:
-                    sol[i] = dynamic_solve(params, *[t[i:i + 1] for t in qp_inputs])[0]
+                    sol[i] = dynamic_solve(params, *[t[i:i + 1] for t in qp_inputs],
+                                           obj_mu=None if mu is None else mu[i:i + 1])[0]
                     ok[i] = True
                 except Exception:
                     pass

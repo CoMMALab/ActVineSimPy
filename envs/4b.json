@@ -1,0 +1,64 @@
+{
+ "name": "4b",
+ "category": "vine_to_goal",
+ "description": "basic push: a block plugs the only gap in a dividing wall",
+ "board_mm": [
+  1200.0,
+  900.0
+ ],
+ "walls": [
+  {
+   "from": [
+    472,
+    0
+   ],
+   "to": [
+    472,
+    430
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    472,
+    573
+   ],
+   "to": [
+    472,
+    900
+   ],
+   "thickness": 20.0
+  }
+ ],
+ "boxes": [
+  {
+   "center": [
+    472,
+    501
+   ],
+   "angle_deg": 0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  }
+ ],
+ "start": {
+  "xy": [
+   153.0,
+   143.0
+  ],
+  "heading_deg": 60.0
+ },
+ "goal": {
+  "type": "tip",
+  "center": [
+   983,
+   562
+  ],
+  "radius": 80
+ },
+ "planner": {},
+ "notes": "gap 143 mm; the block leaves 22 mm on each side, too little for the vine"
+}

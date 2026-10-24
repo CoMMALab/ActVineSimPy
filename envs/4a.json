@@ -1,0 +1,54 @@
+{
+ "name": "4a",
+ "category": "vine_to_goal",
+ "description": "no blocks: S-shaped path around two interleaved walls",
+ "board_mm": [
+  1200.0,
+  900.0
+ ],
+ "walls": [
+  {
+   "from": [
+    453,
+    0
+   ],
+   "to": [
+    453,
+    503
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    760,
+    304
+   ],
+   "to": [
+    760,
+    900
+   ],
+   "thickness": 20.0
+  }
+ ],
+ "boxes": [],
+ "start": {
+  "xy": [
+   280.0,
+   159.0
+  ],
+  "heading_deg": 90.0
+ },
+ "goal": {
+  "type": "tip",
+  "center": [
+   973,
+   741
+  ],
+  "radius": 93
+ },
+ "planner": {
+  "max_curvature": 7.0,
+  "max_bodies": 90
+ },
+ "notes": ""
+}

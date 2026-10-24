@@ -128,7 +128,8 @@ def _solve_qpth(Q, p, G, h, A, b):
 def solve_layers(Q, p, G, h, A, b, fric=None):
     """Batched QP solve. Returns the primal solution (batch, N) as float32. Uses cvxpylayers (CPU,
     default) or the robust GPU qpth dense-KKT path when USE_QPTH is set.
-    fric: (n_obj, 3) object friction weights, required when the layer was built with n_obj > 0."""
+    fric: (n_obj, 3) object friction weights, or (batch, n_obj, 3) for one set per element; required
+    when the layer was built with n_obj > 0."""
     has_friction = fric is not None and fric.numel() > 0
     if USE_QPTH:
         if has_friction and bool((fric > 0).any()):
@@ -137,7 +138,9 @@ def solve_layers(Q, p, G, h, A, b, fric=None):
         return _solve_qpth(Q, p, G, h, A, b)
     batch_size = p.shape[0]
     Q_batched = sqrtm_module.apply(Q).unsqueeze(0).expand(batch_size, -1, -1)
-    extra = [fric.unsqueeze(0).expand(batch_size, -1, -1)] if has_friction else []
+    if has_friction and fric.dim() == 2:
+        fric = fric.unsqueeze(0).expand(batch_size, -1, -1)
+    extra = [fric] if has_friction else []
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="Solved/Inaccurate.")
         solution = cvxpylayer(Q_batched, p, G, h, A, b, *extra, solver_args=_SOLVER_ARGS.get(BACKEND, {}))

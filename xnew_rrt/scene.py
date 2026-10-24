@@ -6,7 +6,7 @@ Units at this level: scene geometry in METERS, headings in RADIANS, curvature in
 States coming out of the sim are in dvsim's internal units (mm, rad) -- see rrt_util.StateInfo.
 '''
 
-import os, sys
+import math, os, sys
 from dataclasses import dataclass, asdict
 
 import torch
@@ -27,7 +27,7 @@ B = 1  # everything here is unbatched
 
 @dataclass
 class Scene:
-    walls_m: list                       # static boxes [x1, y1, x2, y2]
+    walls_m: list                       # static boxes [x1, y1, x2, y2], or oriented [cx, cy, theta_rad, hw, hh]
     objects_m: list                     # movable boxes [x1, y1, x2, y2]
     masses_kg: list                     # one per movable box
     start: tuple                        # (x_m, y_m, heading_rad) of the vine base
@@ -36,11 +36,14 @@ class Scene:
     bounds_m: tuple = None              # (xmin, xmax, ymin, ymax); derived from the walls if None
     box_goal_m: tuple = None            # optional (x_m, y_m, radius_m): where movable box 0 should end up
     name: str = "scene"
+    objects_theta: list = None          # optional initial heading [rad] per movable box (default 0)
+    box_goal_theta: tuple = None        # optional (theta_rad, tol_rad): box 0's goal orientation too
 
     def __post_init__(self):
         if self.bounds_m is None:
-            xs = [w[0] for w in self.walls_m] + [w[2] for w in self.walls_m]
-            ys = [w[1] for w in self.walls_m] + [w[3] for w in self.walls_m]
+            aabb = [w for w in self.walls_m if len(w) == 4]
+            xs = [w[0] for w in aabb] + [w[2] for w in aabb]
+            ys = [w[1] for w in aabb] + [w[3] for w in aabb]
             self.bounds_m = (min(xs), max(xs), min(ys), max(ys))
 
 
@@ -92,6 +95,8 @@ class SimConfig:
     seg_mass_kg: float = 0.005
     joint_stiffness: float = 0.2
     ang_damp: float = 1.24e-4
+    seg_inertia_kgm2: float = 1.0e-5
+    obj_friction: float = 0.5           # box-table Coulomb friction coefficient
 
 
 class Sim:
@@ -115,13 +120,17 @@ class Sim:
                                         grow_rate_mps=self.cfg.grow_rate_mps,
                                         radius_m=self.cfg.vine_radius_m, seg_len_m=self.cfg.seg_len_m,
                                         grow_force_n=self.cfg.grow_force_n,
-                                        seg_mass_kg=self.cfg.seg_mass_kg, ang_damp=self.cfg.ang_damp)
+                                        seg_mass_kg=self.cfg.seg_mass_kg, ang_damp=self.cfg.ang_damp,
+                                        seg_inertia_kgm2=self.cfg.seg_inertia_kgm2)
+        self.params.obj_friction = self.cfg.obj_friction
         self.params.stiffness_mode = self.cfg.stiffness_mode
         self.params.stiffness_val = torch.tensor(self.cfg.joint_stiffness, dtype=torch.float32)
 
         self.num_objs = len(scene.objects_m)
         if self.num_objs > 0:
             self._obj_pose0 = si.set_objects_si(self.params, scene.objects_m, scene.masses_kg)
+            if scene.objects_theta is not None:
+                self._obj_pose0[0, :, 2] = torch.tensor([float(t) for t in scene.objects_theta])
         else:
             self._obj_pose0 = torch.zeros(B, 0, 3)
 
@@ -265,13 +274,30 @@ class Sim:
         return ((x - gx) ** 2 + (y - gy) ** 2) ** 0.5 < self.scene.goal_radius_m + self.cfg.vine_radius_m
 
     def box_goal_distance_m(self, state: StateInfo):
-        '''Distance from the center of movable box 0 to the center of its goal.'''
+        '''
+        Distance from the center of movable box 0 to the center of its goal. With a goal
+        orientation, plus how far its corners are turned from it (half-diagonal x angle error).
+        '''
         gx, gy, _ = self.scene.box_goal_m
         x, y = [si.len_to_si(float(v)) for v in state.moveable_obj_pose[0, 0, :2]]
-        return ((x - gx) ** 2 + (y - gy) ** 2) ** 0.5
+        d = ((x - gx) ** 2 + (y - gy) ** 2) ** 0.5
+        if self.scene.box_goal_theta is not None:
+            half_diag = si.len_to_si(float((self.params.obj_hw[0] ** 2 + self.params.obj_hh[0] ** 2) ** 0.5))
+            d += half_diag * self.box_angle_error(state)
+        return d
+
+    def box_angle_error(self, state: StateInfo):
+        '''|box 0's heading - its goal heading| [rad], modulo the box's symmetry (90 deg if square).'''
+        sym = math.pi / 2 if abs(float(self.params.obj_hw[0] - self.params.obj_hh[0])) < 1e-6 else math.pi
+        e = (float(state.moveable_obj_pose[0, 0, 2]) - self.scene.box_goal_theta[0]) % sym
+        return min(e, sym - e)
 
     def box_reached_goal(self, state: StateInfo):
-        return self.box_goal_distance_m(state) < self.scene.box_goal_m[2]
+        gx, gy, r = self.scene.box_goal_m
+        x, y = [si.len_to_si(float(v)) for v in state.moveable_obj_pose[0, 0, :2]]
+        if ((x - gx) ** 2 + (y - gy) ** 2) ** 0.5 >= r:
+            return False
+        return self.scene.box_goal_theta is None or self.box_angle_error(state) <= self.scene.box_goal_theta[1]
 
     def goal_distance_m(self, state: StateInfo):
         x, y = self.tip_m(state)

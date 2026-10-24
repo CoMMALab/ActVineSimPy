@@ -1,0 +1,111 @@
+{
+ "name": "2b",
+ "category": "b2g_unretractable",
+ "description": "one block inside a channel; one push drives it into the curved back wall, which guides it up and left along the top wall to the goal",
+ "board_mm": [
+  1200.0,
+  900.0
+ ],
+ "walls": [
+  {
+   "from": [
+    230,
+    720
+   ],
+   "to": [
+    820,
+    720
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    1010,
+    150
+   ],
+   "to": [
+    990,
+    420
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    990,
+    420
+   ],
+   "to": [
+    950,
+    590
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    950,
+    590
+   ],
+   "to": [
+    890,
+    680
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    890,
+    680
+   ],
+   "to": [
+    820,
+    720
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    520,
+    130
+   ],
+   "to": [
+    760,
+    520
+   ],
+   "thickness": 20.0
+  }
+ ],
+ "boxes": [
+  {
+   "center": [
+    760,
+    300
+   ],
+   "angle_deg": 0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  }
+ ],
+ "start": {
+  "xy": [
+   200.0,
+   80.0
+  ],
+  "heading_deg": 0.0
+ },
+ "goal": {
+  "type": "box",
+  "box": 0,
+  "center": [
+   300.0,
+   640.0
+  ],
+  "radius": 80
+ },
+ "planner": {
+  "max_bodies": 70
+ },
+ "notes": "corrected 2026-10-20: one block, inside the channel (right of the diagonal wall); the back wall is a chain of segments so the block slides around the bend instead of jamming"
+}

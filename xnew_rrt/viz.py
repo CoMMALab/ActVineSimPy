@@ -63,10 +63,11 @@ def draw_scene(ax, sim, objects_state=None):
                              edgecolor=WALL_EDGE, lw=1, zorder=1))
 
     gx, gy = scene.goal_m[0] * 1000, scene.goal_m[1] * 1000
-    ax.add_patch(Circle((gx, gy), scene.goal_radius_m * 1000, facecolor=GOAL, alpha=0.15, zorder=2))
-    ax.add_patch(Circle((gx, gy), scene.goal_radius_m * 1000, fill=False, edgecolor=GOAL, lw=2,
-                        ls="--", zorder=2))
-    ax.annotate("goal", (gx, gy), ha="center", va="center", color=INK_2, fontsize=9, zorder=2)
+    if scene.goal_radius_m > 0:      # a scene with only a box goal has no tip goal
+        ax.add_patch(Circle((gx, gy), scene.goal_radius_m * 1000, facecolor=GOAL, alpha=0.15, zorder=2))
+        ax.add_patch(Circle((gx, gy), scene.goal_radius_m * 1000, fill=False, edgecolor=GOAL, lw=2,
+                            ls="--", zorder=2))
+        ax.annotate("goal", (gx, gy), ha="center", va="center", color=INK_2, fontsize=9, zorder=2)
 
     sx, sy = scene.start[0] * 1000, scene.start[1] * 1000
     ax.plot([sx], [sy], marker="^", ms=9, color=INK, zorder=9, ls="none")

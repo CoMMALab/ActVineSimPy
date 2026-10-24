@@ -144,8 +144,9 @@ def draw_stage(ax, log, it_lo, it_hi, box_spread_mm=BOX_SPREAD_MM, legend=True, 
     ax.plot([sx], [sy], marker="^", ms=8, color=viz.INK, zorder=9, ls="none")
 
     # tree edges: earlier stages grey, this stage blue
-    old = [n for n in nodes if n["parent"] is not None and n["iter"] <= it_lo]
-    new = [n for n in nodes if n["parent"] is not None and n["iter"] > it_lo]
+    # (a reset edge, reset_action_rrt.py, has no tip path: the vine starts over at the base)
+    old = [n for n in nodes if n["parent"] is not None and n["iter"] <= it_lo and len(n["tip_trace"])]
+    new = [n for n in nodes if n["parent"] is not None and n["iter"] > it_lo and len(n["tip_trace"])]
     if old:
         ax.add_collection(LineCollection([n["tip_trace"] for n in old], colors=OLD_EDGE, linewidths=0.8, zorder=5))
     if new:
@@ -175,9 +176,13 @@ def draw_stage(ax, log, it_lo, it_hi, box_spread_mm=BOX_SPREAD_MM, legend=True, 
     while n is not None:
         branch.append(n)
         n = by_id[n["parent"]] if n["parent"] is not None else None
-    trace = np.concatenate([n["tip_trace"] for n in reversed(branch) if len(n["tip_trace"])] or [np.zeros((0, 2))])
-    if len(trace):
-        ax.plot(trace[:, 0], trace[:, 1], "-", color=viz.BEST, lw=2.2, zorder=8)
+    segments = [n["tip_trace"] for n in reversed(branch) if len(n["tip_trace"]) > 1]
+    if segments:
+        ax.add_collection(LineCollection(segments, colors=viz.BEST, linewidths=2.2, zorder=8))
+    resets = [n for n in nodes if n.get("reset")]
+    if resets:      # where the boxes were when the vine was reset
+        c = np.concatenate([n["box_centers"] for n in resets])
+        ax.scatter(c[:, 0], c[:, 1], s=28, marker="x", color=viz.INK, linewidths=1.2, zorder=9)
     vine = best["vine"]
     ax.plot(vine[:, 0], vine[:, 1], "-", color=viz.BEST, lw=1, alpha=0.5, zorder=7)
     ax.add_collection(PolyCollection([_circle(x, y, scene["vine_radius_mm"]) for x, y in vine[1:]],
@@ -190,6 +195,8 @@ def draw_stage(ax, log, it_lo, it_hi, box_spread_mm=BOX_SPREAD_MM, legend=True, 
         its = f"iteration {it_hi}" if it_hi == it_lo + 1 else f"iterations {it_lo + 1}-{it_hi}"
         title = (f"{its}  |  {len(nodes)} nodes (+{len(new)})  |  "
                  f"closest {what} to goal: {best['goal_dist_mm']:.0f} mm")
+        if resets:
+            title += f"  |  {len(resets)} resets (x: boxes when reset)"
     ax.set_title(title, color=viz.INK, fontsize=9, loc="left")
 
     if legend:
@@ -219,29 +226,14 @@ def stage_bounds(num_iters, num_stages):
     return list(zip(ends[:-1], ends[1:]))
 
 
-def render_stages(log, out_dir, num_stages=8, box_spread_mm=BOX_SPREAD_MM, frame_ms=900):
-    '''Writes tree_stages.png (grid), tree_stages.gif and tree_stages.html (one frame per stage).'''
+def render_stages(log, out_dir, num_stages=8, box_spread_mm=BOX_SPREAD_MM, frame_ms=900, grid=True):
+    '''Writes tree_stages.png (grid, unless not grid), tree_stages.gif and tree_stages.html (one
+    frame per stage).'''
     log = log_dict(log)
     stages = stage_bounds(len(log["iter_end"]), num_stages)
     xmin, xmax, ymin, ymax = log["scene"]["bounds_mm"]
     aspect = (ymax - ymin) / (xmax - xmin)
-
-    # all stages side by side
-    ncols = min(len(stages), 3 if len(stages) in (3, 5, 6, 9) else 4)
-    nrows = math.ceil(len(stages) / ncols)
-    panel_w = 5.0
-    fig, axes = plt.subplots(nrows, ncols, figsize=(panel_w * ncols, panel_w * aspect * nrows + 1.2),
-                             facecolor=viz.SURFACE, layout="constrained", squeeze=False)
-    for ax, (lo, hi) in zip(axes.flat, stages):
-        draw_stage(ax, log, lo, hi, box_spread_mm, legend=False)
-        ax.title.set_fontsize(8)
-    for ax in list(axes.flat)[len(stages):]:
-        ax.axis("off")
-    fig.legend(handles=legend_handles(), loc="outside lower center", ncol=4, frameon=False, fontsize=8,
-               labelcolor=viz.INK_2)
-    fig.suptitle(f"{log['scene']['name']}: tree expansion in {len(stages)} stages", color=viz.INK, fontsize=11)
-    grid_path = os.path.join(out_dir, "tree_stages.png")
-    viz.save_figure(fig, grid_path, dpi=90)
+    grid_path = _render_grid(log, stages, out_dir, box_spread_mm, aspect) if grid else None
 
     # one frame per stage
     frame_dir = os.path.join(out_dir, "_stage_frames")
@@ -259,6 +251,26 @@ def render_stages(log, out_dir, num_stages=8, box_spread_mm=BOX_SPREAD_MM, frame
     viz.write_html_player(frames, os.path.join(out_dir, "tree_stages.html"), title="tree stages", frame_ms=frame_ms)
     shutil.copyfile(frames[-1], os.path.join(out_dir, "tree_final.png"))
     shutil.rmtree(frame_dir)
+    return grid_path
+
+
+def _render_grid(log, stages, out_dir, box_spread_mm, aspect):
+    '''All stages side by side: tree_stages.png.'''
+    ncols = min(len(stages), 3 if len(stages) in (3, 5, 6, 9) else 4)
+    nrows = math.ceil(len(stages) / ncols)
+    panel_w = 5.0
+    fig, axes = plt.subplots(nrows, ncols, figsize=(panel_w * ncols, panel_w * aspect * nrows + 1.2),
+                             facecolor=viz.SURFACE, layout="constrained", squeeze=False)
+    for ax, (lo, hi) in zip(axes.flat, stages):
+        draw_stage(ax, log, lo, hi, box_spread_mm, legend=False)
+        ax.title.set_fontsize(8)
+    for ax in list(axes.flat)[len(stages):]:
+        ax.axis("off")
+    fig.legend(handles=legend_handles(), loc="outside lower center", ncol=4, frameon=False, fontsize=8,
+               labelcolor=viz.INK_2)
+    fig.suptitle(f"{log['scene']['name']}: tree expansion in {len(stages)} stages", color=viz.INK, fontsize=11)
+    grid_path = os.path.join(out_dir, "tree_stages.png")
+    viz.save_figure(fig, grid_path, dpi=90)
     return grid_path
 
 

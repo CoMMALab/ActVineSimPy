@@ -1,0 +1,187 @@
+{
+ "name": "4d",
+ "category": "vine_to_goal",
+ "description": "clutter: two staggered columns of blocks wall off the goal",
+ "board_mm": [
+  1200.0,
+  900.0
+ ],
+ "walls": [],
+ "boxes": [
+  {
+   "center": [
+    470.0,
+    64.3
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  },
+  {
+   "center": [
+    470.0,
+    192.9
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  },
+  {
+   "center": [
+    470.0,
+    321.5
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  },
+  {
+   "center": [
+    470.0,
+    450.1
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  },
+  {
+   "center": [
+    470.0,
+    578.7
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  },
+  {
+   "center": [
+    470.0,
+    707.3
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  },
+  {
+   "center": [
+    470.0,
+    835.9
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  },
+  {
+   "center": [
+    575.0,
+    128.6
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  },
+  {
+   "center": [
+    575.0,
+    257.2
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  },
+  {
+   "center": [
+    575.0,
+    385.8
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  },
+  {
+   "center": [
+    575.0,
+    514.4
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  },
+  {
+   "center": [
+    575.0,
+    643.0
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  },
+  {
+   "center": [
+    575.0,
+    771.6
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  }
+ ],
+ "start": {
+  "xy": [
+   150.0,
+   150.0
+  ],
+  "heading_deg": 30.0
+ },
+ "goal": {
+  "type": "tip",
+  "center": [
+   1000,
+   760
+  ],
+  "radius": 90
+ },
+ "planner": {
+  "max_bodies": 60
+ },
+ "notes": "13 blocks; gaps between them (31 mm) and to the board's edges (15 mm) are narrower than the vine"
+}

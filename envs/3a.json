@@ -1,0 +1,42 @@
+{
+ "name": "3a",
+ "category": "b2g_retractable",
+ "description": "open board, the goal far from the block: several pushes",
+ "board_mm": [
+  1200.0,
+  900.0
+ ],
+ "walls": [],
+ "boxes": [
+  {
+   "center": [
+    520,
+    400
+   ],
+   "angle_deg": 20,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  }
+ ],
+ "start": {
+  "xy": [
+   150.0,
+   120.0
+  ],
+  "heading_deg": 40.0
+ },
+ "goal": {
+  "type": "box",
+  "box": 0,
+  "center": [
+   980,
+   760
+  ],
+  "radius": 80
+ },
+ "planner": {},
+ "notes": ""
+}

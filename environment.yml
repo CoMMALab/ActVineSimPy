@@ -45,6 +45,9 @@ dependencies:
       # master's planners and their display
       - ompl
       - pygame
+      # video/: vine and box tracking from overhead videos
+      - opencv-python-headless
+      - scikit-image
 variables:
   XLA_PYTHON_CLIENT_PREALLOCATE: "false"
   XLA_PYTHON_CLIENT_MEM_FRACTION: "0.2"

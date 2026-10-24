@@ -36,8 +36,9 @@ the live code for the pushing work.
 |---|---|---|
 | `dvsim/` | **live** | Torch impulse/QP simulator with movable boxes. See below. |
 | `xnew_rrt/` | **live** | RRT over `dvsim`, tree visualizer, single-rollout viewer. |
+| `video/` | **live** | Vine centerlines and box poses from top-down videos, for system identification. See [Video tracking](#video-tracking). |
 | `sPAM/` | used | sPAM actuator model. `torch_*.py` are the Torch ports (`torch_nns.py` = neural surrogate, `torch_nns_usage.py` = bend radius -> pressure / actuator length). The non-`torch_` files are the JAX originals and need `jax`. |
-| `envs/` | used | Environment files (mm). `dynamic_obstacles:` lines are movable boxes: `x1 y1 x2 y2 mass_kg inertia`. `envs/vis/` has a picture of each one (`python xnew_rrt/draw_envs.py`). |
+| `envs/` | **live** | The sim environments, `envs/<name>.json` (written by `envs/make_envs.py`), pictures in `envs/vis/`. See [Environments](#environments). The old `envs/*.txt` files are in `envs/archive/`; master's scripts that default to them (`kinodynamic/`, `experiments/`, `geometric/`) need `--env envs/archive/...`. |
 | `pbd_vine.py`, `render.py`, `kinodynamic/`, `geometric/`, `experiments/` | from master | ActVine PBD simulator, pygame renderer, SST planner, biarc RRT*, paper experiments. Identical to `master` on this branch, except `kinodynamic/env_loader.py`, which also parses `dynamic_obstacles:`. Needs `jax`, which the current `vine` env does not have. |
 | `cache/`, `pics/`, `solution.png`, `title.gif`, `x_progress_log.txt` | leftovers | Outputs and notes from earlier runs. |
 
@@ -99,9 +100,14 @@ between batch elements.
 | `sim_rrt.py` | The RRT, over the tip position. |
 | `tip_block_rrt.py` | The same RRT over (tip position, box positions), with a goal for a box (or `--tip-goal`). |
 | `batch_tip_block_rrt.py` | That planner with a batch of edges simulated together per iteration. |
+| `reset_action_rrt.py` | Several pushes in one tree: a vine reset is an action, unlocked once the boxes have moved far enough from every earlier reset. Used by `run_envs.py`. |
+| `reset_rrt.py` | Older: several pushes as a greedy chain of batched-RRT episodes, one tree per push. |
+| `run_envs.py` | Load, draw and plan on the environments in `envs/*.json`. |
+| `bench_batch.py` | Times one batched dvsim step against batch size (and master's PBD sim on the GPU, `--pbd`). |
+| `hierarchical_planner.py` | High-level block-pushing puzzle on a grid of box-sized cells: which pushes, from where, in what order. |
 | `pose_search.py` | Launch-pose search for a passive vine pushing a box (for the live demo). |
 | `rollout.py` | Simulate one rollout from a list of controls (or replay an RRT plan) and render it. |
-| `draw_envs.py` | Draw every `envs/*.txt` into `envs/vis/`. |
+| `draw_envs.py` | Draw the old `envs/archive/*.txt` files (`run_envs.py --draw-only` draws the new ones). |
 | `sweep_vine_params.py` | Sweep vine inertia, mass, stiffness and damping; score curvature tracking. |
 | `master_reference.py` | Run `master`'s PBD vine (jax) on a set of scenarios and save the shapes to `data/master_ref.npz`. |
 | `fit_to_master.py` | Fit dvsim's joint stiffness and damping to those shapes. |
@@ -116,6 +122,80 @@ during that edge; bodies that already exist keep theirs, the way a fabricated vi
 actuators. `sim_rrt.py` samples and measures distance on the tip position only;
 `tip_block_rrt.py` adds the box positions to both.
 
+## Environments
+
+The sim environments come from the sketches of 2026-10-20 and use the real dimensions in
+`real_measurements.md`: 98 mm, 0.503 kg boxes; a 24.26 mm vine radius; a 1200 x 900 mm board.
+There are three categories:
+
+| Category | Envs | Task |
+|---|---|---|
+| `b2g_unretractable` | 1a one block, 1b two blocks in a row, 1c precise block pose; 2a wall-guided, 2b channel | Block to goal with one vine: the goal is close, or a wall guides the block. |
+| `b2g_retractable` | 3a open board, 3b maze with vine-sized openings | Block to goal with several pushes, resetting the vine between them (`reset_action_rrt.py`). |
+| `vine_to_goal` | 4a S-maze, no blocks; 4b block plugging a gap; 4c zig-zag barrier, two 70 mm gaps, only the lower block can be pushed clear; 4d clutter of 13 blocks | Tip to a goal region, past movable blocks. |
+
+In 4c both gaps are narrower than a block (98 mm) and wider than the vine (48.5 mm). The upper
+block sits in the pocket that opens toward the start, so a push only jams it in its gap. The
+lower block sits in the pocket on the goal side, so the vine grows through the lower gap and
+pushes it away. In 2b one block sits inside the channel; one push drives it into the curved back
+wall, which guides it up and left along the top wall to the goal.
+
+The sketches' basic contact experiments (one block, two blocks, block and wall) will come from
+real data, not sim envs.
+
+```bash
+python envs/make_envs.py                              # write envs/*.json
+python xnew_rrt/run_envs.py --draw-only               # envs/vis/<name>.png
+python xnew_rrt/run_envs.py                           # plan on all; or list envs/<name>.json
+```
+
+`run_envs.py` writes, per env, under `out/envs/<name>/`:
+- `env.png`;
+- `tree.gif`, 40 frames spread over the run (`--tree-frames`, or `--tree-every` iterations);
+- `solution.gif` and `solution.mp4`, the solution or the closest attempt (the title says which);
+- `result.json`; and `out/envs/summary.json` over all envs.
+
+Every env runs `reset_action_rrt.plan`: the batched RRT over (tip, box positions), batch 32,
+until the goal or a time limit (45 min; 90 min for the retractable envs). Resets are on only for
+`b2g_retractable`. Override with `--iters` and `--time-limit` (minutes).
+
+The sim settings are in `run_envs.DEFAULT_SIM`:
+- the real vine radius;
+- 30 mm segments;
+- the stiffness and damping fitted to the brick videos, rescaled to 30 mm segments;
+- 1e-3 kg m^2 segment inertia;
+- box friction 0.08;
+- 20 N growth force;
+- 0.25 m/s growth.
+
+The JSON format:
+- walls are segments with a thickness (oriented boxes in the sim);
+- boxes have a center, an angle, a size and a mass;
+- the goal is a box goal (box 0, a disc, optionally an angle and tolerance) or a tip goal;
+- an optional `planner` block sets `max_bodies` and any key of `run_envs.DEFAULT_PLANNER`.
+
+Where a sketch left the geometry open, the env's `notes` say what was chosen.
+
+Results, 2026-10-23 (`out/envs/summary.json`, seed 0, 3 envs at a time on the shared 12-core
+machine). "Off" is the box-to-goal or tip-to-goal distance at the end; the goal radii are 60–90 mm.
+
+| Env | Result | Off (mm) | Pushes | Resets in tree | Nodes | Time (min) |
+|---|---|---|---|---|---|---|
+| 1a | solved | 59 | 1 | – | 257 | 1 |
+| 1b | solved | 58 | 1 | – | 225 | 1 |
+| 1c | solved (pose within 7 deg) | 21 | 1 | – | 7553 | 26 |
+| 2a | solved | 70 | 1 | – | 2817 | 8 |
+| 2b | failed: pins the block against the diagonal wall, never pushes it into the back wall | 517 | 1 | – | 13697 | 45 |
+| 3a | failed, close | 95 | 5 | 83 | 22228 | 90 |
+| 3b | failed: Euclidean distance leads the box into the dead-end bottom strip | 432 | 4 | 76 | 19533 | 90 |
+| 4a | solved | 116 | 1 | – | 1025 | 4 |
+| 4b | failed, close: pushed the block through the gap, the tip stopped short | 123 | 1 | – | 25249 | 45 |
+| 4c | solved, through the lower gap | 113 | 1 | – | 6593 | 34 |
+| 4d | solved | 112 | 1 | – | 449 | 19 |
+
+With 20 iterations of 16 (2026-10-20) only 1b and 4d were solved, and the old reset planner left
+3a at 550 mm and 3b at 713 mm.
+
 ## Install
 
 ```bash
@@ -125,7 +205,7 @@ conda activate actvine
 
 One env for everything: dvsim and `xnew_rrt/` (`torch`, `cvxpy`, `cvxpylayers`, ...) and master's
 jax code (`pbd_vine.py`, `sPAM/`, `kinodynamic/`: `jax`, `flax`, `optax`, `jaxopt`, `ompl`,
-`pygame`). Activating it makes jax allocate GPU memory only as needed, capped at 20% (the GPU is
+`pygame`), plus `opencv-python-headless` and `scikit-image` for `video/`. Activating it makes jax allocate GPU memory only as needed, capped at 20% (the GPU is
 shared); `JAX_PLATFORMS=cpu` keeps jax off it entirely. `qpth`, the optional batched GPU QP
 solver, is not included because it no longer builds with current setuptools. The older `vine`
 env on the lab machine still runs everything except the jax code.
@@ -193,6 +273,115 @@ Each iteration draws `--batch-size` samples, picks a node and a curvature for ea
 all those edges in one batched rollout. `--iters` counts batched iterations. On the default
 scene, 20 iterations at batch 32 built a 641-node tree in 59 s; a batched sim step at that size
 runs about 7x more rollout-steps per second than batch 1.
+
+**RRT with vine resets as an action (several pushes, one tree)**
+
+`reset_action_rrt.py`, run through `run_envs.py` on the `b2g_retractable` envs. One tree over
+(vine, box poses) with two kinds of edge:
+- **grow**: the batched RRT's edge, from the node nearest a sample, at a random curvature
+  (straight with probability 0.3);
+- **reset**: the vine goes back to its stub at the base (retraction itself is not modeled) and the
+  boxes stay where they are, at rest.
+
+A node unlocks its reset once its boxes are at least `unlock_mm` (50 mm) from the boxes of every
+reset taken so far, the root included, and the reset is added right away. The distance between two
+box configurations is the largest, over the boxes, of center shift + half diagonal x turn (turn
+modulo the box's symmetry). So each box configuration, at 50 mm resolution, gets one fresh vine:
+resets only multiply when the boxes really move. Nothing is thrown away, so a push can start from
+any configuration reached before, including after a set-up push that took the box away from the
+goal. Samples are (tip, box positions) as in the batched RRT, so the nearest-node search spreads
+the effort over box configurations by their Voronoi regions. The tree view marks each reset with
+an x at the boxes. With resets off, the same code is the batched RRT with a vectorized
+nearest-node search.
+
+**RRT with vine resets (older: one tree per push)**
+
+```bash
+python xnew_rrt/reset_rrt.py --base 0.4 0.43 0 --box-goal 1.05 0.40 0.04 --max-episodes 6 \
+    --episode-iters 14 --batch-size 32 --patience 5 --min-progress 1
+```
+
+A vine only grows, so one vine gives one push. Here the plan is a sequence of episodes, each a
+batched RRT from a fresh vine with the boxes where the last push left them.
+- The planner ends an episode when its budget runs out, or when box 0 has stopped getting closer
+  to its goal for `--patience` iterations (counted only once it has started getting closer).
+- It commits the branch that brought box 0 closest, then resets the vine. Retraction is not
+  modeled: the reset is instantaneous and the boxes are at rest afterwards.
+- `--reuse untouched` starts the next tree with every node whose vine stayed clear of the boxes,
+  at both their old and new poses. Such a branch never touched a box, and vine-box contact is
+  frictionless, so its motion carries over with the boxes swapped. `--reuse none` (default)
+  starts fresh.
+- `--straight-prob` (0.3) makes that share of edges grow straight. With uniform curvatures
+  almost no branch keeps pushing.
+
+On the command above:
+
+| `--reuse` | Pushes | Box 0 progress (mm) | Total | Time |
+|---|---|---|---|---|
+| `none` | 6 | 15, 5, 7, 8, 4, 4 | 292 -> 250 mm | 169 s |
+| `untouched` | 3 | 15, 3, 1 | 292 -> 274 mm, then stops | 66 s |
+
+- Reuse is worse: its 150-250 carried-over nodes cover the workspace away from the box, and
+  nearest-node selection keeps extending them.
+- Every push is small for the reason a real vine has: off-center, the tip slides off the box's
+  corner and turns it rather than driving it. The sampler is still the naive one
+  (tip_block_rrt.py).
+
+Outputs:
+- `plan.png`: box 0's path and the vine at the end of each push;
+- `best_path.gif`: the whole plan;
+- `episode_<k>/`: each episode's tree, as `tree_stages`;
+- `plan.json`: per push, the controls and the box poses before and after.
+
+**High-level planner: block pushing on a grid**
+
+```bash
+python xnew_rrt/hierarchical_planner.py --example corridor         # also chain, reach, clear
+python xnew_rrt/hierarchical_planner.py --map puzzle.txt --max-turns 2 --max-push 3
+python xnew_rrt/hierarchical_planner.py --box-goal 1.0625 0.75      # the default scene, 100 mm cells
+```
+
+The planner assumes square boxes and walls, and cuts the space into box-sized cells. One action
+is one vine deployment:
+- The vine starts in a grow zone and grows inward along free cells: optionally at most
+  `--max-turns` turns, and never folding back.
+- It reaches a cell next to a box and grows into it, pushing the box (and every box lined up
+  ahead of it) one cell the way it is heading, or up to `--max-push` cells by growing on
+  straight.
+- A wall, the grid's edge or the vine's own body past the last box blocks the push.
+- The vine then resets.
+
+Goals, in any combination:
+- a box must end in a cell;
+- cells must end up empty;
+- the vine must be able to reach a cell (the corridor to it must be clear).
+
+Grow zones are the free border cells: the ring just inside a wall frame, or cells marked `S`.
+
+The search:
+- A* over box positions, with the fewest pushes first, then the shortest vines.
+- The heuristic is, per box, one push per axis it still has to move along (more beyond
+  `--max-push`), with the max taken over boxes.
+- Boxes stuck in a wall corner off their goal are pruned.
+
+Input is an ASCII map (legend in the script's docstring) or a scene rasterized at box size,
+aligned to box 0.
+
+The plan (`plan.json`) lists per push:
+- the launch cell and heading;
+- the cells the vine grows through, which must be free;
+- the push direction and distance;
+- the boxes before and after.
+
+For scenes, every cell also comes with its center in meters, as subgoals for the dvsim planners.
+
+| Example | Pushes | What it takes |
+|---|---|---|
+| `corridor` | 6 | push B out of the shaft, then A down the shaft and along the bottom row |
+| `chain` | 4 | push three boxes in a row together |
+| `reach` | 1 | come around underneath and push A up into a pocket to free the row to G; with `--max-turns 2`, no plan |
+| `clear` | 5 | clear a lane, then park A |
+| default scene, goal (1.0625, 0.75) | 6 (2 with `--max-push 3`) | push box 0 east, then north |
 
 **Launch-pose search (passive vine)**
 
@@ -326,6 +515,72 @@ Planner:
 New: `scene.py`, `viz.py`, `rollout.py`, `tip_block_rrt.py`, `batch_tip_block_rrt.py`,
 `pose_search.py`, `draw_envs.py`, the `'curvature'` stiffness mode.
 
+## How well the sim batches
+
+**There are two simulators.**
+- Master's planner (`kinodynamic/sst.py`) runs `pbd_vine.py`. It is JAX with soft constraints:
+  every step is a fixed number (15) of gradient steps on a penalty energy. That makes the step one
+  fixed-size computation, which `jax.jit` and `vmap` run for thousands of vines per GPU call.
+- The planners in `xnew_rrt/` run `dvsim`, in torch, with hard constraints: every step solves an
+  optimization problem with the contacts and joints as constraints. None of them use JAX or the
+  GPU.
+
+**One dvsim step** (`dvsim/dynamic_vine.step`) has four parts:
+1. **Constraint measures and their Jacobians**, per element. These are vectorized over the batch
+   (`torch.func.vmap`, with `jacrev` inside). They run on the CPU, because dvsim creates every
+   tensor there. The vine–box Jacobian has max_bodies x boxes rows, and the box–box one is
+   boxes² x boxes x 3, so the cost grows quickly with the number of boxes.
+2. **Building the problem**: batched tensor ops, padded to `max_bodies`. 60 bodies and 13 boxes
+   give 220 variables: 3 per body, 3 per box and 1 growth slack.
+3. **Solving it**: cvxpylayers, then diffcp, then Clarabel (interior point). This is batched in
+   name only: diffcp solves the elements one at a time on a CPU thread pool. The box friction
+   term ||(vx, vy, c w)|| makes the problem a second-order cone program, not a QP. So batched GPU
+   QP solvers can't take it, including the `USE_QPTH` path in `solver.py` (qpth isn't installed).
+4. **Failures**: if any element's solve fails, the whole batched call fails, and every element is
+   solved again one by one.
+
+**Measured** with `python xnew_rrt/bench_batch.py`: a vine about 0.55 m long, 4 torch threads, on
+a 12-core machine shared with other jobs, so roughly ±30%. Element-steps per second:
+
+| Env (boxes) | B=1 | B=4 | B=16 | B=64 | Share of the B=64 step |
+|---|---|---|---|---|---|
+| 1a (1) | 42 | 100 | 217 | 292 | solve 78%, Jacobians 16% |
+| 4c (2) | 42 | 90 | 121 | 190 | solve 71%, Jacobians 25% |
+| 4d (13) | 12 | 26 | 17 | 20 | solve 19%, Jacobians 80% |
+
+For comparison, master's PBD sim on the GPU (`--pbd`): half the 4090's memory, the same 60 bodies,
+no boxes, a linear stand-in for the sPAM bending model.
+
+| Batch | 1 | 64 | 1024 | 4096 |
+|---|---|---|---|---|
+| Element-steps/s | 1.1k | 42k | 0.74M | 1.77M |
+
+At batch 64 that is about 140x dvsim with one box. At batch 4096 it is about 6000x dvsim's best.
+It is not like for like: PBD has no boxes, soft contacts and a fixed number of iterations.
+
+**What this means for planning.**
+- One RRT iteration (32 edges of 25 steps) takes 4–6 s with 1–2 boxes and about 40 s with 13.
+- Batches larger than about 32 buy little.
+- The `xnew_rrt` planners can afford thousands of nodes, not the hundreds of thousands SST plans
+  with.
+
+**Ways to make dvsim batch** (none of these are done):
+- **Make it a pure QP and solve the batch on the GPU.** Linearize the friction cone (a polygon of
+  about 8 directions, with extra slack variables), then solve every element at once with a
+  batched dense interior-point QP solver: qpth, which `USE_QPTH` already wires up, or a JAX one.
+  The Jacobians have to move to the GPU too, so dvsim would need a device argument everywhere it
+  makes a tensor. This keeps the hard contacts and is the smallest change that could reach GPU
+  batching.
+- **Port dvsim to JAX.** The measures and Jacobians map one to one onto `vmap` and `jacrev`. A QP
+  solver with a fixed number of iterations (e.g. qpax) would make the step jit-able like
+  `pbd_vine.py`. This is the most work and the biggest payoff.
+- **cvxpylayers' MPAX backend** (JAX, first-order, on the GPU) keeps the cone program. But
+  first-order solvers struggled with this ill-conditioned problem (SCS, see `solver.py`).
+- **Cheaper wins on the CPU:**
+  - only build constraints for walls and box pairs that are close: most of 4d's 13² box–box rows
+    are far apart;
+  - don't solve a whole failed batch again one element at a time.
+
 ## Known problems
 
 Not fixed yet, roughly in order of how much they matter.
@@ -365,6 +620,160 @@ Not fixed yet, roughly in order of how much they matter.
 9. **Repo hygiene.** `__pycache__/*.pyc` files are tracked despite `.gitignore`, so running anything
    dirties the working tree. Demo docstrings contain another
    machine's Python path.
+
+## Video tracking
+
+`video/` extracts the vine's centerline and the boxes' poses from an overhead video of a trial
+and hands them to the same fit that matched dvsim to master (`xnew_rrt/fit_to_master.py`).
+
+- **Calibration** (`calibrate.py`) is a homography from the image to the board, in the board
+  frame of the env files (mm, y up). It is fitted from four corners of known board position,
+  either the board's own corners or any other known rectangle (`corners_mm`, e.g. the inner
+  corners of the boundary walls). The corners are clicked by hand or found automatically.
+  Extra known points, such as obstacle corners, refine the fit and report residuals.
+  Optional extras:
+  - a checkerboard video for lens distortion;
+  - the camera height, to correct parallax: the vine's centerline and the box tops are above
+    the board, so an off-center camera sees them pushed outward (about 35 mm for 100 mm of
+    height at 700 mm off-axis with the camera 2 m up).
+- **Vine** (`track.py`) follows DiffVine's pipeline:
+  - The vine is what differs from a reference frame taken before it grows, after blurring and
+    morphological cleanup.
+  - The part touching the base is skeletonized and turned into the longest path from the base.
+  - The path is resampled. The tip end stops at the center of the rounded cap, a radius short of
+    the mask's edge, like the sim's last body center.
+  - The vine radius is measured from the mask.
+- **Boxes** (`track.py`) are tracked by template matching their reference-frame appearance over
+  small shifts and turns, starting from a rough pose that is refined on the reference frame.
+  - The background the vine is compared to has the boxes painted out, so table uncovered by a
+    moving box does not count as vine.
+  - Each box's current footprint is removed from the vine's mask.
+- **Link to system identification** (`to_reference.py`):
+  - writes the tracks in `master_ref.npz`'s format: a frame every 20 mm of growth, the trial's
+    walls, base and control schedule, the boxes and their tracked poses, and the free growth
+    speed (estimated from the video);
+  - `fit_to_master.py --ref` then fits stiffness and damping. For trials with boxes it also
+    scores the box centers (`BOX_WEIGHT`), with the box friction as `--obj-friction`.
+
+```bash
+python video/calibrate.py grid  trials/push01.json   # frame with a pixel grid: read corners off it
+python video/calibrate.py check trials/push01.json   # calib_check.png: walls projected on the frame
+python video/track.py trials/push01.json             # out/video/push01/: tracks.npz, overlay.mp4, summary.png
+python video/to_reference.py out/video/push01 out/video/push02 --out xnew_rrt/data/video_ref.npz
+python xnew_rrt/fit_to_master.py --ref xnew_rrt/data/video_ref.npz --out out/fit_video
+```
+
+`video/trial_example.json` lists every trial field. A trial needs:
+- the video and the board size;
+- the corners (`"auto"`, or pixel coordinates);
+- the walls (or an env file);
+- the base pose;
+- each box's size, mass and rough starting pose;
+- for the fit, the control schedule: the curvature each length of vine was built or actuated
+  with.
+
+**Synthetic check** (`synthetic.py`): a dvsim push rendered as an oblique, noisy camera view,
+with the board corners found automatically. Results:
+- centerlines within 1.5 mm (5.8 mm when the vine folds onto itself behind the box);
+- box centers within 1.5 mm and 0.5 degrees;
+- vine radius 50 mm measured as 49.5-50;
+- the fit on the tracks recovers the stiffness that made the video (0.20).
+
+```bash
+python video/synthetic.py make --out out/video_synth
+python video/track.py out/video_synth/trial.json --out out/video_synth/track
+python video/synthetic.py check out/video_synth
+```
+
+Things to know before recording:
+- **Avoid dead-center pushes for identification.** A vine pushing straight through a box's center
+  line buckles off one side or the other depending on a millimeter. In the synthetic test, a
+  1 mm calibration offset flipped which way the sim's vine slid, so the error was 110 mm with the
+  true parameters. Launch the vine 20 mm or more off the box's center line.
+- The silhouette cannot separate overlapping parts of the vine, or the vine from its own shadow.
+  For a light vine on a darker table, use `"diff_mode": "brighter"` to drop shadows. Keep hands
+  out of view, or at least away from the vine.
+- Keep the camera still. Calibration and the reference frame are taken once per video.
+
+### The brick demos (`video/demos/`)
+
+There are 15 videos of the same setup:
+- a pegboard with 1 in hole pitch;
+- the vine's mount bolted at the top right;
+- a clear tube, unactuated, growing straight into a brick at different poses;
+- the brick glancing off the vine and shifting 11-133 mm.
+
+`video/trials/make_trials.py` writes one trial json per video. The pipeline, extended for this
+setup:
+
+- **Pegboard calibration** (`pegboard_pitch_mm`). Every hole is a calibration point (about 1400
+  per video): each hole is indexed by stepping hole to hole from the center. A two-term radial
+  distortion is fitted along with the homography.
+  - Residuals are 0.5 mm median and 1 mm at the 95th percentile, well under a pixel at
+    0.83 px/mm.
+  - The distortion comes out the same in every video (k1 = 0.035).
+  - The board frame is anchored on the outermost rows and columns that are at least 3/4
+    visible: the frame's lip hides the outermost holes differently in each video. Every video
+    gets the same 45 x 33-hole frame. The bolted mount lands at the same board position in all
+    15 videos, within +-5 mm.
+- **Clear tube** (`"diff_mode": "saturation"`). The tube barely changes brightness, but it
+  drops the orange board's saturation. The vine is where saturation falls below the reference
+  frame's, with the holes smoothed away, the vine stub and mount painted out of the reference,
+  and the background slowly following lighting changes away from the vine.
+  - The reference frame is taken just before growth starts (`GROWTH_START`). In IMG_3497 the
+    light changes while the vine waits.
+  - Mask pieces up to `gap_mm` apart are joined, so the vine survives dropouts.
+  - Everything behind the base is dropped, which removes the mount.
+- **Brick** (`"box_channel": "hue"`, `"pose_mm": "auto"`). It is found and tracked on a map of
+  how far each pixel's hue is from the board's: a clean silhouette, without the board's holes,
+  which would otherwise pin the template to where it started.
+  - Brick size: a standard 203 x 92 x 57 mm brick. Its top face looks 5.5% larger than that,
+    which puts the camera about 1.1 m up; `camera_height_mm` corrects the parallax of the brick
+    top and the tube's centerline.
+  - The brick's mass is unknown; 2.3 kg is assumed. Only mass times friction decides when it
+    slides, so the fitted friction is for that mass.
+- **Launch heading** (`to_reference.launch_heading`). This is fitted to the whole straight vine
+  just before it first touches the brick.
+  - It differs by up to 6 degrees from the first 6 cm of the stub, which is what the tracker
+    alone measures.
+  - It decides which side of the brick the vine passes on. The tip's rolling contact sends any
+    off-center hit to one side, so the sim needs the launch heading to a fraction of a degree.
+
+```bash
+python video/trials/make_trials.py
+for t in video/trials/IMG_*.json; do python video/track.py $t; done        # ~15 s per video on CPU
+python video/to_reference.py out/video/IMG_* --out xnew_rrt/data/video_ref.npz
+python xnew_rrt/fit_to_master.py --ref xnew_rrt/data/video_ref.npz --vine-radius 0.025 --max-bodies 70 \
+    --grow-force 20 --seg-inertia 1e-3 --start 3 5 0.2 --out out/fit_video_gf20
+```
+
+**Fit to the 15 videos.** The error is the mean centerline distance at equal vine length, plus
+the box-center error and the jitter penalty. Settings: vine radius 25 mm, 1e-3 kg m^2 segment
+inertia, brick 2.3 kg. Search: cross-entropy over stiffness, damping and box friction, 12 x 5
+candidates.
+
+| Growth stall force | Start (stiffness 3, damping 5, friction 0.2) | Best | Stiffness | Damping | Box friction |
+|---|---|---|---|---|---|
+| 20 N | 74.6 mm | 46.0 mm | 40 | 17 | 0.097 |
+| 40 N | 73.1 mm | 46.5 mm | 36 | 24 | 0.115 |
+
+Per video, 20 N: 11 of 15 within about 50 mm (22-50 mm). The misses:
+- IMG_3501, 126 mm: the sim's vine passes the brick on the other side.
+- IMG_3522, 95 mm: the real brick slid 133 mm, much further than the sim pushes it.
+- IMG_3497, 76 mm and IMG_3518, 54 mm: the real vine rotates further about its base than the
+  sim's.
+
+What the fit says:
+- **The vine is much stiffer than master's quasi-static vine suggested** (stiffness ~40 vs 0.2).
+  It stays straight and pivots at the base, which is what the videos show. Explicit bending at
+  that stiffness is only stable with heavier segments (1e-3 vs 1e-5 kg m^2), so the inertia is a
+  stand-in for the semi-implicit torque.
+- **The stall force is not identified.** Friction holds the brick with mu m g = 0.10 x 2.3 x 9.81
+  = 2.2-2.6 N, far below either stall force, so the vine never stalls on it.
+- **What a lighter block would identify:** a block heavy enough to stall the vine would pin down
+  the stall force. A lighter block at a known mass separates mu from m.
+- **Launch-side errors:** vine-box contact is frictionless, matching the rolling tip (low tip
+  friction). The remaining side errors come down to the launch heading.
 
 ## Fitting to master
 

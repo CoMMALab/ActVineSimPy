@@ -1,0 +1,47 @@
+{
+ "_comment": "One trial = one video. Board frame: mm, origin at the board's (0,0) corner, x along the long edge, y up (same as envs/*.txt). Fields starting with _ are ignored. Remove what you do not need.",
+
+ "name": "push01",
+ "video": "../videos/push01.mp4",
+ "env": "../envs/env_dynamics.txt",
+ "_env": "walls, boxes and base come from here unless given below; walls_mm overrides the walls",
+
+ "board_mm": [1525, 1000],
+ "corners_px": [[150, 735], [1175, 700], [1110, 70], [210, 95]],
+ "_corners_px": "pixels of board (0,0), (W,0), (W,H), (0,H); read them off `calibrate.py grid`, or \"auto\" to detect the largest light/dark quadrilateral",
+ "corners_mm": null,
+ "_corners_mm": "if the 4 corners are not the board's own: their board positions, e.g. [[100,100],[1425,100],[1425,900],[100,900]] for the inner wall corners",
+ "corner_rotation": 0,
+ "extra_points": [{"px": [612, 410], "mm": [712.5, 300.0]}],
+ "_extra_points": "more known points (obstacle corners); they refine the homography and give residuals to check it",
+ "intrinsics": null,
+ "_intrinsics": "json from `calibrate.py intrinsics` (checkerboard video) to undistort the lens",
+ "camera_height_mm": 2000,
+ "_camera_height_mm": "lens to board; corrects the parallax of the vine centerline and box tops when there are no intrinsics",
+
+ "base": {"mm": [200, 200], "heading_deg": 86.5},
+ "_base": "{\"px\": [u, v]} also works; heading_deg null = measured from the first 60 mm of vine",
+ "boxes": [{"size_mm": [100, 100], "pose_mm": [762.5, 650, 0], "mass_kg": 0.02, "height_mm": 80}],
+ "_boxes": "pose_mm = [cx, cy, theta_deg] roughly; it is refined on the reference frame",
+
+ "schedule": [[0.0, 300], [3.0, 200], [0.0, 400]],
+ "_schedule": "[curvature 1/m, length grown with it mm] from the first tracked frame: what the vine was built/actuated with. Needed for the fit",
+ "grow_rate_mps": null,
+ "_grow_rate_mps": "measured free growth speed; null = estimated from the video",
+
+ "reference_frame": 0,
+ "_reference_frame": "a frame with the board set up and no vine out yet",
+ "start_frame": 0,
+ "end_frame": null,
+
+ "mm_per_px": 2.0,
+ "diff_mode": "abs",
+ "_diff_mode": "abs | brighter (light vine, ignores its shadow) | darker",
+ "diff_threshold": 30,
+ "vine_radius_mm": 50,
+ "vine_height_mm": null,
+ "smooth_mm": 10,
+ "spacing_mm": 5,
+ "box_search_mm": 25,
+ "box_search_deg": 8
+}

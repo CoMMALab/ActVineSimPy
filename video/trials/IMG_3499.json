@@ -1,0 +1,65 @@
+{
+ "name": "IMG_3499",
+ "video": "../demos/IMG_3499.mov",
+ "pegboard_pitch_mm": 25.4,
+ "camera_height_mm": 1100,
+ "walls_mm": [
+  [
+   -52.7,
+   -52.7,
+   1221.1,
+   -12.7
+  ],
+  [
+   -52.7,
+   876.3,
+   1221.1,
+   916.3
+  ],
+  [
+   -52.7,
+   -12.7,
+   -12.7,
+   876.3
+  ],
+  [
+   1181.1,
+   -12.7,
+   1221.1,
+   876.3
+  ]
+ ],
+ "base": {
+  "mm": [
+   1041,
+   737
+  ],
+  "heading_deg": null,
+  "cut_dir_deg": -141
+ },
+ "boxes": [
+  {
+   "size_mm": [
+    203,
+    92
+   ],
+   "pose_mm": "auto",
+   "mass_kg": 2.3,
+   "height_mm": 57
+  }
+ ],
+ "schedule": [
+  [
+   0.0,
+   1500
+  ]
+ ],
+ "reference_frame": 147,
+ "mm_per_px": 1.5,
+ "diff_mode": "saturation",
+ "diff_threshold": 12,
+ "vine_radius_mm": 23,
+ "box_channel": "hue",
+ "box_search_mm": 15,
+ "box_search_deg": 5
+}
