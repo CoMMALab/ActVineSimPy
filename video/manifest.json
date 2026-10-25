@@ -1,0 +1,342 @@
+{
+ "note": "every video: new path, original camera file name, type, dataset and split (simple_contact: one video per type held out for validation)",
+ "videos": [
+  {
+   "path": "video/demos/brick_01.mov",
+   "original": "IMG_3497",
+   "type": "brick",
+   "dataset": "brick",
+   "split": "train"
+  },
+  {
+   "path": "video/demos/brick_02.mov",
+   "original": "IMG_3499",
+   "type": "brick",
+   "dataset": "brick",
+   "split": "train"
+  },
+  {
+   "path": "video/demos/brick_03.mov",
+   "original": "IMG_3500",
+   "type": "brick",
+   "dataset": "brick",
+   "split": "train"
+  },
+  {
+   "path": "video/demos/brick_04.mov",
+   "original": "IMG_3501",
+   "type": "brick",
+   "dataset": "brick",
+   "split": "train"
+  },
+  {
+   "path": "video/demos/brick_05.mov",
+   "original": "IMG_3509",
+   "type": "brick",
+   "dataset": "brick",
+   "split": "train"
+  },
+  {
+   "path": "video/demos/brick_06.mov",
+   "original": "IMG_3511",
+   "type": "brick",
+   "dataset": "brick",
+   "split": "train"
+  },
+  {
+   "path": "video/demos/brick_07.mov",
+   "original": "IMG_3512",
+   "type": "brick",
+   "dataset": "brick",
+   "split": "train"
+  },
+  {
+   "path": "video/demos/brick_08.mov",
+   "original": "IMG_3515",
+   "type": "brick",
+   "dataset": "brick",
+   "split": "train"
+  },
+  {
+   "path": "video/demos/brick_09.mov",
+   "original": "IMG_3516",
+   "type": "brick",
+   "dataset": "brick",
+   "split": "train"
+  },
+  {
+   "path": "video/demos/brick_10.mov",
+   "original": "IMG_3518",
+   "type": "brick",
+   "dataset": "brick",
+   "split": "train"
+  },
+  {
+   "path": "video/demos/brick_11.mov",
+   "original": "IMG_3520",
+   "type": "brick",
+   "dataset": "brick",
+   "split": "train"
+  },
+  {
+   "path": "video/demos/brick_12.mov",
+   "original": "IMG_3521",
+   "type": "brick",
+   "dataset": "brick",
+   "split": "train"
+  },
+  {
+   "path": "video/demos/brick_13.mov",
+   "original": "IMG_3522",
+   "type": "brick",
+   "dataset": "brick",
+   "split": "train"
+  },
+  {
+   "path": "video/demos/brick_14.mov",
+   "original": "IMG_3523",
+   "type": "brick",
+   "dataset": "brick",
+   "split": "train"
+  },
+  {
+   "path": "video/demos/brick_15.mov",
+   "original": "IMG_3524",
+   "type": "brick",
+   "dataset": "brick",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/vine_block/vine_block_01.mov",
+   "original": "IMG_3689",
+   "type": "vine_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/vine_block/vine_block_02.mov",
+   "original": "IMG_3690",
+   "type": "vine_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/vine_block/vine_block_03.mov",
+   "original": "IMG_3692",
+   "type": "vine_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/vine_block/vine_block_04.mov",
+   "original": "IMG_3693",
+   "type": "vine_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/vine_block/vine_block_05.mov",
+   "original": "IMG_3695",
+   "type": "vine_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/vine_block/vine_block_06.mov",
+   "original": "IMG_3696",
+   "type": "vine_block",
+   "dataset": "simple_contact",
+   "split": "val"
+  },
+  {
+   "path": "video/simple_contact/vine_block/vine_block_07.mov",
+   "original": "IMG_3697",
+   "type": "vine_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/vine_block/vine_block_08.mov",
+   "original": "IMG_3698",
+   "type": "vine_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/vine_block/vine_block_09.mov",
+   "original": "IMG_3699",
+   "type": "vine_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/vine_block/vine_block_10.mov",
+   "original": "IMG_3700",
+   "type": "vine_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/vine_block/vine_block_11.mov",
+   "original": "IMG_3702",
+   "type": "vine_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_block/block_block_01.mov",
+   "original": "IMG_3705",
+   "type": "block_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_block/block_block_02.mov",
+   "original": "IMG_3706",
+   "type": "block_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_block/block_block_03.mov",
+   "original": "IMG_3707",
+   "type": "block_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_block/block_block_04.mov",
+   "original": "IMG_3708",
+   "type": "block_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_block/block_block_05.mov",
+   "original": "IMG_3709",
+   "type": "block_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_block/block_block_06.mov",
+   "original": "IMG_3710",
+   "type": "block_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_block/block_block_07.mov",
+   "original": "IMG_3711",
+   "type": "block_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_block/block_block_08.mov",
+   "original": "IMG_3712",
+   "type": "block_block",
+   "dataset": "simple_contact",
+   "split": "val"
+  },
+  {
+   "path": "video/simple_contact/block_block/block_block_09.mov",
+   "original": "IMG_3713",
+   "type": "block_block",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_wall/block_wall_01.mov",
+   "original": "IMG_3716",
+   "type": "block_wall",
+   "dataset": "simple_contact",
+   "split": "excluded",
+   "excluded": "a different, zoomed-in camera view: the board is partly out of frame, the pegboard lattice anchors above the base, and the panel is seen obliquely, so it and the weight are not detected"
+  },
+  {
+   "path": "video/simple_contact/block_wall/block_wall_02.mov",
+   "original": "IMG_3722",
+   "type": "block_wall",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_wall/block_wall_03.mov",
+   "original": "IMG_3723",
+   "type": "block_wall",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_wall/block_wall_04.mov",
+   "original": "IMG_3724",
+   "type": "block_wall",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_wall/block_wall_05.mov",
+   "original": "IMG_3725",
+   "type": "block_wall",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_wall/block_wall_06.mov",
+   "original": "IMG_3726",
+   "type": "block_wall",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_wall/block_wall_07.mov",
+   "original": "IMG_3727",
+   "type": "block_wall",
+   "dataset": "simple_contact",
+   "split": "val"
+  },
+  {
+   "path": "video/simple_contact/block_wall/block_wall_08.mov",
+   "original": "IMG_3728",
+   "type": "block_wall",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_wall/block_wall_09.mov",
+   "original": "IMG_3729",
+   "type": "block_wall",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_wall/block_wall_10.mov",
+   "original": "IMG_3731",
+   "type": "block_wall",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_wall/block_wall_11.mov",
+   "original": "IMG_3732",
+   "type": "block_wall",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_wall/block_wall_12.mov",
+   "original": "IMG_3733",
+   "type": "block_wall",
+   "dataset": "simple_contact",
+   "split": "train"
+  },
+  {
+   "path": "video/simple_contact/block_wall/block_wall_13.mov",
+   "original": "IMG_3735",
+   "type": "block_wall",
+   "dataset": "simple_contact",
+   "split": "train"
+  }
+ ]
+}

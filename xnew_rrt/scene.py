@@ -38,6 +38,7 @@ class Scene:
     name: str = "scene"
     objects_theta: list = None          # optional initial heading [rad] per movable box (default 0)
     box_goal_theta: tuple = None        # optional (theta_rad, tol_rad): box 0's goal orientation too
+    corner_radius_m: tuple = None       # optional (walls, boxes) corner radius [m]; None = sharp corners
 
     def __post_init__(self):
         if self.bounds_m is None:
@@ -80,6 +81,21 @@ def load_scene(env_path):
 STIFFNESS_MODES = ("curvature", "linear", "spam")
 
 
+def params_to(params, device):
+    '''A shallow copy of dvsim VineParams with every tensor attribute on `device`.'''
+    if torch.device(device).type == "cpu":
+        return params
+    import copy
+    out = copy.copy(params)
+    for name, value in vars(params).items():
+        if torch.is_tensor(value):
+            setattr(out, name, value.to(device))
+    return out
+
+
+_CUDA = torch.cuda.is_available()
+
+
 @dataclass
 class SimConfig:
     max_bodies: int = 60
@@ -97,6 +113,14 @@ class SimConfig:
     ang_damp: float = 1.24e-4
     seg_inertia_kgm2: float = 1.0e-5
     obj_friction: float = 0.5           # box-table Coulomb friction coefficient
+    # QP solver: "DIFFCP" (cvxpylayers, one element at a time on CPU threads) or "TORCH_IPM"
+    # (dvsim/batched_qp.py: the whole batch at once, friction cone linearized). device: where a
+    # batched step runs ("cpu" or "cuda"). Default: the batched solver on the GPU when there is one.
+    # cuda_graphs: on CUDA, rollout_batch keeps the states on the GPU and replays each step as a
+    # CUDA graph (batched_rollout.py); False: the older loop, states on the CPU between eager steps.
+    qp_backend: str = "TORCH_IPM" if _CUDA else "DIFFCP"
+    device: str = "cuda" if _CUDA else "cpu"
+    cuda_graphs: bool = True
 
 
 class Sim:
@@ -115,6 +139,7 @@ class Sim:
         assert self.cfg.stiffness_mode in STIFFNESS_MODES, self.cfg.stiffness_mode
 
         solver.cvxpylayer = None  # the cached QP layer depends on the scene's shapes
+        solver.BACKEND = self.cfg.qp_backend
 
         self.params = si.vine_params_si(max_bodies=self.cfg.max_bodies, obstacles_m=scene.walls_m,
                                         grow_rate_mps=self.cfg.grow_rate_mps,
@@ -123,6 +148,8 @@ class Sim:
                                         seg_mass_kg=self.cfg.seg_mass_kg, ang_damp=self.cfg.ang_damp,
                                         seg_inertia_kgm2=self.cfg.seg_inertia_kgm2)
         self.params.obj_friction = self.cfg.obj_friction
+        if scene.corner_radius_m is not None:
+            self.params.wall_round, self.params.obj_round = [si.len_to_nd(r) for r in scene.corner_radius_m]
         self.params.stiffness_mode = self.cfg.stiffness_mode
         self.params.stiffness_val = torch.tensor(self.cfg.joint_stiffness, dtype=torch.float32)
 
@@ -136,6 +163,22 @@ class Sim:
 
         x0, y0, heading0 = scene.start
         self.base0 = torch.tensor([si.len_to_nd(x0), si.len_to_nd(y0), float(heading0)])
+        self.device = torch.device(self.cfg.device)
+        if self.device.type == "cuda":
+            torch.cuda.set_per_process_memory_fraction(0.5)      # the GPU is shared
+        self.device_params = params_to(self.params, self.device)
+
+    def step_batch(self, bases, state, dstate, bodies, obj_pose, obj_dstate, per_batch):
+        '''One batched dvsim step on self.device (inputs and outputs on the CPU).'''
+        dev = self.device
+        if dev.type == "cpu":
+            return step(self.params, bases[:, 2:3], bases[:, 0:1], bases[:, 1:2], state, dstate, bodies,
+                        obj_pose, obj_dstate, return_ok=True, per_batch=per_batch)
+        with torch.device(dev):
+            out = step(self.device_params, *(t.to(dev) for t in (bases[:, 2:3], bases[:, 0:1], bases[:, 1:2],
+                                                                   state, dstate, bodies, obj_pose, obj_dstate)),
+                       return_ok=True, per_batch={k: v.to(dev) for k, v in per_batch.items()})
+        return tuple(t.cpu() for t in out)
 
     #------------------------------------------------------------ geometry for drawing (mm)
 
@@ -222,6 +265,8 @@ class Sim:
         '''
         N = len(starts)
         designs = [self.apply_control(s, c) for s, c in zip(starts, curvatures)]
+        if self.device.type == "cuda" and self.cfg.cuda_graphs:
+            return self._rollout_batch_device(starts, designs, num_steps, stop_fn)
         current = list(starts)
         results = [([], True) for _ in range(N)]
         running = [i for i in range(N) if self.can_grow(starts[i])]
@@ -234,12 +279,10 @@ class Sim:
                 return torch.cat([get(i) for i in running], dim=0)
 
             bases = torch.stack([self.base_of(current[i]) for i in running])
-            state, dstate, bodies, obj_pose, obj_dstate, ok = step(
-                self.params, bases[:, 2:3], bases[:, 0:1], bases[:, 1:2],
-                stack(lambda i: current[i].state), stack(lambda i: current[i].dstate),
+            state, dstate, bodies, obj_pose, obj_dstate, ok = self.step_batch(
+                bases, stack(lambda i: current[i].state), stack(lambda i: current[i].dstate),
                 stack(lambda i: current[i].bodies),
                 stack(lambda i: current[i].moveable_obj_pose), stack(lambda i: current[i].moveable_obj_dstate),
-                return_ok=True,
                 per_batch={"spam_moment": torch.stack([designs[i][2] for i in running]),
                            "bend_target": torch.stack([designs[i][3] for i in running])})
 
@@ -260,6 +303,59 @@ class Sim:
             running = still_running
 
         return results
+
+    def _rollout_batch_device(self, starts, designs, num_steps, stop_fn):
+        '''rollout_batch with the states kept on the GPU (batched_rollout.BatchRollout). Known goal
+        tests run as tensor ops; any other stop_fn is evaluated on the CPU (one sync per step).'''
+        from batched_rollout import BatchRollout
+        roll = BatchRollout(self, starts, designs)
+        batched = self.batched_test(stop_fn)
+        for _ in range(num_steps):
+            if not roll.any_alive():
+                break
+            roll.step()
+            if stop_fn is None:
+                continue
+            if batched is not None:
+                hit = batched(roll.x["state"], roll.x["bodies"], roll.x["obj_pose"])
+            else:
+                rows = roll.last_moved.nonzero().squeeze(1).tolist()
+                hit = torch.zeros_like(roll.alive)
+                for r in rows:
+                    i = int(roll.ids[r])
+                    s = StateInfo(*(roll.x[k][r:r + 1].cpu() for k in ("state", "dstate", "bodies", "obj_pose",
+                                                                        "obj_dstate")), *designs[i], base=starts[i].base)
+                    hit[r] = bool(stop_fn(s))
+            roll.stop(hit & roll.last_moved)
+        roll.finish()
+        return [(roll.states(i), bool(roll.ok[i])) for i in range(len(starts))]
+
+    def batched_test(self, fn):
+        '''Tensor version (state, bodies, obj_pose on the device -> (B,) bool) of a goal test of this
+        Sim, or None.'''
+        if fn is None or getattr(fn, "__self__", None) is not self:
+            return None
+        name = fn.__func__.__name__
+        if name == "box_reached_goal":
+            gx, gy, r = [si.len_to_nd(v) for v in self.scene.box_goal_m]
+            def test(state, bodies, obj_pose):
+                p = obj_pose[:, 0]
+                hit = torch.hypot(p[:, 0] - gx, p[:, 1] - gy) < r
+                if self.scene.box_goal_theta is not None:
+                    sym = math.pi / 2 if abs(float(self.params.obj_hw[0] - self.params.obj_hh[0])) < 1e-6 else math.pi
+                    e = torch.remainder(p[:, 2] - self.scene.box_goal_theta[0], sym)
+                    hit = hit & (torch.minimum(e, sym - e) <= self.scene.box_goal_theta[1])
+                return hit
+            return test
+        if name == "reached_goal":
+            gx, gy = [si.len_to_nd(v) for v in self.scene.goal_m]
+            reach = si.len_to_nd(self.scene.goal_radius_m + self.cfg.vine_radius_m)
+            def test(state, bodies, obj_pose):
+                n = bodies.reshape(-1, 1) - 1
+                x, y = state.gather(1, 3 * n)[:, 0], state.gather(1, 3 * n + 1)[:, 0]
+                return torch.hypot(x - gx, y - gy) < reach
+            return test
+        return None
 
     #------------------------------------------------------------ queries (meters)
 

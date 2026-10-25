@@ -6,7 +6,9 @@ batched steps of copies of that state at several batch sizes, split into
     rest      building the QP matrices, stacking states, integrating
 Run from the repo root (CPU; the sim never uses the GPU):
     python xnew_rrt/bench_batch.py envs/1a.json envs/4d.json --batch 1 4 16 64 --threads 4
-Writes out/bench_batch.json and prints a table.
+    python xnew_rrt/bench_batch.py envs/1a.json --backend TORCH_IPM --device cuda --batch 64 256 1024
+Writes out/bench_batch.json (--out) and prints a table. On CUDA the process is capped at half the
+GPU's memory.
 
 For comparison, --pbd times master's soft-constraint JAX sim (pbd_vine.py, what kinodynamic/sst.py
 plans with) on the GPU instead, capped at half its memory: one jitted, vmapped step of the whole
@@ -28,10 +30,14 @@ def time_steps(sim, start, B, steps):
     clock = {"qp": 0.0, "forward": 0.0}
     solve, forward = dv.solve_layers, dv.dynamic_forward_part
 
+    sync = torch.cuda.synchronize if sim.device.type == "cuda" else (lambda: None)
+
     def timed(name, fn):
         def wrapper(*a, **k):
+            sync()
             t = time.perf_counter()
             out = fn(*a, **k)
+            sync()
             clock[name] += time.perf_counter() - t
             return out
         return wrapper
@@ -96,6 +102,8 @@ def main():
     parser.add_argument("--grow-steps", type=int, default=100, help="grow the vine this long first")
     parser.add_argument("--steps", type=int, default=5, help="timed steps per batch size")
     parser.add_argument("--threads", type=int, default=4, help="torch threads (diffcp's pool uses all cores)")
+    parser.add_argument("--backend", default="DIFFCP", choices=["DIFFCP", "TORCH_IPM"], help="QP solver (scene.SimConfig.qp_backend)")
+    parser.add_argument("--device", default="cpu", help="where the step runs (TORCH_IPM only)")
     parser.add_argument("--out", default="out/bench_batch.json")
     args = parser.parse_args()
     if args.pbd:
@@ -104,21 +112,26 @@ def main():
             json.dump(rows, f, indent=1)
         return
     torch.set_num_threads(args.threads)
+    if args.device.startswith("cuda"):
+        torch.cuda.set_per_process_memory_fraction(0.5)
 
     rows = []
     for path in args.envs:
         e, scene, cfg, _ = run_envs.load_env(path)
         sim = Sim(scene, cfg)
         states, _ = sim.rollout(sim.initial_state(), 0.0, args.grow_steps)
+        cfg.qp_backend, cfg.device = args.backend, args.device
+        sim = Sim(scene, cfg)
         start = states[-1]
         bodies = int(start.bodies.item())
         for B in args.batch:
             per = time_steps(sim, start, B, args.steps)
-            rows.append(dict(env=e["name"], boxes=len(e["boxes"]), bodies=bodies, max_bodies=cfg.max_bodies, batch=B,
+            rows.append(dict(env=e["name"], backend=args.backend, device=args.device, boxes=len(e["boxes"]),
+                             bodies=bodies, max_bodies=cfg.max_bodies, batch=B,
                              **{k + "_ms": 1000 * v for k, v in per.items()},
                              element_steps_per_s=B / per["total"]))
             r = rows[-1]
-            print(f"{r['env']:>3} boxes {r['boxes']:2d} bodies {bodies:2d}  B {B:3d}  step {r['total_ms']:7.1f} ms  "
+            print(f"{args.backend} {args.device} {r['env']:>3} boxes {r['boxes']:2d} bodies {bodies:2d}  B {B:3d}  step {r['total_ms']:7.1f} ms  "
                   f"(qp {r['qp_ms']:6.1f}, forward {r['forward_ms']:6.1f}, rest {r['rest_ms']:6.1f})  "
                   f"{r['element_steps_per_s']:6.1f} element-steps/s", flush=True)
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)

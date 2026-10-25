@@ -16,6 +16,9 @@ from .sqrtm import MatrixSquareRoot
 # 24 threads by batch~64 (per-problem cost is flat ~1ms and does NOT improve past that), so a big
 # parallel batch (e.g. the SST planner) is exactly the case GPU would accelerate; at batch=1 CPU wins.
 BACKEND = "DIFFCP"
+# "TORCH_IPM": dvsim/batched_qp.py instead -- the whole batch in plain torch tensor ops on the
+# inputs' device (CPU or CUDA), friction cone linearized, failed elements returned as NaN rows.
+_obj_start = None   # where the object velocities start in the QP variable (TORCH_IPM needs it)
 
 # Per-backend solver options. GPU backends fall back to {} (their own defaults) until benchmarked.
 # DIFFCP is the differentiable ENGINE; `solve_method` selects the cone solver it wraps and
@@ -41,8 +44,9 @@ def init_layers(sol_size, Q_size, p_size, G_size, h_size, A_size, b_size, n_obj=
     No-op if already built -- reset the module global `cvxpylayer` to None to rebuild.
     With n_obj > 0 the objective also has one Coulomb friction term per movable object (see
     dynamic_vine.object_friction_weights); the objects are the 3 * n_obj variables from obj_start."""
-    global cvxpylayer
-    if cvxpylayer is not None:
+    global cvxpylayer, _obj_start
+    _obj_start = obj_start
+    if BACKEND == "TORCH_IPM" or cvxpylayer is not None:
         return
 
     next_dstate = cp.Variable(sol_size)
@@ -131,6 +135,9 @@ def solve_layers(Q, p, G, h, A, b, fric=None):
     fric: (n_obj, 3) object friction weights, or (batch, n_obj, 3) for one set per element; required
     when the layer was built with n_obj > 0."""
     has_friction = fric is not None and fric.numel() > 0
+    if BACKEND == "TORCH_IPM":
+        from .batched_qp import solve
+        return solve(Q, p, G, h, A, b, fric=fric if has_friction else None, obj_start=_obj_start)
     if USE_QPTH:
         if has_friction and bool((fric > 0).any()):
             raise NotImplementedError("object friction is a norm term, which the qpth (pure QP) path "

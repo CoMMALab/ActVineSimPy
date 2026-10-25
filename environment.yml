@@ -48,6 +48,9 @@ dependencies:
       # video/: vine and box tracking from overhead videos
       - opencv-python-headless
       - scikit-image
+      # xnew_rrt/bench_jax_qp.py only: JAX QP solvers compared with dvsim/batched_qp.py
+      - qpax
+      - mpax
 variables:
   XLA_PYTHON_CLIENT_PREALLOCATE: "false"
   XLA_PYTHON_CLIENT_MEM_FRACTION: "0.2"

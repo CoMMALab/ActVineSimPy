@@ -62,6 +62,10 @@ DEFAULTS = dict(
                             # (their sides show in an oblique view)
     bg_rate=0.05,           # "saturation" mode: the background follows slow lighting/exposure changes
                             # at this rate per processed frame, away from the vine and the boxes
+    roi_mm=None,            # polygon [[x, y], ...] in board mm: the vine is only looked for inside it
+                            # (when the board_mm of the trial extends the top-down image past the board)
+    exclude_obb_mm=None,    # oriented boxes [cx, cy, theta_rad, hw, hh] in board mm where the vine cannot
+                            # be (a standing panel and what is behind it), dropped from its mask
 )
 
 
@@ -259,12 +263,14 @@ def saturation_background(ref_rect, paint, p):
     return cv2.inpaint(s, cv2.bitwise_or(low, paint), 7, cv2.INPAINT_TELEA)
 
 
-def vine_mask(rect, background, p):
-    '''Pixels of the rectified frame that differ from the background (uint8 0/255).'''
+def vine_mask(rect, background, p, roi=None):
+    '''Pixels of the rectified frame that differ from the background (uint8 0/255), inside roi (a
+    0/255 image) if given.'''
     if p["diff_mode"] == "saturation":
         sigma = max(1.0, 4.5 / p["mm_per_px"])
         diff = background.astype(np.int16) - board_saturation(rect, sigma).astype(np.int16)
-        return _clean((diff > p["diff_threshold"]).astype(np.uint8) * 255, p)
+        m = (diff > p["diff_threshold"]).astype(np.uint8) * 255
+        return _clean(m if roi is None else cv2.bitwise_and(m, roi), p)
     a = cv2.GaussianBlur(rect, (5, 5), 0).astype(np.int16)
     b = cv2.GaussianBlur(background, (5, 5), 0).astype(np.int16)
     d = a - b
@@ -274,7 +280,8 @@ def vine_mask(rect, background, p):
         diff = (-d).clip(min=0).max(axis=2)
     else:
         diff = np.abs(d).max(axis=2)
-    return _clean((diff > p["diff_threshold"]).astype(np.uint8) * 255, p)
+    m = (diff > p["diff_threshold"]).astype(np.uint8) * 255
+    return _clean(m if roi is None else cv2.bitwise_and(m, roi), p)
 
 
 def _clean(mask, p):
@@ -461,6 +468,13 @@ def track(trial, out_dir, stride=1, start=None, end=None, overlay=True, log_ever
     walls_px = np.zeros(ref_rect.shape[:2], np.uint8)
     for w in walls:
         cv2.fillPoly(walls_px, [to_rect([[w[0], w[1]], [w[2], w[1]], [w[2], w[3]], [w[0], w[3]]]).round().astype(np.int32)], 255)
+    for cx, cy, th, hw, hh in p["exclude_obb_mm"] or []:
+        cv2.fillPoly(walls_px, [to_rect(box_corners((cx, cy, th), (2 * hw, 2 * hh))).round().astype(np.int32)], 255)
+
+    roi = None
+    if p["roi_mm"]:
+        roi = np.zeros(ref_rect.shape[:2], np.uint8)
+        cv2.fillPoly(roi, [to_rect(p["roi_mm"]).round().astype(np.int32)], 255)
 
     bx, by, heading = trial_base(trial, cal)
     base_px = to_rect([[bx, by]])[0]
@@ -504,7 +518,7 @@ def track(trial, out_dir, stride=1, start=None, end=None, overlay=True, log_ever
             pose, score = tr.update(gray)
             poses.append(pose); scores.append(score)
 
-        mask = vine_mask(rect, background, p)
+        mask = vine_mask(rect, background, p, roi)
         mask[walls_px > 0] = 0
         mask[behind > 0] = 0
         cut = np.zeros_like(mask)

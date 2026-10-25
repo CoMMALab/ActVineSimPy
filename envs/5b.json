@@ -1,0 +1,140 @@
+{
+ "name": "5b",
+ "category": "block_puzzle",
+ "description": "medium: up, right, then down into the pocket; every push ends against a wall",
+ "board_mm": [
+  1540.0,
+  1100.0
+ ],
+ "walls": [
+  {
+   "rect": [
+    330.0,
+    660.0,
+    660.0,
+    770.0
+   ],
+   "cells": [
+    3,
+    3,
+    5,
+    3
+   ]
+  },
+  {
+   "rect": [
+    770.0,
+    220.0,
+    880.0,
+    770.0
+   ],
+   "cells": [
+    7,
+    3,
+    7,
+    7
+   ]
+  },
+  {
+   "rect": [
+    330.0,
+    330.0,
+    440.0,
+    550.0
+   ],
+   "cells": [
+    3,
+    5,
+    3,
+    6
+   ]
+  },
+  {
+   "rect": [
+    550.0,
+    220.0,
+    660.0,
+    550.0
+   ],
+   "cells": [
+    5,
+    5,
+    5,
+    7
+   ]
+  },
+  {
+   "rect": [
+    660.0,
+    220.0,
+    770.0,
+    330.0
+   ],
+   "cells": [
+    6,
+    7,
+    6,
+    7
+   ]
+  }
+ ],
+ "boxes": [
+  {
+   "center": [
+    495.0,
+    385.0
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  }
+ ],
+ "start": {
+  "xy": [
+   495.0,
+   55.0
+  ],
+  "heading_deg": 90.0
+ },
+ "goal": {
+  "type": "box",
+  "box": 0,
+  "center": [
+   715.0,
+   385.0
+  ],
+  "radius": 25.0
+ },
+ "grid": {
+  "cell_mm": 110.0,
+  "rows": [
+   "oooooooooooooo",
+   "o............o",
+   "o............o",
+   "o..###.#.....o",
+   "o......#.....o",
+   "o..#.#.#.....o",
+   "o..#B#G#.....o",
+   "o....###.....o",
+   "o............o",
+   "oooooooooooooo"
+  ],
+  "block": [
+   4,
+   6
+  ],
+  "goal": [
+   6,
+   6
+  ],
+  "n_headings": 16,
+  "spawn": "ring"
+ },
+ "planner": {
+  "max_bodies": 67
+ },
+ "notes": "110 mm cells (12 mm tolerance around the 98 mm block); 5 wall rectangles for 14 wall cells"
+}

@@ -1,0 +1,35 @@
+{
+ "name": "base_pbd_brick",
+ "description": "run_envs.DEFAULT_SIM: joint stiffness and damping fitted to master's PBD vine (fit_to_master.py) and then to the 15 brick demos (video/demos, 2.3 kg brick assumed, 20 N stall force), rescaled from 18 mm to 30 mm segments; vine radius and box size from real_measurements.md. obj_friction 0.08 is not fitted for the 0.503 kg box.",
+ "created": "2026-10-24T21:40:38",
+ "parent": null,
+ "trained_on": [
+  {
+   "ref": "xnew_rrt/data/master_ref.npz"
+  },
+  {
+   "ref": "xnew_rrt/data/video_ref.npz (brick demos)"
+  }
+ ],
+ "sim": {
+  "max_bodies": 60,
+  "grow_rate_mps": 0.25,
+  "vine_radius_m": 0.02426,
+  "seg_len_m": 0.03,
+  "stiffness_mode": "curvature",
+  "grow_force_n": 20.0,
+  "seg_mass_kg": 0.005,
+  "joint_stiffness": 24.0,
+  "ang_damp": 0.0010379999999999999,
+  "seg_inertia_kgm2": 0.001,
+  "obj_friction": 0.08
+ },
+ "fit": {
+  "search": "cross-entropy (fit_to_master.py)",
+  "fitted": [
+   "joint_stiffness",
+   "ang_damp"
+  ]
+ },
+ "metrics": {}
+}

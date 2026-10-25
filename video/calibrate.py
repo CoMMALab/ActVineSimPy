@@ -287,6 +287,8 @@ def calibrate(frame, trial):
 
     if trial.get("pegboard_pitch_mm"):
         px, mm, board_mm, shape = pegboard_lattice(frame, trial["pegboard_pitch_mm"])
+        if trial.get("origin_shift_mm"):     # move the board frame's origin (when the lattice anchors
+            mm = mm + np.asarray(trial["origin_shift_mm"], dtype=np.float64)   # above things of interest)
         if K is None and trial.get("fit_distortion", True):
             K, dist = fit_radial_distortion(px, mm, (frame.shape[1], frame.shape[0]))
         cal = Calibration(H=np.eye(3), board_mm=tuple(trial.get("board_mm") or board_mm),

@@ -1,0 +1,200 @@
+{
+ "name": "5c_round",
+ "category": "block_puzzle",
+ "description": "hard: six pushes; diagonal vines that walls turn into horizontal pushes, two pushes stop mid-corridor",
+ "board_mm": [
+  1650.0,
+  1100.0
+ ],
+ "walls": [
+  {
+   "rect": [
+    220.0,
+    770.0,
+    770.0,
+    880.0
+   ],
+   "cells": [
+    2,
+    2,
+    6,
+    2
+   ]
+  },
+  {
+   "rect": [
+    990.0,
+    550.0,
+    1100.0,
+    880.0
+   ],
+   "cells": [
+    9,
+    2,
+    9,
+    4
+   ]
+  },
+  {
+   "rect": [
+    220.0,
+    660.0,
+    330.0,
+    770.0
+   ],
+   "cells": [
+    2,
+    3,
+    2,
+    3
+   ]
+  },
+  {
+   "rect": [
+    550.0,
+    550.0,
+    770.0,
+    660.0
+   ],
+   "cells": [
+    5,
+    4,
+    6,
+    4
+   ]
+  },
+  {
+   "rect": [
+    880.0,
+    550.0,
+    990.0,
+    660.0
+   ],
+   "cells": [
+    8,
+    4,
+    8,
+    4
+   ]
+  },
+  {
+   "rect": [
+    1100.0,
+    330.0,
+    1210.0,
+    660.0
+   ],
+   "cells": [
+    10,
+    4,
+    10,
+    6
+   ]
+  },
+  {
+   "rect": [
+    330.0,
+    220.0,
+    440.0,
+    550.0
+   ],
+   "cells": [
+    3,
+    5,
+    3,
+    7
+   ]
+  },
+  {
+   "rect": [
+    550.0,
+    440.0,
+    660.0,
+    550.0
+   ],
+   "cells": [
+    5,
+    5,
+    5,
+    5
+   ]
+  },
+  {
+   "rect": [
+    880.0,
+    330.0,
+    1100.0,
+    440.0
+   ],
+   "cells": [
+    8,
+    6,
+    9,
+    6
+   ]
+  }
+ ],
+ "boxes": [
+  {
+   "center": [
+    275.0,
+    385.0
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  }
+ ],
+ "start": {
+  "xy": [
+   275.0,
+   55.0
+  ],
+  "heading_deg": 90.0
+ },
+ "goal": {
+  "type": "box",
+  "box": 0,
+  "center": [
+   1045.0,
+   495.0
+  ],
+  "radius": 25.0
+ },
+ "grid": {
+  "cell_mm": 110.0,
+  "rows": [
+   "ooooooooooooooo",
+   "o.............o",
+   "o.#####..#....o",
+   "o.#......#....o",
+   "o....##.###...o",
+   "o..#.#...G#...o",
+   "o.B#....###...o",
+   "o..#..........o",
+   "o.............o",
+   "ooooooooooooooo"
+  ],
+  "block": [
+   2,
+   6
+  ],
+  "goal": [
+   9,
+   5
+  ],
+  "n_headings": 16,
+  "spawn": "ring"
+ },
+ "planner": {
+  "max_bodies": 70
+ },
+ "corner_radius_mm": {
+  "walls": 10.0,
+  "boxes": 10.0
+ },
+ "notes": "110 mm cells (12 mm tolerance around the 98 mm block); 9 wall rectangles for 21 wall cells; wall and block corners rounded to 10 mm"
+}

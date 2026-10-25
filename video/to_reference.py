@@ -8,7 +8,7 @@ dvsim's stiffness and damping to the real vine with `--ref`:
 
 Per trial (one scenario each):
   frames      the centerline every `record_mm` of growth (the fit compares shapes at equal length)
-  walls_mm    the trial's static boxes; start = the base (x, y [mm], heading [rad]), the heading
+  walls_mm    the trial's static boxes [x1, y1, x2, y2]; walls_obb_mm its oriented ones; start = the base (x, y [mm], heading [rad]), the heading
               fitted to the whole straight vine just before it touches a box (launch_heading)
   schedule    [(curvature [1/m], length grown with it [mm]), ...] from the trial's "schedule";
               what the vine was fabricated or actuated with, counted from the first recorded frame
@@ -49,11 +49,18 @@ def launch_heading(tracks, still_mm=2.0):
     return float(np.arctan2(d[1], d[0]))
 
 
-def scenario_from_tracks(tracks, record_mm=RECORD_MM, min_start_mm=30.0):
-    '''(meta, frames, boxes): a scenario of the fit's reference from one trial's tracks.'''
+def scenario_from_tracks(tracks, record_mm=RECORD_MM, min_start_mm=30.0, min_box_score=None):
+    '''(meta, frames, boxes): a scenario of the fit's reference from one trial's tracks. With
+    min_box_score, the scenario ends before the first frame where a box's track scores below it (the
+    tracker lost the box: hidden by a panel, under the vine).'''
     meta = tracks["meta"]
     trial = meta["trial"]
-    ok = np.nonzero(tracks["valid"] & (tracks["length_mm"] >= min_start_mm))[0]
+    usable = tracks["valid"] & (tracks["length_mm"] >= min_start_mm)
+    if min_box_score is not None and len(meta["boxes"]):
+        lost = np.nonzero(np.asarray(tracks["box_score"]).min(axis=1) < min_box_score)[0]
+        if len(lost):
+            usable[lost[0]:] = False
+    ok = np.nonzero(usable)[0]
     if len(ok) == 0:
         raise ValueError(f"{trial['name']}: no frame with a vine longer than {min_start_mm} mm")
     first = ok[0]
@@ -88,6 +95,9 @@ def scenario_from_tracks(tracks, record_mm=RECORD_MM, min_start_mm=30.0):
     rate = trial["grow_rate_mps"] * 1e3 if trial.get("grow_rate_mps") else growth_rate(tracks)
     start = list(meta["base"][:2]) + [launch_heading(tracks)]
     sc = {"walls_mm": meta["walls_mm"], "start": start, "schedule": schedule,
+          # oriented walls [cx, cy, theta_rad, hw, hh] (mm, rad), e.g. a slanted panel: kept apart from the
+          # axis-aligned walls_mm, which fit_to_master scales and draws as [x1, y1, x2, y2]
+          "walls_obb_mm": trial.get("walls_obb_mm", []),
           "num_frames": len(frames), "initial_body_mm": L0,
           "grow_rate_mps": None if rate is None else rate * 1e-3,
           "objects": [{"size_mm": b["size_mm"], "mass_kg": b["mass_kg"],
@@ -101,6 +111,8 @@ def main():
     parser.add_argument("runs", nargs="+", help="output folders of video/track.py (or their tracks.npz)")
     parser.add_argument("--out", default="xnew_rrt/data/video_ref.npz")
     parser.add_argument("--record-mm", type=float, default=RECORD_MM)
+    parser.add_argument("--min-box-score", type=float, default=None,
+                        help="end each scenario before a box's track scores below this")
     args = parser.parse_args()
 
     out, meta = {}, {}
@@ -108,7 +120,7 @@ def main():
         path = run if run.endswith(".npz") else os.path.join(run, "tracks.npz")
         tracks = load_tracks(path)
         name = tracks["meta"]["trial"]["name"]
-        sc, frames, boxes, grown = scenario_from_tracks(tracks, args.record_mm)
+        sc, frames, boxes, grown = scenario_from_tracks(tracks, args.record_mm, min_box_score=args.min_box_score)
         for k, (f, b) in enumerate(zip(frames, boxes)):
             out[f"{name}/frame{k}"] = f
             out[f"{name}/boxes{k}"] = b

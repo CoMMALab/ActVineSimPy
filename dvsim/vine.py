@@ -62,6 +62,29 @@ def obb_obb_sep(poseA, hwA, hhA, poseB, hwB, hhB):
     return torch.stack([gap(cA, sA), gap(-sA, cA), gap(cB, sB), gap(-sB, cB)]).max()
 
 
+def rounded_obb_sep(poseA, hwA, hhA, rA, poseB, hwB, hhB, rB):
+    """Separation of two boxes whose corners are rounded with radii rA, rB (each is the box shrunk
+    by its radius, plus that margin). Separated: the exact distance between the shrunk boxes (the
+    nearest of each one's corners to the other box) minus the margins; overlapping: the SAT depth
+    minus the margins. Unlike obb_obb_sep this sees the rounding: two corners pass each other
+    smoothly. Equals obb_obb_sep for face contact. Use obb_obb_sep when both radii are 0."""
+    hwA, hhA, hwB, hhB = hwA - rA, hhA - rA, hwB - rB, hhB - rB
+    sat = obb_obb_sep(poseA, hwA, hhA, poseB, hwB, hhB)
+
+    def corners(pose, hw, hh):
+        c, s = torch.cos(pose[2]), torch.sin(pose[2])
+        lx = torch.stack([-hw, hw, hw, -hw])
+        ly = torch.stack([-hh, -hh, hh, hh])
+        return pose[0] + c * lx - s * ly, pose[1] + s * lx + c * ly
+
+    ax, ay = corners(poseA, hwA, hhA)
+    bx, by = corners(poseB, hwB, hhB)
+    zero = torch.zeros_like(hwA)
+    d = torch.cat([torch.stack([point_obb_gap(ax[k], ay[k], poseB, hwB, hhB, zero) for k in range(4)]),
+                   torch.stack([point_obb_gap(bx[k], by[k], poseA, hwA, hhA, zero) for k in range(4)])]).min()
+    return torch.where(sat < 0, sat, d) - rA - rB
+
+
 def box_mass(density, hw, hh):
     """Mass of a solid rectangle from an areal density (mass per unit area) and half-extents.
     Lets object mass scale physically with size (a 2x box is 4x heavier)."""
@@ -176,6 +199,10 @@ class VineParams:
         self.obj_hw = torch.zeros(0)                 # (n_obj,) half-width  per object
         self.obj_hh = torch.zeros(0)                 # (n_obj,) half-height per object
         self.obj_mass = torch.zeros(0)               # (n_obj,) mass        per object
+        # corner radius of every wall and every object (internal length units; 0 = sharp corners):
+        # each is its box shrunk by that much, plus that margin, in every contact
+        self.wall_round = 0.0
+        self.obj_round = 0.0
 
         # --- Post-solve velocity regularization (see step()). Caps derived from grow_rate; the
         #     factors are tuned to catch the body-promotion / free-growth spikes only. ---
@@ -288,8 +315,9 @@ def sdf(params: VineParams, state, bodies):
     """
     st = StateTensor(state)
 
+    r = params.wall_round                   # rounded wall corners: the shrunk box plus that margin
     def body_gap(px, py):   # min gap of one body circle over all obstacle boxes
-        gaps = torch.vmap(lambda pose, hw, hh: point_obb_gap(px, py, pose, hw, hh, params.radius))(
+        gaps = torch.vmap(lambda pose, hw, hh: point_obb_gap(px, py, pose, hw - r, hh - r, params.radius + r))(
             params.obstacle_pose, params.obstacle_hw, params.obstacle_hh)
         return gaps.min()
 
@@ -399,9 +427,10 @@ def extend(params: VineParams, state, dstate, bodies):
     # dstate.y[new_i] = torch.where(extend_needed, dstate.y[last_i], dstate.y[new_i])
     # dstate.theta[new_i] = torch.where(extend_needed, dstate.theta[last_i], dstate.theta[new_i])
 
-    dstate.x[new_i] = 0
-    dstate.y[new_i] = 0
-    dstate.theta[new_i] = 0
+    # (x * 0, not a Python 0: under vmap a scalar becomes a CPU tensor, which a CUDA graph cannot copy)
+    dstate.x[new_i] = dstate.x[new_i] * 0
+    dstate.y[new_i] = dstate.y[new_i] * 0
+    dstate.theta[new_i] = dstate.theta[new_i] * 0
 
     # Set the new segment position
     state.x[last_i] = torch.where(extend_needed, new_seg_x, state.x[last_i])

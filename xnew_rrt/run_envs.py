@@ -2,19 +2,18 @@
 Load the environments in envs/*.json (written by envs/make_envs.py), draw them, and run the basic
 planner on each.
 
-    b2g_unretractable   batched RRT over (tip, box positions) to box 0's goal
-    vine_to_goal        the same RRT, to the tip goal
-    b2g_retractable     the same RRT with vine resets as an action in the one tree
-All three are reset_action_rrt.plan (resets off for the first two), run until the goal, --iters
-batched iterations, or the time limit (DEFAULT_PLANNER / CATEGORY_PLANNER, minutes).
+    b2g_unretractable   tree over (tip, box positions) to box 0's goal
+    vine_to_goal        the same, to the tip goal
+    b2g_retractable     the same with vine resets as an action in the one tree
+All of them are kino.plan with --planner (rrt, rrt_grid, kpiece, kinopax; default rrt), run until
+the goal, the edge budget, or the time limit (DEFAULT_PLANNER / CATEGORY_PLANNER, minutes).
+--device cuda runs the batched QP solver (dvsim/batched_qp.py) on the GPU, capped at half its memory.
 
 Sim settings (DEFAULT_SIM): the real vine and boxes (real_measurements.md) and the stiff vine fitted
 to the brick videos. Joint stiffness and damping are rescaled from the fit's 18 mm segments to 30 mm
 ones (same bending stiffness EI = k * segment length); 30 mm segments keep the long vines of these
 boards under ~90 bodies. The env's "planner" block can override max_bodies and any DEFAULT_PLANNER key.
 
-The sim runs on the CPU only (see the README's "How well the sim batches"); CUDA is capped at half
-the GPU's memory anyway, in case anything does touch it.
 Run from the repo root (actvine env):
     python xnew_rrt/run_envs.py --draw-only                 # envs/vis/<name>.png for every env
     python xnew_rrt/run_envs.py envs/1a.json envs/4b.json   # plan on some
@@ -33,6 +32,8 @@ import numpy as np
 import torch
 
 from scene import Scene, Sim, SimConfig, scene_to_dict  # (puts the repo root on sys.path)
+import checkpoint
+import kino
 import reset_action_rrt
 import tree_stages
 import viz
@@ -46,8 +47,10 @@ DEFAULT_SIM = dict(max_bodies=60, grow_rate_mps=0.25, vine_radius_m=0.02426, seg
                    stiffness_mode="curvature", grow_force_n=20.0, seg_mass_kg=0.005,
                    joint_stiffness=40.0 * 0.018 / 0.03, ang_damp=1.73e-3 * 0.018 / 0.03,
                    seg_inertia_kgm2=1.0e-3, obj_friction=0.08)
-DEFAULT_PLANNER = dict(iters=100000, time_limit_min=45, batch_size=32, steps_per_edge=25, max_curvature=3.33,
-                       goal_bias=0.1, box_weight=1.0,
+DEFAULT_PLANNER = dict(planner="rrt", max_edges=100000, time_limit_min=45, batch_size=32, steps_per_edge=25,
+                       max_curvature=3.33, goal_bias=0.1, box_weight=1.0,
+                       # cells (kino.Projection): fine cells for pruning, coarse ones for picking
+                       cell_mm=15.0, heading_deg=30.0, coarse=5,
                        # resets (b2g_retractable only)
                        unlock_mm=50.0, straight_prob=0.3)
 CATEGORY_PLANNER = {"b2g_retractable": dict(time_limit_min=90)}
@@ -79,6 +82,8 @@ def load_env(path):
     kw = dict(walls_m=walls, objects_m=objects, masses_kg=[b["mass_kg"] for b in e["boxes"]], start=start,
               bounds_m=(-t * mm, (W + t) * mm, -t * mm, (H + t) * mm), name=e["name"],
               objects_theta=[math.radians(b["angle_deg"]) for b in e["boxes"]])
+    if "corner_radius_mm" in e:                       # {"walls": mm, "boxes": mm}
+        kw["corner_radius_m"] = (e["corner_radius_mm"].get("walls", 0.0) * mm, e["corner_radius_mm"].get("boxes", 0.0) * mm)
     if g["type"] == "box":
         if g.get("box", 0) != 0:
             raise ValueError("the box goal is for box 0: list the goal's box first")
@@ -141,44 +146,57 @@ def goal_fns(sim, e):
     return sim.reached_goal, sim.goal_distance_m
 
 
-def run(e, sim, planner, out, seed, tree_frames, tree_every=None):
-    '''Plan with reset_action_rrt: resets on for b2g_retractable, off (the batched RRT) otherwise.'''
+def run(e, sim, planner, out, seed, tree_frames, tree_every=None, render=True):
+    '''Plan with kino.plan (planner["planner"]); resets only for b2g_retractable.'''
     goal_test, goal_distance = goal_fns(sim, e)
     retractable = e["category"] == "b2g_retractable"
-    log = reset_action_rrt.ResetTreeLog(sim, goal_distance)
-    tree, best, stats = reset_action_rrt.plan(
-        sim, planner["iters"], planner["batch_size"], planner["steps_per_edge"], planner["max_curvature"],
-        planner["goal_bias"], random.Random(seed), goal_test, goal_distance,
-        unlock_mm=planner["unlock_mm"] if retractable else None,
+    log = reset_action_rrt.ResetTreeLog(sim, goal_distance) if render else None
+    tree, best, stats = kino.plan(
+        sim, planner["planner"], goal_test, goal_distance, random.Random(seed),
+        batch_size=planner["batch_size"], steps_per_edge=planner["steps_per_edge"],
+        max_curvature=planner["max_curvature"], goal_bias=planner["goal_bias"],
         straight_prob=planner["straight_prob"] if retractable else 0.0,
-        box_weight=planner["box_weight"], time_limit_s=60 * planner["time_limit_min"],
-        on_iteration=lambda it, t, *_: log.update(t, it))
+        max_edges=planner["max_edges"], time_limit_s=60 * planner["time_limit_min"],
+        unlock_mm=planner["unlock_mm"] if retractable else None, cell_mm=planner["cell_mm"],
+        heading_deg=planner["heading_deg"], coarse=planner["coarse"], box_weight=planner["box_weight"],
+        on_iteration=(lambda it, t, *_: log.update(t, it)) if render else None)
+    reached = tree.goal_node is not None
+    dist = goal_distance(best.info)
+    controls = reset_action_rrt.branch_controls(best)
+    result = dict(reached=reached, goal_distance_mm=dist * 1000, controls=controls,
+                  pushes=1 + sum(c == reset_action_rrt.RESET for c, _ in controls), **stats)
+    if not render:
+        return result
     log.save(os.path.join(out, "tree_log.pkl"))
     iters = len(log.iter_end)
     stages = math.ceil(iters / tree_every) if tree_every else min(iters, tree_frames)
     tree_stages.render_stages(log, out, max(1, stages), grid=stages <= 12)
     os.replace(os.path.join(out, "tree_stages.gif"), os.path.join(out, "tree.gif"))
     os.remove(os.path.join(out, "tree_stages.html"))
-
-    reached = tree.goal_node is not None
-    dist = goal_distance(best.info)
     states, labels = reset_action_rrt.branch_states(best)
     tag = "SOLVED" if reached else f"FAILED, closest {dist * 1000:.0f} mm from the goal"
-    render_states(sim, states, [f"{e['name']} {tag} | {l}" for l in labels], out, name="solution", every=3)
-    controls = reset_action_rrt.branch_controls(best)
-    return dict(reached=reached, goal_distance_mm=dist * 1000, pushes=1 + sum(c == reset_action_rrt.RESET for c, _ in controls),
-                controls=controls, **stats)
+    render_states(sim, states, [f"{e['name']} {planner['planner']} {tag} | {l}" for l in labels], out,
+                  name="solution", every=1)
+    gif_to_mp4(os.path.join(out, "solution.gif"), os.path.join(out, "solution.mp4"))
+    return result
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("envs", nargs="*", help="envs/*.json (default: all)")
     parser.add_argument("--draw-only", action="store_true")
-    parser.add_argument("--iters", type=int, default=None, help="override every env's batched iterations")
+    parser.add_argument("--planner", default=None, choices=kino.PLANNERS, help="default: rrt")
+    parser.add_argument("--max-edges", type=int, default=None, help="override every env's edge budget")
+    parser.add_argument("--batch-size", type=int, default=None, help="edges simulated together (default 256 on a GPU, 32 on the CPU)")
     parser.add_argument("--time-limit", type=float, default=None, help="override every env's time limit [min]")
+    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu",
+                        help="cuda (default when there is a GPU): batched QP solver (TORCH_IPM), states on the GPU, CUDA graphs")
+    parser.add_argument("--qp-backend", default=None, choices=["DIFFCP", "TORCH_IPM"],
+                        help="default: TORCH_IPM on cuda, DIFFCP on cpu")
     parser.add_argument("--tree-frames", type=int, default=40, help="tree.gif frames, spread over the run")
     parser.add_argument("--tree-every", type=int, default=None, help="instead one tree.gif frame per this many iterations")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--checkpoint", default=None, help="sim parameters from checkpoints/<name>.json (default DEFAULT_SIM)")
     parser.add_argument("--out", default="out/envs")
     args = parser.parse_args()
 
@@ -189,10 +207,17 @@ def main():
         torch.cuda.set_per_process_memory_fraction(0.5)
     for path in paths:
         e, scene, cfg, planner = load_env(path)
-        if args.iters:
-            planner["iters"] = args.iters
+        if args.device.startswith("cuda"):
+            planner["batch_size"] = 256
+        for key in ("planner", "max_edges", "batch_size"):
+            if getattr(args, key) is not None:
+                planner[key] = getattr(args, key)
         if args.time_limit:
             planner["time_limit_min"] = args.time_limit
+        if args.checkpoint:
+            checkpoint.apply(cfg, args.checkpoint)
+        cfg.device = args.device
+        cfg.qp_backend = args.qp_backend or ("TORCH_IPM" if args.device.startswith("cuda") else "DIFFCP")
         sim = Sim(scene, cfg)
         out = os.path.join(args.out, e["name"])
         os.makedirs(out, exist_ok=True)
@@ -203,13 +228,12 @@ def main():
             continue
         print(f"=== {e['name']} ({e['category']})", flush=True)
         result = run(e, sim, planner, out, args.seed, args.tree_frames, args.tree_every)
-        gif_to_mp4(os.path.join(out, "solution.gif"), os.path.join(out, "solution.mp4"))
         result.update(env=e["name"], category=e["category"], scene=scene_to_dict(scene), sim=asdict(cfg), planner=planner)
         with open(os.path.join(out, "result.json"), "w") as f:
             json.dump(result, f, indent=1)
         print(f"{e['name']}: {'reached the goal' if result['reached'] else 'did not reach the goal'}, "
               f"{result['goal_distance_mm']:.0f} mm, {result['nodes']} nodes, {result['resets']} resets, "
-              f"{result['iterations']} iterations in {result['seconds'] / 60:.0f} min", flush=True)
+              f"{result['edges']} edges in {result['seconds'] / 60:.1f} min", flush=True)
         write_summary(args.out)
 
 
@@ -221,8 +245,8 @@ def write_summary(out_dir):
         if os.path.exists(path):
             with open(path) as f:
                 r = json.load(f)
-            summary[name] = {k: r.get(k) for k in ("category", "reached", "goal_distance_mm", "pushes", "resets",
-                                                    "nodes", "iterations", "seconds", "stopped")}
+            summary[name] = {k: r.get(k) for k in ("category", "planner", "reached", "goal_distance_mm", "pushes",
+                                                    "resets", "nodes", "edges", "pruned", "seconds", "stopped")}
     with open(os.path.join(out_dir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=1)
 

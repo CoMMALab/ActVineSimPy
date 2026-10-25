@@ -38,7 +38,7 @@ the live code for the pushing work.
 | `xnew_rrt/` | **live** | RRT over `dvsim`, tree visualizer, single-rollout viewer. |
 | `video/` | **live** | Vine centerlines and box poses from top-down videos, for system identification. See [Video tracking](#video-tracking). |
 | `sPAM/` | used | sPAM actuator model. `torch_*.py` are the Torch ports (`torch_nns.py` = neural surrogate, `torch_nns_usage.py` = bend radius -> pressure / actuator length). The non-`torch_` files are the JAX originals and need `jax`. |
-| `envs/` | **live** | The sim environments, `envs/<name>.json` (written by `envs/make_envs.py`), pictures in `envs/vis/`. See [Environments](#environments). The old `envs/*.txt` files are in `envs/archive/`; master's scripts that default to them (`kinodynamic/`, `experiments/`, `geometric/`) need `--env envs/archive/...`. |
+| `envs/` | **live** | The sim environments, `envs/<name>.json` (written by `envs/make_envs.py`; the block puzzles 5a–5c by `envs/make_puzzles.py`), pictures in `envs/vis/`. See [Environments](#environments). The old `envs/*.txt` files are in `envs/archive/`; master's scripts that default to them (`kinodynamic/`, `experiments/`, `geometric/`) need `--env envs/archive/...`. |
 | `pbd_vine.py`, `render.py`, `kinodynamic/`, `geometric/`, `experiments/` | from master | ActVine PBD simulator, pygame renderer, SST planner, biarc RRT*, paper experiments. Identical to `master` on this branch, except `kinodynamic/env_loader.py`, which also parses `dynamic_obstacles:`. Needs `jax`, which the current `vine` env does not have. |
 | `cache/`, `pics/`, `solution.png`, `title.gif`, `x_progress_log.txt` | leftovers | Outputs and notes from earlier runs. |
 
@@ -51,7 +51,8 @@ relates to SQP, how it is solved and batched, box friction, and how the sPAM mod
 |---|---|
 | `vine.py` | `VineParams`, state layout, growth (`extend`), the constraint functions (`sdf`, `joint_deviation`, `growth_rate`), bending torques (`bending_energy`), and `forward_batched_part`, which evaluates them and their Jacobians for one batch element. |
 | `dynamic_vine.py` | Movable boxes: vine-box, box-wall and box-box gap functions, assembly of the full QP (`dynamic_solve`), and `step()`, the single entry point. |
-| `solver.py` | The QP solve: cvxpylayers + Clarabel on CPU (differentiable), or `qpth` on GPU if installed. |
+| `solver.py` | The QP solve: cvxpylayers + Clarabel on CPU (differentiable, default), `BACKEND = "TORCH_IPM"` for `batched_qp.py`, or `qpth` on GPU if installed. |
+| `batched_qp.py` | The whole batch's QP in plain torch on CPU or GPU: friction cone linearized, far rows dropped, equalities eliminated by LU, Mehrotra interior point. See [The batched simulator](#the-batched-simulator). |
 | `si.py` | SI <-> internal units. Internally lengths are **mm**, time is s, mass is kg, angles are rad. |
 | `spam.py` | sPAM actuation for the `'spam'` stiffness mode: actuator moment from (pressure, rest length, design radius), and its inverse. |
 | `demos/` | `render_demos.py` (pushing / box-wall / box-box / spin / sPAM curl gifs), `render_batched.py` (64 vines in parallel). |
@@ -103,7 +104,13 @@ between batch elements.
 | `reset_action_rrt.py` | Several pushes in one tree: a vine reset is an action, unlocked once the boxes have moved far enough from every earlier reset. Used by `run_envs.py`. |
 | `reset_rrt.py` | Older: several pushes as a greedy chain of batched-RRT episodes, one tree per push. |
 | `run_envs.py` | Load, draw and plan on the environments in `envs/*.json`. |
-| `bench_batch.py` | Times one batched dvsim step against batch size (and master's PBD sim on the GPU, `--pbd`). |
+| `bench_batch.py` | Times one batched dvsim step against batch size, either backend and device (and master's PBD sim on the GPU, `--pbd`). |
+| `check_batched_qp.py` | Checks the batched torch QP solver against Clarabel and the exact friction cone, and compares rollouts. |
+| `bench_jax_qp.py` | The batched torch QP solver against qpax and MPAX (JAX) on the same problems. |
+| `kino.py` | Batched kinodynamic planners: rrt, rrt_grid, kpiece, kinopax (+ `_shape` variants), with resets. |
+| `ablation.py` | Runs every env x planner x seed on the GPU sim; `--summarize` writes the table. |
+| `funneling.py` | Measures how often tree nodes land on an earlier node, in contact and in free space. |
+| `block_puzzle.py` | Hierarchical planner for the block puzzles 5a–5c: Dijkstra over the block's grid cell, each push realized by a batched search over straight vines from the spawn ring. |
 | `hierarchical_planner.py` | High-level block-pushing puzzle on a grid of box-sized cells: which pushes, from where, in what order. |
 | `pose_search.py` | Launch-pose search for a passive vine pushing a box (for the live demo). |
 | `rollout.py` | Simulate one rollout from a list of controls (or replay an RRT plan) and render it. |
@@ -155,9 +162,10 @@ python xnew_rrt/run_envs.py                           # plan on all; or list env
 - `solution.gif` and `solution.mp4`, the solution or the closest attempt (the title says which);
 - `result.json`; and `out/envs/summary.json` over all envs.
 
-Every env runs `reset_action_rrt.plan`: the batched RRT over (tip, box positions), batch 32,
-until the goal or a time limit (45 min; 90 min for the retractable envs). Resets are on only for
-`b2g_retractable`. Override with `--iters` and `--time-limit` (minutes).
+Every env runs `kino.plan` with `--planner` (default `rrt`, the batched RRT over (tip, box
+positions)), until the goal, the edge budget or a time limit (45 min; 90 min for the retractable
+envs). Resets are on only for `b2g_retractable`. Use `--device cuda --batch-size 256` for the GPU
+sim; the default is batch 32 on the CPU. Override with `--max-edges` and `--time-limit` (minutes).
 
 The sim settings are in `run_envs.DEFAULT_SIM`:
 - the real vine radius;
@@ -195,6 +203,65 @@ machine). "Off" is the box-to-goal or tip-to-goal distance at the end; the goal 
 
 With 20 iterations of 16 (2026-10-20) only 1b and 4d were solved, and the old reset planner left
 3a at 550 mm and 3b at 713 mm.
+
+### Block puzzles (5a–5c)
+
+The puzzles come from the sketch of 2026-10-24 and are written by `envs/make_puzzles.py`; images are in `envs/vis/5*.png`.
+
+- **Grid:** 110 mm cells, i.e. the 98 mm block plus 12 mm tolerance (`--cell`).
+- **Walls** fill whole cells. They are merged into rectangles: 21 wall cells become 9 in 5c. That makes a step about 4% faster than one rectangle per cell (106 vs 111 ms at B=256). Merging helps little because the solver already drops far rows.
+- **Spawn:** a ring of cells around the map. A vine grows straight (no actuation) from a ring cell's center, at any heading, and is retracted between pushes.
+- **Puzzles:**
+  - 5a: 2 pushes;
+  - 5b: 3 pushes;
+  - 5c: 6 pushes, two of which need a diagonal vine that a wall turns into a horizontal push.
+
+`xnew_rrt/block_puzzle.py` is a hierarchical planner.
+
+**High level.** Dijkstra over the block's cell.
+- A move pushes the block k cells along an axis.
+- It needs the k cells ahead free.
+- It needs room for the vine behind the block, in one of two forms:
+  - a straight free corridor back to the ring;
+  - or a wall beside the cell behind the block, with the cell diagonally behind it free (a deflected vine).
+- Deflected moves and moves that no wall stops cost more.
+
+**Low level.** Realizes one move with the batched GPU sim.
+1. **Candidates:** every ring cell × heading whose ray reaches behind the block. The headings are 16 uniform ones plus continuous headings aimed at the cell behind the block, the block's back face and the guide wall.
+2. **Rollout:** all candidates grow in one batched rollout.
+3. **Stop time:** per candidate, the step where the predicted resting pose is nearest the target cell. The block keeps sliding after the vine stops, v²/2μg, unless a wall stops it.
+4. **Settle:** the best stop times are settled in a second batched run with growth off.
+5. **Accept:** the move succeeds if the settled block is within 25 mm of the target cell's center and turned at most the jam angle. The jam angle is the most a 98 mm block can turn and still pass a one-cell corridor: 7.5° at 110 mm.
+6. **Failure:** a failed move is banned and the high level replans.
+
+A push that turns the block more than 15° on the way is flagged.
+
+```bash
+python envs/make_puzzles.py                                   # envs/5{a,b,c}.json + envs/vis/
+python xnew_rrt/block_puzzle.py envs/5a.json envs/5b.json envs/5c.json   # out/puzzle/<name>/
+```
+
+Each run writes these under `out/puzzle/<name>/`:
+- `plan.png`, the first high-level plan;
+- `pushes.png`, the pushes executed;
+- `solution.mp4`;
+- `result.json`, with every push search, how many candidates reached the target, and how many turned past the flag or jam angle.
+
+Results, 2026-10-24:
+
+| Env | Result | Pushes | Push searches | Flagged > 15° | Time |
+|---|---|---|---|---|---|
+| 5a | solved | 2 | 2 | 0 | 1.5 min |
+| 5b | solved | 3 | 3 | 0 | 2.9 min |
+| 5c | not solved: 5 of 6 pushes | 5 | 9 | 0 | 6.4 min |
+
+**5c, what fails.**
+- **Rejected shortcut.** The high level first tried a 4-push shortcut: down from the start, with a vine deflected along the pillar. The sim rejected it, 46 mm short. It then followed the sketch's route.
+- **Uniform headings can't reach behind the block.** The diagonal push has to thread a 62 mm window between the stub's corner and the pillar's corner, measured on the vine centerline. No ray from a ring-cell center hits it at 16, 32 or 64 uniform headings, because 45° rays pass exactly through grid corners. Aimed headings (38–44° from ring cell (0, 6)) thread it.
+- **The block ends up turned.** Single-cell pushes in a corridor leave the block wedged at the jam angle. Any push that ends where corridors meet leaves it turned more than that, so it no longer enters the next corridor.
+  - With 15° allowed, it got to the goal corridor's entrance turned 11.5°, and every vine wedged it there (`out/puzzle/aim_final15/`).
+  - With 120 mm cells (`envs/5c_120.json`, 15° jam angle), 8 pushes reach the same entrance and the last push fails the same way (`out/puzzle/5c_120/`).
+- **Uniform headings only** (`--no-aim`, `out/puzzle/noaim_h16/`): 5a and 5b solve, with one flagged push in 5b. 5c stops at the first diagonal push.
 
 ## Install
 
@@ -515,71 +582,174 @@ Planner:
 New: `scene.py`, `viz.py`, `rollout.py`, `tip_block_rrt.py`, `batch_tip_block_rrt.py`,
 `pose_search.py`, `draw_envs.py`, the `'curvature'` stiffness mode.
 
-## How well the sim batches
+## The batched simulator
 
-**There are two simulators.**
-- Master's planner (`kinodynamic/sst.py`) runs `pbd_vine.py`. It is JAX with soft constraints:
-  every step is a fixed number (15) of gradient steps on a penalty energy. That makes the step one
-  fixed-size computation, which `jax.jit` and `vmap` run for thousands of vines per GPU call.
-- The planners in `xnew_rrt/` run `dvsim`, in torch, with hard constraints: every step solves an
-  optimization problem with the contacts and joints as constraints. None of them use JAX or the
-  GPU.
+**Two simulators, two kinds of batching.**
+- Master's planner (`kinodynamic/sst.py`) runs `pbd_vine.py`: JAX, soft constraints, a fixed 15
+  gradient steps per step. One fixed-size computation, so `jit` + `vmap` run thousands of vines per
+  GPU call.
+- `dvsim` (torch) has hard constraints: every step solves an optimization problem with the
+  contacts and joints as constraints. Until 2026-10-23 that solve was cvxpylayers -> diffcp ->
+  Clarabel, one element at a time on a CPU thread pool.
 
-**One dvsim step** (`dvsim/dynamic_vine.step`) has four parts:
-1. **Constraint measures and their Jacobians**, per element. These are vectorized over the batch
-   (`torch.func.vmap`, with `jacrev` inside). They run on the CPU, because dvsim creates every
-   tensor there. The vine–box Jacobian has max_bodies x boxes rows, and the box–box one is
-   boxes² x boxes x 3, so the cost grows quickly with the number of boxes.
-2. **Building the problem**: batched tensor ops, padded to `max_bodies`. 60 bodies and 13 boxes
-   give 220 variables: 3 per body, 3 per box and 1 growth slack.
-3. **Solving it**: cvxpylayers, then diffcp, then Clarabel (interior point). This is batched in
-   name only: diffcp solves the elements one at a time on a CPU thread pool. The box friction
-   term ||(vx, vy, c w)|| makes the problem a second-order cone program, not a QP. So batched GPU
-   QP solvers can't take it, including the `USE_QPTH` path in `solver.py` (qpth isn't installed).
-4. **Failures**: if any element's solve fails, the whole batched call fails, and every element is
-   solved again one by one.
+**Now the whole batch steps together, on the GPU.** Opt in with
+`SimConfig(qp_backend="TORCH_IPM", device="cuda")`, or `--device cuda` on `run_envs.py` and
+`ablation.py`. States stay on the CPU between steps; each batched step moves its inputs to the GPU
+and back. The default is still DIFFCP on the CPU.
 
-**Measured** with `python xnew_rrt/bench_batch.py`: a vine about 0.55 m long, 4 torch threads, on
-a 12-core machine shared with other jobs, so roughly ±30%. Element-steps per second:
+1. **Device.** `Sim.step_batch` runs the step inside `torch.device("cuda")` with a GPU copy of the
+   params. Every bare `torch.zeros` / `eye` / `arange` in dvsim follows the default device, so
+   dvsim's files needed no device plumbing.
+2. **Jacobians** (`dynamic_vine.proximity_jacobians`). The vine–box gap Jacobians were
+   `jacrev` of the whole (bodies x boxes) gap table: one backward pass per output, each over every
+   pair, so (bodies x boxes)² work and memory. Gap (j, o) only depends on body j and box o, so one
+   small gradient per pair gives exactly the same numbers (max difference 0.0, 1 and 13 boxes) at
+   bodies x boxes cost. This also speeds up the CPU path: 4d at B=64 went from 20 to 70
+   element-steps/s.
+3. **The QP solve** (`dvsim/batched_qp.py`, plain torch, float64):
+   - **Friction linearized.** ||(vx, vy, c w)|| becomes two nested polygons, 16 and 9 directions,
+     with two extra variables per box. That keeps 96% of the norm in the worst direction; the
+     weights are rescaled so it is unbiased on average.
+   - **Rows that cannot bind are dropped.** These are rows with a gap over 60 mm (a body would have
+     to move that far in one step) and all-zero padding rows. On 1a, 125 rows become about 28.
+   - **Equalities eliminated by variable reduction.** A pivoted LU of A' gives x = x0 + Z u, which
+     leaves 65 free variables of 184 for one box. Batched LU is 60x faster than batched QR on the
+     GPU: 10 ms vs 650 ms at B=1024.
+   - **Mehrotra interior point** on the inequality-only problem: one batched Cholesky of a k x k
+     matrix per iteration. Each element converges or fails on its own; a failed element comes
+     back NaN and is frozen, and the rest of the batch is unaffected.
 
-| Env (boxes) | B=1 | B=4 | B=16 | B=64 | Share of the B=64 step |
-|---|---|---|---|---|---|
-| 1a (1) | 42 | 100 | 217 | 292 | solve 78%, Jacobians 16% |
-| 4c (2) | 42 | 90 | 121 | 190 | solve 71%, Jacobians 25% |
-| 4d (13) | 12 | 26 | 17 | 20 | solve 19%, Jacobians 80% |
+**Accuracy** (`python xnew_rrt/check_batched_qp.py [--device cuda]`), on 33 QPs recorded from a
+push in 1a:
 
-For comparison, master's PBD sim on the GPU (`--pbd`): half the 4090's memory, the same 60 bodies,
-no boxes, a linear stand-in for the sPAM bending model.
+| Check | Max error / max velocity |
+|---|---|
+| Same linearized QP solved by Clarabel | 1e-6 |
+| Exact friction cone (the old path), vine | 0.2% |
+| Exact friction cone (the old path), box | 0.75% |
+| With vs without dropping far rows | 3e-6 |
 
-| Batch | 1 | 64 | 1024 | 4096 |
+Whole rollouts (330 steps, 4 curvatures) end within 2.3 mm of the old path, except the head-on
+push. That one is chaotic on the old path too: nudging its curvature by 0.02 1/m moves the box
+230 mm.
+
+**Speed** (`python xnew_rrt/bench_batch.py ... --backend TORCH_IPM --device cuda`). A vine about
+0.55 m long, element-steps per second. The 4090 was running another user's job at 93% the whole
+time. "Best" is the old path's best over B ≤ 64.
+
+| Env (boxes) | diffcp, CPU (best) | GPU, B=64 | GPU, B=256 | GPU, B=1024 |
 |---|---|---|---|---|
-| Element-steps/s | 1.1k | 42k | 0.74M | 1.77M |
+| 1a (1) | 292 | 519 | 1,768 | 3,415 |
+| 4c (2) | 248 | 715 | 2,300 | 4,747 |
+| 4d (13) | 70 | 423 | 838 | 15 (memory thrash) |
 
-At batch 64 that is about 140x dvsim with one box. At batch 4096 it is about 6000x dvsim's best.
-It is not like for like: PBD has no boxes, soft contacts and a fixed number of iterations.
+A GPU step costs about 120 ms at any batch up to about 256. That floor is launch latency: about
+47 ms for the forward pass and about 60 ms for the interior point loop, each made of many small
+kernels. Past that, the cost grows slowly. So use batches of 256 or more.
 
-**What this means for planning.**
-- One RRT iteration (32 edges of 25 steps) takes 4–6 s with 1–2 boxes and about 40 s with 13.
-- Batches larger than about 32 buy little.
-- The `xnew_rrt` planners can afford thousands of nodes, not the hundreds of thousands SST plans
-  with.
+**JAX?** (`python xnew_rrt/bench_jax_qp.py`: the same recorded problems, linearized and culled,
+on the GPU in float64.)
 
-**Ways to make dvsim batch** (none of these are done):
-- **Make it a pure QP and solve the batch on the GPU.** Linearize the friction cone (a polygon of
-  about 8 directions, with extra slack variables), then solve every element at once with a
-  batched dense interior-point QP solver: qpth, which `USE_QPTH` already wires up, or a JAX one.
-  The Jacobians have to move to the GPU too, so dvsim would need a device argument everywhere it
-  makes a tensor. This keeps the hard contacts and is the smallest change that could reach GPU
-  batching.
-- **Port dvsim to JAX.** The measures and Jacobians map one to one onto `vmap` and `jacrev`. A QP
-  solver with a fixed number of iterations (e.g. qpax) would make the step jit-able like
-  `pbd_vine.py`. This is the most work and the biggest payoff.
-- **cvxpylayers' MPAX backend** (JAX, first-order, on the GPU) keeps the cone program. But
-  first-order solvers struggled with this ill-conditioned problem (SCS, see `solver.py`).
-- **Cheaper wins on the CPU:**
-  - only build constraints for walls and box pairs that are close: most of 4d's 13² box–box rows
-    are far apart;
-  - don't solve a whole failed batch again one element at a time.
+| Solver | B=256 | B=1024 | Error vs Clarabel |
+|---|---|---|---|
+| torch `batched_qp` | 69 ms | 198 ms | 3e-6 |
+| qpax (JAX interior point, `jit` + `vmap`) | 1,366 ms | 6,405 ms | 4e-7, never reports converged |
+| MPAX r2HPDHG (JAX first-order, cvxpylayers' MPAX backend) | 8,035 ms | 33,921 ms | diverges (3e27) |
+
+- qpax factors the full KKT system (about 330 x 330 per iteration) instead of eliminating the
+  equalities.
+- First-order methods don't handle this ill-conditioned problem; SCS had the same trouble.
+
+So the solver stays in torch. A JAX port of the forward pass could fuse its ~47 ms of launches
+into a few kernels. That saves at most about a third of a step at B≤256, and torch can get the
+same with CUDA graphs or `torch.compile`. Not worth a port.
+
+**Will the Jacobians become the bottleneck?**
+- **With 1–2 boxes, no.** The forward pass is a flat ~50 ms launch latency from B=1 to B=1024,
+  while the solve grows with B.
+- **With many boxes, yes, through memory rather than flops.** The assembled problem is dense:
+  bodies x boxes vine–box rows plus boxes² box–box rows, by about 250 columns. At 13 boxes and
+  B=1024 that is about 2.8 GB of float64. At the memory cap the allocator thrashes, which is the
+  70 s per step in the table.
+- **The fix:** cut rows before assembling, not after. Compute the gaps (cheap), keep the pairs
+  under the 60 mm threshold, and build Jacobian rows only for those. Rows then scale with
+  contacts, not with every pair. Not done yet.
+- **Smaller wins left:**
+  - CUDA graphs or `torch.compile` for the forward pass and the interior point loop: the launch
+    latency is most of a step at B ≤ 256;
+  - keeping states on the GPU for a whole edge instead of copying them back every step.
+
+## Batched kinodynamic planners and the funneling ablation
+
+`xnew_rrt/kino.py` is one batched loop: pick a batch of (node, curvature) pairs, simulate all
+those edges in one batched rollout, insert the results. The planners differ in how they pick and
+what they keep:
+
+| Planner | Pick | Keep |
+|---|---|---|
+| `rrt` | nearest node to a uniform (tip, box centers) sample, 10% goal bias | every node |
+| `rrt_grid` | same | a node only if its fine cell is empty: SST's pruning with grid cells instead of witnesses, no costs |
+| `kpiece` | a coarse cell by KPIECE importance (new, rarely picked, on the frontier, few nodes), then a node in it | every node |
+| `kinopax` | a coarse region by Kino-PAX-style weight (expansions from it that reached a new cell, few tries, few nodes) | a node only if its fine cell is empty |
+| `*_shape` | as `rrt_grid` / `kinopax` | fine cells also cut two points on the vine's body |
+
+**Cells.** Fine cells cut the tip x, y and every box center at 15 mm and the tip heading at 30°.
+Coarse cells cut the same positions at 75 mm, without the heading. Keys are hashed tuples, so many
+boxes cost nothing. Resets work in every planner, with the same 50 mm unlock rule as before.
+
+**Why sparsity might matter: the vine funnels** (`python xnew_rrt/funneling.py out/envs`, on the
+full-budget CPU trees of 2026-10-23). Take sibling edges, children of one node grown with
+curvatures at least 1 1/m apart. When the tip ends in contact (within 5 mm of a wall or box),
+42–84% of those pairs end within 2 mm of each other; when it ends free, 1–15% do (4b: 49%). Over
+all nodes, 49–88% sit within 2 mm, in tip and boxes, of an earlier node.
+
+**Ablation** (`python xnew_rrt/ablation.py`, then `--summarize`). Every env, every planner, seeds
+0–2. Budget: 16,384 edges in batches of 256, on the GPU sim, three processes sharing the 4090.
+Each cell is solved/3 runs and, when solved, the median edges and minutes to the goal; when not,
+the closest distance in mm.
+
+| Env | rrt | rrt_grid | kpiece | kinopax | rrt_grid_shape | kinopax_shape |
+|---|---|---|---|---|---|---|
+| 1a | 3/3: 2048, 0.5 min | 3/3: 2048, 0.5 min | 1/3: 1792, 0.4 min | 3/3: 2048, 0.6 min | 3/3: 2048, 0.5 min | 2/3: 2048, 0.5 min |
+| 1b | 3/3: 3072, 0.8 min | 3/3: 2048, 0.5 min | 1/3: 2048, 0.6 min | 3/3: 2048, 0.6 min | 3/3: 2048, 0.5 min | 2/3: 2048, 0.6 min |
+| 1c | 1/3: 13824, 4.4 min | **3/3: 1792, 0.4 min** | 1/3: 1792, 0.4 min | 2/3: 1792, 0.5 min | 3/3: 2816, 0.7 min | 2/3: 1792, 0.4 min |
+| 2a | 3/3: 3072, 0.9 min | 3/3: 3328, 1.0 min | 1/3: 9984, 2.8 min | 3/3: 2560, 0.7 min | 3/3: 2304, 0.6 min | 2/3: 2560, 0.7 min |
+| 2b | 1/3: 12288, 3.4 min | 0/3 (518) | 0/3 (515) | 0/3 (219) | 0/3 (211) | 0/3 (481) |
+| 3a | 1/3: 7936, 2.5 min | 1/3: 13056, 4.3 min | 0/3 (116) | 1/3: 11776, 4.3 min | 0/3 (109) | 1/3: 15872, 5.3 min |
+| 3b | 0/3 (632) | 0/3 (567) | 0/3 (447) | 0/3 (452) | 0/3 (525) | 0/3 (423) |
+| 4a | 3/3: 5888, 1.6 min | 3/3: 5888, 1.6 min | 3/3: 6912, 1.8 min | 3/3: 6400, 1.7 min | 3/3: 6400, 1.5 min | 3/3: 6912, 1.2 min |
+| 4b | 1/3: 3584, 0.9 min | 0/3 (525) | 1/3: 15360, 5.1 min | 1/3: 3328, 1.1 min | 1/3: 7168, 1.6 min | 1/3: 3584, 0.8 min |
+| 4c | **3/3: 4608, 1.3 min** | 0/3 (536) | 2/3: 15872, 4.2 min | 0/3 (536) | 1/3: 4096, 0.8 min | 2/3: 16128, 3.5 min |
+| 4d | 3/3: 3328, 2.2 min | 3/3: 3584, 2.5 min | 3/3: 3328, 2.3 min | 3/3: 3328, 2.2 min | 3/3: 3328, 1.4 min | 3/3: 3328, 1.5 min |
+| solved | **22/33** | 19/33 | 13/33 | 19/33 | 20/33 | 18/33 |
+
+**What it says.** Three seeds is few, so differences of one or two runs are noise.
+- **Pruning pays off where contact funnels the tree.** On 1c (a short push that must also turn
+  the block), `rrt_grid` solves 3/3 in about 1,800 edges with about 115 nodes. Dense `rrt` solves
+  1/3 and needs 13,824 edges.
+- **Pruning on the tip and boxes alone throws away what gaps need.** 4b and 4c need the vine
+  threaded through a gap. Two states with the same tip but a different body path count as
+  duplicates, and the first one kept is usually the wrong one. `rrt_grid` and `kinopax` drop to
+  0/3 on 4c.
+- **Adding two body points to the cell partly recovers this:** `kinopax_shape` 2/3 and
+  `rrt_grid_shape` 1/3 on 4c, against 3/3 for dense `rrt`.
+- **Picking cells without pruning (`kpiece`) is the weakest.** With 256 edges per batch it keeps
+  re-picking crowded cells.
+- **Pruned trees start slowly with big batches.** From the stub, 256 random curvatures land in
+  3–4 fine cells, so most of the first batches are pruned. On open boards that costs as much as
+  the pruning saves.
+- **Nobody solves 3b, and 2b is solved once (`rrt`).** These need long, aimed pushes, and the
+  random-curvature edges rarely make them.
+
+So the hypothesis holds for what the projection captures: duplicates really are duplicates in tip
+and box space, and pruning them speeds up contact-heavy pushes. The projection has to include
+enough of the vine's body for tasks where the body path matters.
+
+**Next steps:**
+- grow the pruning resolution as the tree fills, starting coarse;
+- prune by tip, boxes and body shape at the coarser level, keeping more than one node per cell;
+- use the funneling directly: when siblings collapse onto one state, stop sampling that parent's
+  curvature range.
 
 ## Known problems
 

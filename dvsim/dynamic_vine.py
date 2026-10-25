@@ -23,7 +23,7 @@ import copy
 import torch
 from functools import partial
 from .vine import (StateTensor, create_M, forward_batched_part,
-                   point_obb_gap, obb_obb_sep, box_inertia, box_friction_radius, GROW_FACTOR)
+                   point_obb_gap, obb_obb_sep, rounded_obb_sep, box_inertia, box_friction_radius, GROW_FACTOR)
 from .solver import init_layers, solve_layers
 
 
@@ -62,12 +62,38 @@ def proximity_measure(params, state, obj_pose, bodies):
     st = StateTensor(state)
     cx, cy = st.x, st.y
 
+    r = params.obj_round
     def gap_one(pose, hw, hh):
-        return torch.vmap(lambda px, py: point_obb_gap(px, py, pose, hw, hh, params.radius))(cx, cy)
+        return torch.vmap(lambda px, py: point_obb_gap(px, py, pose, hw - r, hh - r, params.radius + r))(cx, cy)
 
     gaps = torch.vmap(gap_one)(obj_pose, params.obj_hw, params.obj_hh).transpose(0, 1)   # (max_bodies, n_obj)
     idx = torch.arange(gaps.shape[0]).unsqueeze(-1)
     return torch.where(idx >= bodies, torch.full_like(gaps, 1e3), gaps)
+
+
+def proximity_jacobians(params, state, obj_pose, bodies):
+    """Jacobians of proximity_measure w.r.t. the vine state (max_bodies, n_obj, state) and the
+    object poses (max_bodies, n_obj, n_obj, 3), built pair by pair. Gap (j, o) depends only on body
+    j's (x, y) and object o's pose, so one small gradient per pair gives the same numbers as
+    jacrev, which runs one backward pass per output over every pair: (bodies * objects)^2 work and
+    memory instead of bodies * objects."""
+    st = StateTensor(state)
+    mb, n_obj = params.max_bodies, obj_pose.shape[0]
+
+    r = params.obj_round
+    def gap(px, py, pose, hw, hh):
+        return point_obb_gap(px, py, pose, hw - r, hh - r, params.radius + r)
+
+    d = torch.func.grad(gap, argnums=(0, 1, 2))
+    d = torch.vmap(d, in_dims=(None, None, 0, 0, 0))                    # over objects
+    d = torch.vmap(d, in_dims=(0, 0, None, None, None))                 # over bodies
+    gx, gy, gpose = d(st.x, st.y, obj_pose, params.obj_hw, params.obj_hh)  # (mb, n_obj), .., (mb, n_obj, 3)
+    active = (torch.arange(mb) < bodies).to(state.dtype).unsqueeze(-1)  # phantom bodies: constant gap
+    gx, gy, gpose = gx * active, gy * active, gpose * active.unsqueeze(-1)
+    body = torch.eye(mb, dtype=state.dtype)[:, None, :]                 # (mb, 1, mb): pair (j, o) -> body j
+    J_state = torch.stack([gx[:, :, None] * body, gy[:, :, None] * body, torch.zeros_like(gx)[:, :, None] * body], -1)
+    J_pose = gpose[:, :, None, :] * torch.eye(n_obj, dtype=state.dtype)[None, :, :, None]
+    return J_state.reshape(mb, n_obj, 3 * mb), J_pose
 
 
 def object_env_constraints(params, obj_pose):
@@ -80,15 +106,21 @@ def object_env_constraints(params, obj_pose):
         z = obj_pose.new_zeros
         return z((0, n_walls)), z((0, n_walls, 0, 3)), z((0, 0)), z((0, 0, 0, 3))
     wall_pose, wall_hw, wall_hh = params.obstacle_pose, params.obstacle_hw, params.obstacle_hh
+    ro, rw = params.obj_round, params.wall_round
+    if ro == 0 and rw == 0:
+        sep_w = sep_o = obb_obb_sep
+    else:                                                          # rounded corners
+        sep_w = lambda pA, hwA, hhA, pB, hwB, hhB: rounded_obb_sep(pA, hwA, hhA, ro, pB, hwB, hhB, rw)
+        sep_o = lambda pA, hwA, hhA, pB, hwB, hhB: rounded_obb_sep(pA, hwA, hhA, ro, pB, hwB, hhB, ro)
 
     def owall(pose):                                               # (n_obj, n_walls)
         def one(p, hw, hh):
-            return torch.vmap(lambda wp, whw, whh: obb_obb_sep(p, hw, hh, wp, whw, whh))(wall_pose, wall_hw, wall_hh)
+            return torch.vmap(lambda wp, whw, whh: sep_w(p, hw, hh, wp, whw, whh))(wall_pose, wall_hw, wall_hh)
         return torch.vmap(one)(pose, params.obj_hw, params.obj_hh)
 
     def oobj(pose):                                                # (n_obj, n_obj)
         def one(pA, hwA, hhA):
-            return torch.vmap(lambda pB, hwB, hhB: obb_obb_sep(pA, hwA, hhA, pB, hwB, hhB))(pose, params.obj_hw, params.obj_hh)
+            return torch.vmap(lambda pB, hwB, hhB: sep_o(pA, hwA, hhA, pB, hwB, hhB))(pose, params.obj_hw, params.obj_hh)
         return torch.vmap(one)(pose, params.obj_hw, params.obj_hh)
 
     ow_now = owall(obj_pose); ow_J = torch.func.jacrev(owall)(obj_pose)   # (n_obj, n_walls, n_obj, 3)
@@ -110,8 +142,7 @@ def dynamic_forward_part(params, init_heading, init_x, init_y, state, dstate, bo
         prox_J_pose = state.new_zeros((mb, 0, 0, 3))
     else:
         prox_now = proximity_measure(params, state, obj_pose, bodies)
-        prox_J_state = torch.func.jacrev(lambda s: proximity_measure(params, s, obj_pose, bodies))(state)
-        prox_J_pose = torch.func.jacrev(lambda o: proximity_measure(params, state, o, bodies))(obj_pose)
+        prox_J_state, prox_J_pose = proximity_jacobians(params, state, obj_pose, bodies)
     return bodies, forces, growth, sdf_now, dev_now, L, J, gws, gwd, prox_now, prox_J_state, prox_J_pose
 
 
@@ -169,10 +200,9 @@ def dynamic_solve(params, bodies, dstate, obj_dstate, forces, growth, sdf_now, d
     rank = torch.cumsum(empty.long(), dim=1) - 1           # k-th empty row of the element (0-indexed)
     pin_var = 3 * bodies_i + rank                          # -> the k-th inactive vine velocity var
     valid = empty & (pin_var < Nv)                         # (rare) if the vine fills max_bodies, leave
-    A_joint = A_joint.clone()                              #        the lone remainder to the KKT reg
-    A_joint[valid] = 0.0
-    ei, ki = valid.nonzero(as_tuple=True)
-    A_joint[ei, ki, pin_var[ei, ki]] = 1.0
+    # (dense one-hot, not index lists: no data-dependent shapes, so the step can be a CUDA graph)
+    pin = torch.nn.functional.one_hot(pin_var.clamp(max=Nv - 1), A_joint.shape[2]).to(A_joint.dtype)
+    A_joint = torch.where(valid.unsqueeze(-1), pin, A_joint)
     g_con = (growth.squeeze(1) - GROW_FACTOR * params.grow_rate -
              torch.bmm(gwd, dstate.unsqueeze(2)).squeeze(2).squeeze(1))
     A_growth = torch.cat([gws * dt + gwd, torch.zeros(B, 1, No)], dim=2)
