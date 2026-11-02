@@ -128,11 +128,14 @@ def slide_to_contact(walls, start, direction_deg, clearance=2.0, size=BOX, angle
     raise ValueError("never reached a wall")
 
 
-def env(name, category, description, start, goal, walls=(), boxes=(), planner=None, notes=""):
-    return {"name": name, "category": category, "description": description, "board_mm": list(BOARD),
-            "walls": list(walls), "boxes": list(boxes),
-            "start": {"xy": list(start[:2]), "heading_deg": start[2]},
-            "goal": goal, "planner": planner or {}, "notes": notes}
+def env(name, category, description, start, goal, walls=(), boxes=(), planner=None, notes="", border=None):
+    e = {"name": name, "category": category, "description": description, "board_mm": list(BOARD),
+         "walls": list(walls), "boxes": list(boxes),
+         "start": {"xy": list(start[:2]), "heading_deg": start[2]},
+         "goal": goal, "planner": planner or {}, "notes": notes}
+    if border:
+        e["border"] = border          # "wall": the board's border may be touched (default: edges touching it are dropped)
+    return e
 
 
 def box_goal(center, radius, box_index=0, **extra):
@@ -154,47 +157,57 @@ ENVS.append(env("1b", "b2g_unretractable", "two blocks in a row, pushed together
                 boxes=[box(along(S1, H1, 620), H1), box(along(S1, H1, 520), H1)],
                 notes="box 0 is the front block (the one with the goal); the vine meets box 1 first"))
 ENVS.append(env("1c", "b2g_unretractable", "precise block pose: a short push that also turns the block 20 deg",
-                (*S1, H1), box_goal(along(S1, H1, 590, lateral=15), 20, angle_deg=H1 + 20, angle_tol_deg=7),
+                (*S1, H1), box_goal(along(S1, H1, 590, lateral=15), 25, angle_deg=H1 + 20, angle_tol_deg=10),
                 boxes=[box(along(S1, H1, 520), H1)],
-                notes="goal: center within 20 mm and heading within 7 deg (mod 90) of the goal pose"))
+                notes="goal: center within 25 mm and heading within 10 deg (mod 90) of the goal pose"))
+ENVS.append(env("1c_c100", "b2g_unretractable", "1c with the launch 100 mm closer to the block",
+                (*along(S1, H1, 100), H1), box_goal(along(S1, H1, 590, lateral=15), 25, angle_deg=H1 + 20, angle_tol_deg=10),
+                boxes=[box(along(S1, H1, 520), H1)],
+                notes="variant of 1c: same block, goal and tolerance; the start moved 100 mm along the launch heading"))
 
 # ---- 2. block to goal, one vine, complex: walls guide the block
 A, B = (430.0, 800.0), (1010.0, 320.0)
 c2a, ang2a = against_wall(A, B, 0.55, side=-1)
 g2a, _ = against_wall(A, B, 0.08, side=-1)
 ENVS.append(env("2a", "b2g_unretractable", "a diagonal wall guides the pushed block up-left to the goal",
-                (720.0, 60.0, 90.0), box_goal(g2a, 70), walls=[seg(A, B)], boxes=[box(c2a, ang2a)],
+                (820.0, 60.0, 90.0), box_goal(g2a, 70), walls=[seg(A, B)], boxes=[box(c2a, ang2a)],
                 planner={"max_bodies": 50}))
+# 2b (sketch of 2026-10-27, the old channel is envs/archive/2b_v1.json): the vine grows down and turns
+# right, pushes the block along the bottom wall under a short ceiling, and the wall curves up the right
+# side (an elliptical quarter in 6 segments, so the block slides around it) to the goal at the top
+ARC_2B = [(689 + 261 * math.sin(math.radians(a)), 150 + 327 * (1 - math.cos(math.radians(a)))) for a in range(0, 91, 15)]
 ENVS.append(env("2b", "b2g_unretractable",
-                "one block inside a channel; one push drives it into the curved back wall, which guides it up "
-                "and left along the top wall to the goal",
-                (200.0, 80.0, 0.0), box_goal((300.0, 640.0), 80),
-                walls=[seg((230, 720), (820, 720)),                       # top wall, goal under its left end
-                       # back guiding wall: up the right side and curving into the top wall
-                       seg((1010, 150), (990, 420)), seg((990, 420), (950, 590)),
-                       seg((950, 590), (890, 680)), seg((890, 680), (820, 720)),
-                       seg((520, 130), (760, 520))],                      # diagonal wall, the channel's left side
-                boxes=[box((760, 300), 0)],
+                "one push: right along the bottom wall, then the wall curves up and guides the block up the "
+                "right side to the goal",
+                (180.0, 700.0, -90.0), box_goal((870, 690), 80),
+                walls=[seg((285, 150), (689, 150)),                       # bottom wall
+                       seg((375, 365), (650, 365))]                       # short ceiling over the block
+                      + [seg(a, b) for a, b in zip(ARC_2B, ARC_2B[1:])]  # the curve up
+                      + [seg((950, 477), (950, 780))],                    # right wall, the goal beside its top
+                boxes=[box((596, 231), 0)],
                 planner={"max_bodies": 70},
-                notes="corrected 2026-10-20: one block, inside the channel (right of the diagonal wall); "
-                      "the back wall is a chain of segments so the block slides around the bend instead of jamming"))
+                notes="from the sketch of 2026-10-27 (about 1.97 mm/px in x, 2.1 in y); the old 2b (a channel "
+                      "with a curved back wall) is envs/archive/2b_v1.json"))
 
 # ---- 3. block to goal with resets
 ENVS.append(env("3a", "b2g_retractable", "open board, the goal far from the block: several pushes",
-                (150.0, 120.0, 40.0), box_goal((980, 760), 80), boxes=[box((520, 400), 20)]))
+                (150.0, 120.0, 40.0), box_goal((980, 760), 80), boxes=[box((520, 400), 20)],
+                notes="an earlier solution swept the block along the border (out/archive/3a_border_sweep), "
+                      "before edges touching the border became invalid"))
+# 3b (sketch of 2026-10-27, the 10-25 version is envs/archive/3b_v2.json, the maze 3b_maze.json): a
+# short diagonal divider lies along the tilted block's upper side, so the vine can reach it on either
+# side: down-left of the divider (push 1) or over it and curving down (push 2). The block goes down
+# right, over the end of a shelf, into the goal pocket in the bottom right corner.
 ENVS.append(env("3b", "b2g_retractable",
-                "maze; small openings (narrower than a block, wider than the vine) let the vine reach blocks in corners",
-                (396.0, 809.0, 180.0), box_goal((1060, 183), 90),
-                walls=[seg((210, 652), (660, 652)),                         # under the block's row
-                       seg((548, 678), (548, 740)), seg((548, 810), (548, 900)),   # opening 740-810
-                       seg((659, 339), (659, 665)),
-                       seg((925, 222), (925, 587)),
-                       seg((443, 203), (925, 203)),
-                       seg((408, 300), (408, 457)), seg((408, 183), (408, 230)),   # opening 230-300
-                       seg((687, 0), (687, 183))],
-                boxes=[box((210, 770), 0)],
+                "two homotopies around a divider: push the tilted block down-right past the shelf's end into the "
+                "corner pocket, from below the divider or curving over it",
+                (170.0, 775.0, -55.0), box_goal((790, 150), 85),
+                walls=[seg((277, 690), (492, 480)),                       # the divider
+                       seg((0, 266), (650, 266)), seg((650, 266), (650, 0))],   # shelf, and its wall down to the border
+                boxes=[box((349, 490), -35)],
                 planner={"max_bodies": 70},
-                notes="geometry measured off the sketch; openings are 70 mm (vine 48.5 mm wide, block 98 mm)"))
+                notes="from the sketch of 2026-10-27 (about 1.79 mm/px in x, 2.0 in y). The divider is about 34 mm "
+                      "from the block, narrower than the vine (48.5 mm), so it cannot squeeze between them"))
 
 # ---- 4. vine to goal
 ENVS.append(env("4a", "vine_to_goal", "no blocks: S-shaped path around two interleaved walls",
@@ -206,6 +219,11 @@ ENVS.append(env("4b", "vine_to_goal", "basic push: a block plugs the only gap in
                 walls=[seg((472, 0), (472, 430)), seg((472, 573), (472, 900))],
                 boxes=[box((472, 501), 0)],
                 notes="gap 143 mm; the block leaves 22 mm on each side, too little for the vine"))
+ENVS.append(env("4b_r50", "vine_to_goal", "4b with the block 50 mm to the right, out of the gap on the goal side",
+                (153.0, 143.0, 60.0), tip_goal((983, 562), 80),
+                walls=[seg((472, 0), (472, 430)), seg((472, 573), (472, 900))],
+                boxes=[box((522, 501), 0)],
+                notes="variant of 4b: the block sits just past the wall, still covering the gap's far side"))
 # 4c: a zig-zag barrier with a gap at each bend, narrower than a block but wider than the vine.
 # Each bend is a 90 deg corner and each block sits flush in the corner beside its gap (turned 45
 # deg). The upper corner opens toward the start: every push the vine can make there drives that

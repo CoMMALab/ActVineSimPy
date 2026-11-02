@@ -1,7 +1,7 @@
 {
  "name": "3b",
  "category": "b2g_retractable",
- "description": "maze; small openings (narrower than a block, wider than the vine) let the vine reach blocks in corners",
+ "description": "two homotopies around a divider: push the tilted block down-right past the shelf's end into the corner pocket, from below the divider or curving over it",
  "board_mm": [
   1200.0,
   900.0
@@ -9,100 +9,34 @@
  "walls": [
   {
    "from": [
-    210,
-    652
+    277,
+    690
    ],
    "to": [
-    660,
-    652
+    492,
+    480
    ],
    "thickness": 20.0
   },
   {
    "from": [
-    548,
-    678
+    0,
+    266
    ],
    "to": [
-    548,
-    740
+    650,
+    266
    ],
    "thickness": 20.0
   },
   {
    "from": [
-    548,
-    810
+    650,
+    266
    ],
    "to": [
-    548,
-    900
-   ],
-   "thickness": 20.0
-  },
-  {
-   "from": [
-    659,
-    339
-   ],
-   "to": [
-    659,
-    665
-   ],
-   "thickness": 20.0
-  },
-  {
-   "from": [
-    925,
-    222
-   ],
-   "to": [
-    925,
-    587
-   ],
-   "thickness": 20.0
-  },
-  {
-   "from": [
-    443,
-    203
-   ],
-   "to": [
-    925,
-    203
-   ],
-   "thickness": 20.0
-  },
-  {
-   "from": [
-    408,
-    300
-   ],
-   "to": [
-    408,
-    457
-   ],
-   "thickness": 20.0
-  },
-  {
-   "from": [
-    408,
-    183
-   ],
-   "to": [
-    408,
-    230
-   ],
-   "thickness": 20.0
-  },
-  {
-   "from": [
-    687,
+    650,
     0
-   ],
-   "to": [
-    687,
-    183
    ],
    "thickness": 20.0
   }
@@ -110,10 +44,10 @@
  "boxes": [
   {
    "center": [
-    210,
-    770
+    349,
+    490
    ],
-   "angle_deg": 0,
+   "angle_deg": -35,
    "size": [
     98.0,
     98.0
@@ -123,22 +57,22 @@
  ],
  "start": {
   "xy": [
-   396.0,
-   809.0
+   170.0,
+   775.0
   ],
-  "heading_deg": 180.0
+  "heading_deg": -55.0
  },
  "goal": {
   "type": "box",
   "box": 0,
   "center": [
-   1060,
-   183
+   790,
+   150
   ],
-  "radius": 90
+  "radius": 85
  },
  "planner": {
   "max_bodies": 70
  },
- "notes": "geometry measured off the sketch; openings are 70 mm (vine 48.5 mm wide, block 98 mm)"
+ "notes": "from the sketch of 2026-10-27 (about 1.79 mm/px in x, 2.0 in y). The divider is about 34 mm from the block, narrower than the vine (48.5 mm), so it cannot squeeze between them"
 }

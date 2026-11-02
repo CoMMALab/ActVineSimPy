@@ -1,0 +1,44 @@
+{
+ "name": "1c_c100",
+ "category": "b2g_unretractable",
+ "description": "1c with the launch 100 mm closer to the block",
+ "board_mm": [
+  1200.0,
+  900.0
+ ],
+ "walls": [],
+ "boxes": [
+  {
+   "center": [
+    565.3,
+    462.9
+   ],
+   "angle_deg": 37.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  }
+ ],
+ "start": {
+  "xy": [
+   229.9,
+   210.2
+  ],
+  "heading_deg": 37.0
+ },
+ "goal": {
+  "type": "box",
+  "box": 0,
+  "center": [
+   612.2,
+   517.1
+  ],
+  "radius": 25,
+  "angle_deg": 57.0,
+  "angle_tol_deg": 10
+ },
+ "planner": {},
+ "notes": "variant of 1c: same block, goal and tolerance; the start moved 100 mm along the launch heading"
+}

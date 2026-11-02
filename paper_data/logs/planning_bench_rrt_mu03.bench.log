@@ -1,0 +1,118 @@
+10-28 21:23:07 start: 0 runs already done, deadline 10-29 09:00
+10-28 21:23:07 waiting: GPU in use by [1411740]
+10-28 21:24:32 1a s0: exit 0, 22 s, success True, 2048 edges
+10-28 21:27:10 start: 1 runs already done, deadline 10-29 09:00
+10-28 21:32:07 3a s0: exit 0, 297 s, success True, 29952 edges
+10-28 21:52:17 3b s0: exit 0, 1209 s, success False, 101376 edges
+10-28 21:52:35 1c s0: exit 0, 18 s, success True, 1792 edges
+10-28 21:53:14 1c_c100 s0: exit 0, 38 s, success True, 3584 edges
+10-28 22:00:06 3a s1: exit 0, 412 s, success True, 41984 edges
+10-28 22:17:16 start: 6 runs already done, deadline 10-29 09:00
+10-28 23:04:15 start: 6 runs already done, deadline 10-29 09:00
+10-28 23:19:39 3a s2: exit 0, 924 s, success True, 92416 edges
+10-28 23:24:24 3a s3: exit 0, 285 s, success True, 28928 edges
+10-28 23:44:35 3a s4: exit 0, 1211 s, success False, 119552 edges
+10-29 00:04:45 3a s5: exit 0, 1211 s, success False, 119040 edges
+10-29 00:11:03 3a s6: exit 0, 378 s, success True, 38144 edges
+10-29 00:23:31 3a s7: exit 0, 748 s, success True, 73216 edges
+10-29 00:41:43 3a s8: exit 0, 1092 s, success True, 108032 edges
+10-29 01:01:28 3a s9: exit 0, 1185 s, success True, 115456 edges
+10-29 01:01:28 round 0 done
+10-29 01:21:39 3a s10: exit 0, 1211 s, success False, 120576 edges
+10-29 01:38:37 3a s11: exit 0, 1019 s, success True, 100352 edges
+10-29 01:58:46 3a s12: exit 0, 1209 s, success False, 118528 edges
+10-29 02:14:06 3a s13: exit 0, 920 s, success True, 91648 edges
+10-29 02:34:17 3a s14: exit 0, 1211 s, success False, 118272 edges
+10-29 02:45:18 3a s15: exit 0, 661 s, success True, 65792 edges
+10-29 02:57:40 3a s16: exit 0, 742 s, success True, 73728 edges
+10-29 03:12:19 3a s17: exit 0, 879 s, success True, 87040 edges
+10-29 03:32:00 3a s18: exit 0, 1180 s, success True, 115712 edges
+10-29 03:52:08 3a s19: exit 0, 1209 s, success False, 119552 edges
+10-29 03:52:08 round 1 done
+10-29 10:20:00 start: 24 runs already done, deadline 10-30 09:00
+10-29 10:20:36 1c s1: exit 0, 36 s, success True, 3584 edges
+10-29 10:21:15 1c s2: exit 0, 38 s, success True, 3840 edges
+10-29 10:21:33 1c s3: exit 0, 18 s, success True, 1792 edges
+10-29 10:22:07 1c s4: exit 0, 34 s, success True, 3328 edges
+10-29 10:22:26 1c s5: exit 0, 18 s, success True, 1792 edges
+10-29 10:22:46 1c s6: exit 0, 20 s, success True, 1792 edges
+10-29 10:23:08 1c s7: exit 0, 22 s, success True, 1792 edges
+10-29 10:23:31 1c s8: exit 0, 22 s, success True, 1792 edges
+10-29 10:23:51 1c s9: exit 0, 20 s, success True, 1792 edges
+10-29 10:23:51 round 0 done
+10-29 10:24:15 1c s10: exit 0, 24 s, success True, 2048 edges
+10-29 10:24:37 1c s11: exit 0, 22 s, success True, 1792 edges
+10-29 10:24:58 1c s12: exit 0, 20 s, success True, 1792 edges
+10-29 10:25:18 1c s13: exit 0, 20 s, success True, 1792 edges
+10-29 10:25:38 1c s14: exit 0, 20 s, success True, 1792 edges
+10-29 10:25:59 1c s15: exit 0, 20 s, success True, 1792 edges
+10-29 10:26:19 1c s16: exit 0, 20 s, success True, 1792 edges
+10-29 10:26:39 1c s17: exit 0, 20 s, success True, 1792 edges
+10-29 10:26:59 1c s18: exit 0, 20 s, success True, 1792 edges
+10-29 10:27:54 1c s19: exit 0, 55 s, success True, 5376 edges
+10-29 10:27:54 round 1 done
+10-30 12:26:10 start: 43 runs already done, deadline 10-31 12:16
+10-30 12:28:47 1b s0: exit 0, 158 s, success True, 14848 edges
+10-30 12:48:58 2a s0: exit 0, 1211 s, success False, 110080 edges
+10-30 12:49:43 2b s0: exit 0, 44 s, success True, 4096 edges
+10-30 12:50:40 4a s0: exit 0, 57 s, success True, 5888 edges
+10-30 12:51:16 4b_r50 s0: exit 0, 36 s, success True, 3584 edges
+10-30 12:52:08 4c s0: exit 0, 53 s, success True, 4864 edges
+10-30 12:53:44 4d s0: exit 0, 95 s, success True, 3584 edges
+10-30 12:54:20 1a s1: exit 0, 36 s, success True, 3584 edges
+10-30 12:57:14 1b s1: exit 0, 174 s, success True, 16640 edges
+10-30 13:17:25 2a s1: exit 0, 1211 s, success False, 107776 edges
+10-30 13:18:31 2b s1: exit 0, 67 s, success True, 6144 edges
+10-30 13:19:18 4a s1: exit 0, 46 s, success True, 5888 edges
+10-30 13:19:54 4b_r50 s1: exit 0, 36 s, success True, 3328 edges
+10-30 13:20:57 4c s1: exit 0, 63 s, success True, 5888 edges
+10-30 13:22:32 4d s1: exit 0, 95 s, success True, 3584 edges
+10-30 13:42:41 3b s1: exit 0, 1209 s, success False, 104704 edges
+10-30 13:43:35 1a s2: exit 0, 55 s, success True, 5632 edges
+10-30 13:45:12 1b s2: exit 0, 97 s, success True, 9216 edges
+10-30 13:45:55 2a s2: exit 0, 42 s, success True, 3840 edges
+10-30 13:47:34 2b s2: exit 0, 99 s, success True, 8960 edges
+10-30 13:48:33 4a s2: exit 0, 59 s, success True, 5888 edges
+10-30 13:49:07 4b_r50 s2: exit 0, 34 s, success True, 3328 edges
+10-30 13:49:56 4c s2: exit 0, 49 s, success True, 4608 edges
+10-30 13:51:29 4d s2: exit 0, 93 s, success True, 3584 edges
+10-30 14:11:37 3b s2: exit 0, 1209 s, success False, 104960 edges
+10-30 14:12:26 1a s3: exit 0, 48 s, success True, 4864 edges
+10-30 14:13:21 1b s3: exit 0, 55 s, success True, 5120 edges
+10-30 14:33:29 2a s3: exit 0, 1209 s, success False, 111616 edges
+10-30 14:53:39 2b s3: exit 0, 1209 s, success False, 104704 edges
+10-30 14:54:37 4a s3: exit 0, 59 s, success True, 6144 edges
+10-30 14:55:14 4b_r50 s3: exit 0, 36 s, success True, 3328 edges
+10-30 14:56:04 4c s3: exit 0, 51 s, success True, 4608 edges
+10-30 14:57:39 4d s3: exit 0, 95 s, success True, 3584 edges
+10-30 15:05:42 3b s3: exit 0, 483 s, success True, 42752 edges
+10-30 15:06:01 1a s4: exit 0, 18 s, success True, 1792 edges
+10-30 15:08:02 1b s4: exit 0, 121 s, success True, 11264 edges
+10-30 15:28:13 2a s4: exit 0, 1211 s, success False, 102656 edges
+10-30 15:31:05 2b s4: exit 0, 172 s, success True, 14592 edges
+10-30 15:31:53 4a s4: exit 0, 49 s, success True, 5632 edges
+10-30 15:32:28 4b_r50 s4: exit 0, 34 s, success True, 3328 edges
+10-30 15:33:08 4c s4: exit 0, 40 s, success True, 3840 edges
+10-30 15:34:41 4d s4: exit 0, 93 s, success True, 3584 edges
+10-30 15:54:52 3b s4: exit 0, 1211 s, success False, 104448 edges
+10-30 15:55:14 1a s5: exit 0, 22 s, success True, 2048 edges
+10-30 15:56:11 1b s5: exit 0, 57 s, success True, 5376 edges
+10-30 15:58:41 2a s5: killed after 150 s, other GPU processes [2436861]; requeued
+10-30 15:58:41 waiting: GPU in use by [2436861]
+10-30 15:59:01 waiting: GPU in use by [2437237, 2437238]
+10-30 16:21:54 2a s5: exit 0, 1211 s, success False, 108800 edges
+10-30 16:23:29 2b s5: exit 0, 95 s, success True, 8448 edges
+10-30 16:24:19 4a s5: exit 0, 51 s, success True, 6144 edges
+10-30 16:24:56 4b_r50 s5: exit 0, 36 s, success True, 3584 edges
+10-30 16:25:46 4c s5: exit 0, 51 s, success True, 4608 edges
+10-30 16:27:19 4d s5: exit 0, 93 s, success True, 3584 edges
+10-30 16:47:30 3b s5: exit 0, 1211 s, success False, 106752 edges
+10-30 16:49:15 1a s6: exit 0, 105 s, success True, 10752 edges
+10-30 16:51:14 1b s6: exit 0, 119 s, success True, 11264 edges
+10-30 17:11:27 2a s6: exit 0, 1213 s, success False, 109312 edges
+10-30 17:13:12 2b s6: exit 0, 105 s, success True, 9472 edges
+10-30 17:14:07 4a s6: exit 0, 55 s, success True, 6144 edges
+10-30 17:14:41 4b_r50 s6: exit 0, 34 s, success True, 3328 edges
+10-30 17:15:34 4c s6: exit 0, 53 s, success True, 4864 edges
+10-30 17:17:09 4d s6: exit 0, 95 s, success True, 3584 edges
+10-30 17:24:52 3b s6: killed after 463 s, other GPU processes [2503637]; requeued

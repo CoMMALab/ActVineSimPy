@@ -1,0 +1,78 @@
+{
+ "name": "3b",
+ "category": "b2g_retractable",
+ "description": "two homotopies around a divider: push the tilted block down-right past the shelf's end into the corner pocket, from below the divider or curving over it",
+ "board_mm": [
+  1200.0,
+  900.0
+ ],
+ "walls": [
+  {
+   "from": [
+    277,
+    690
+   ],
+   "to": [
+    492,
+    480
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    0,
+    266
+   ],
+   "to": [
+    650,
+    266
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    650,
+    266
+   ],
+   "to": [
+    650,
+    0
+   ],
+   "thickness": 20.0
+  }
+ ],
+ "boxes": [
+  {
+   "center": [
+    349,
+    490
+   ],
+   "angle_deg": -35,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  }
+ ],
+ "start": {
+  "xy": [
+   170.0,
+   775.0
+  ],
+  "heading_deg": -55.0
+ },
+ "goal": {
+  "type": "box",
+  "box": 0,
+  "center": [
+   790,
+   150
+  ],
+  "radius": 85
+ },
+ "planner": {
+  "max_bodies": 70
+ },
+ "notes": "from the sketch of 2026-10-27 (about 1.79 mm/px in x, 2.0 in y). The divider is about 34 mm from the block, narrower than the vine (48.5 mm), so it cannot squeeze between them"
+}

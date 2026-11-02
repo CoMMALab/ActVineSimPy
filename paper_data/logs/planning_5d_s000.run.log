@@ -1,0 +1,7 @@
+=== 5d
+  plan from (5, 5) (4, 5): block 1 up 2, block 0 right 2
+[W1028 01:48:41.628128902 Context.cpp:508] Warning: torch.backends.cuda.preferred_linalg_library is an experimental feature. If you see any error or unexpected behavior when this flag is set please file an issue on GitHub. (function operator())
+  push block 1 up 2 from (4, 5) -> (4, 3) (1 planned move): spawn [4, 8] at 81 deg, 131 steps, 1 mm off, max turn 4.0 deg; 15/106 candidates reached (0 flagged), 22 s
+    plan from (5, 5) (4, 3): block 0 right 2
+    push block 0 right 2 from (5, 5) -> (7, 5) (1 planned move): spawn [0, 5] at 0 deg, 248 steps, 1 mm off, max turn 7.5 deg; 16/60 candidates reached (0 flagged), 10 s
+5d SOLVED: 2 pushes, 2 push searches (0 failed or backed out), 0 flagged (>15 deg), 0.5 min

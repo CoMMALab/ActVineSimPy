@@ -1,0 +1,157 @@
+{
+ "reached": true,
+ "goal_distance_mm": 21.961168537218597,
+ "controls": [
+  [
+   -1.315780745701367,
+   9
+  ],
+  [
+   1.7704597514326128,
+   9
+  ],
+  [
+   -2.7498193180120323,
+   9
+  ],
+  [
+   -0.8855561965744232,
+   9
+  ],
+  [
+   0.8643475859471765,
+   9
+  ],
+  [
+   2.3288221289594135,
+   9
+  ],
+  [
+   2.480763016972042,
+   2
+  ]
+ ],
+ "pushes": 1,
+ "planner": {
+  "planner": "rrt",
+  "max_edges": 300000,
+  "time_limit_min": 20.0,
+  "batch_size": 256,
+  "steps_per_edge": 25,
+  "min_steps_per_edge": null,
+  "node_every": null,
+  "max_curvature": 3.33,
+  "goal_bias": 0.1,
+  "box_weight": 1.0,
+  "cell_mm": 15.0,
+  "heading_deg": 30.0,
+  "coarse": 5,
+  "unlock_mm": 50.0,
+  "straight_prob": 0.3
+ },
+ "iterations": 7,
+ "edges": 1792,
+ "failed_rollouts": 0,
+ "pruned": 0,
+ "invalid": 0,
+ "resets": 0,
+ "stopped": "goal",
+ "edges_to_goal": 1792,
+ "seconds_to_goal": 14.815346002578735,
+ "nodes": 1538,
+ "seconds": 14.815348863601685,
+ "best_mm": 21.961168537218597,
+ "regions": 22,
+ "env": "1c",
+ "category": "b2g_unretractable",
+ "scene": {
+  "walls_m": [
+   [
+    -0.05,
+    -0.05,
+    1.25,
+    0.0
+   ],
+   [
+    -0.05,
+    0.9,
+    1.25,
+    0.9500000000000001
+   ],
+   [
+    -0.05,
+    0.0,
+    0.0,
+    0.9
+   ],
+   [
+    1.2,
+    0.0,
+    1.25,
+    0.9
+   ]
+  ],
+  "objects_m": [
+   [
+    0.5163,
+    0.4139,
+    0.6143,
+    0.5119
+   ]
+  ],
+  "masses_kg": [
+   0.503
+  ],
+  "start": [
+   0.15,
+   0.15,
+   0.6457718232379019
+  ],
+  "goal_m": [
+   0.6122000000000001,
+   0.5171
+  ],
+  "goal_radius_m": 0.0,
+  "bounds_m": [
+   -0.05,
+   1.25,
+   -0.05,
+   0.9500000000000001
+  ],
+  "box_goal_m": [
+   0.6122000000000001,
+   0.5171,
+   0.025
+  ],
+  "name": "1c",
+  "objects_theta": [
+   0.6457718232379019
+  ],
+  "box_goal_theta": [
+   0.9948376736367679,
+   0.17453292519943295
+  ],
+  "corner_radius_m": null,
+  "box_goal_inside": null
+ },
+ "sim": {
+  "max_bodies": 60,
+  "grow_rate_mps": 0.25,
+  "vine_radius_m": 0.02426,
+  "seg_len_m": 0.03,
+  "stiffness_mode": "wrinkle",
+  "grow_force_n": 20.0,
+  "seg_mass_kg": 0.005,
+  "joint_stiffness": 15.567001641976868,
+  "ang_damp": 0.0032521590904512495,
+  "seg_inertia_kgm2": 0.001,
+  "obj_friction": 0.3,
+  "vine_friction": 0.09277594536523326,
+  "obj_spin": 1.0,
+  "pressure_pa": 9900.723659030205,
+  "wrinkle_scale": 1.380452700180847,
+  "qp_backend": "TORCH_IPM",
+  "device": "cuda",
+  "cuda_graphs": true
+ }
+}

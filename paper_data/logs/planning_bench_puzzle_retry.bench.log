@@ -1,0 +1,26 @@
+10-29 20:21:15 start: 0 runs already done, deadline 10-29 23:21
+10-29 20:23:44 5c_a15 s0: exit 0, 150 s, success True, 827 candidates
+10-29 20:26:20 5c_a15 s1: exit 0, 156 s, success True, 832 candidates
+10-29 20:28:49 5c_a15 s2: exit 0, 150 s, success True, 827 candidates
+10-29 20:31:19 5c_a15 s3: exit 0, 150 s, success True, 824 candidates
+10-29 20:32:54 5c_a15 s4: killed after 95 s, other GPU processes [1931281]; requeued
+10-29 20:32:54 waiting: GPU in use by [1931281]
+10-29 20:41:09 5c_a15 s4: exit 0, 141 s, success True, 826 candidates
+10-29 20:43:41 5c_a15 s5: exit 0, 152 s, success True, 841 candidates
+10-29 20:46:04 5c_a15 s6: exit 0, 143 s, success True, 820 candidates
+10-29 20:48:30 5c_a15 s7: exit 0, 145 s, success True, 823 candidates
+10-29 20:51:04 5c_a15 s8: exit 0, 154 s, success True, 834 candidates
+10-29 20:53:23 5c_a15 s9: killed after 140 s, other GPU processes [1935800]; requeued
+10-29 21:02:19 5c_a15 s9: exit 0, 152 s, success True, 828 candidates
+10-29 21:02:19 round 0 done
+10-29 21:04:47 5c_a15 s10: exit 0, 148 s, success True, 817 candidates
+10-29 21:07:19 5c_a15 s11: exit 0, 152 s, success True, 827 candidates
+10-29 21:10:56 5c_a15 s12: exit 0, 217 s, success True, 1031 candidates
+10-29 21:13:21 5c_a15 s13: exit 0, 146 s, success True, 812 candidates
+10-29 21:15:55 5c_a15 s14: exit 0, 154 s, success True, 817 candidates
+10-29 21:18:23 5c_a15 s15: exit 0, 148 s, success True, 818 candidates
+10-29 21:20:52 5c_a15 s16: exit 0, 150 s, success True, 827 candidates
+10-29 21:23:26 5c_a15 s17: exit 0, 154 s, success True, 817 candidates
+10-29 21:26:24 5c_a15 s18: exit 0, 178 s, success True, 953 candidates
+10-29 21:28:51 5c_a15 s19: exit 0, 148 s, success True, 818 candidates
+10-29 21:28:51 round 1 done

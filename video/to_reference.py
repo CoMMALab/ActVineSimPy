@@ -49,13 +49,39 @@ def launch_heading(tracks, still_mm=2.0):
     return float(np.arctan2(d[1], d[0]))
 
 
-def scenario_from_tracks(tracks, record_mm=RECORD_MM, min_start_mm=30.0, min_box_score=None):
+def boxes_stop_frame(tracks, moved_mm=10.0, still_mm=3.0, still_s=0.3, after_s=0.2):
+    '''Index of the frame after_s past the time the boxes, having moved moved_mm, then stayed within
+    still_mm for still_s (None if they never do). After that the vine grows only by buckling against a
+    box that a wall holds, which a straight simulated vine pressed head on does not do.'''
+    P = np.asarray(tracks["boxes"])[:, :, :2]
+    if P.shape[1] == 0:
+        return None
+    t = np.asarray(tracks["t_s"])
+    disp = np.linalg.norm(P - P[:1], axis=2).max(axis=1)
+    moved = np.nonzero(disp >= moved_mm)[0]
+    if not len(moved):
+        return None
+    for i in range(moved[0], len(t)):
+        w = (t >= t[i]) & (t <= t[i] + still_s)
+        if t[w][-1] - t[i] < 0.9 * still_s:
+            return None
+        if np.linalg.norm(P[w] - P[i], axis=2).max() < still_mm:
+            return int(np.searchsorted(t, t[i] + after_s))
+    return None
+
+
+def scenario_from_tracks(tracks, record_mm=RECORD_MM, min_start_mm=30.0, min_box_score=None, end_when_boxes_stop=False):
     '''(meta, frames, boxes): a scenario of the fit's reference from one trial's tracks. With
     min_box_score, the scenario ends before the first frame where a box's track scores below it (the
-    tracker lost the box: hidden by a panel, under the vine).'''
+    tracker lost the box: hidden by a panel, under the vine); with end_when_boxes_stop, soon after the
+    boxes come to rest (boxes_stop_frame).'''
     meta = tracks["meta"]
     trial = meta["trial"]
     usable = tracks["valid"] & (tracks["length_mm"] >= min_start_mm)
+    if end_when_boxes_stop:
+        stop = boxes_stop_frame(tracks)
+        if stop is not None:
+            usable[stop:] = False
     if min_box_score is not None and len(meta["boxes"]):
         lost = np.nonzero(np.asarray(tracks["box_score"]).min(axis=1) < min_box_score)[0]
         if len(lost):
@@ -113,6 +139,8 @@ def main():
     parser.add_argument("--record-mm", type=float, default=RECORD_MM)
     parser.add_argument("--min-box-score", type=float, default=None,
                         help="end each scenario before a box's track scores below this")
+    parser.add_argument("--end-when-boxes-stop", action="store_true",
+                        help="end each scenario soon after its boxes come to rest (boxes_stop_frame)")
     args = parser.parse_args()
 
     out, meta = {}, {}
@@ -120,7 +148,8 @@ def main():
         path = run if run.endswith(".npz") else os.path.join(run, "tracks.npz")
         tracks = load_tracks(path)
         name = tracks["meta"]["trial"]["name"]
-        sc, frames, boxes, grown = scenario_from_tracks(tracks, args.record_mm, min_box_score=args.min_box_score)
+        sc, frames, boxes, grown = scenario_from_tracks(tracks, args.record_mm, min_box_score=args.min_box_score,
+                                                     end_when_boxes_stop=args.end_when_boxes_stop)
         for k, (f, b) in enumerate(zip(frames, boxes)):
             out[f"{name}/frame{k}"] = f
             out[f"{name}/boxes{k}"] = b

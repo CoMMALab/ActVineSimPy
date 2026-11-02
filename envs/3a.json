@@ -38,5 +38,5 @@
   "radius": 80
  },
  "planner": {},
- "notes": ""
+ "notes": "an earlier solution swept the block along the border (out/archive/3a_border_sweep), before edges touching the border became invalid"
 }

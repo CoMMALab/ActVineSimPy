@@ -1,7 +1,7 @@
 {
  "name": "2b",
  "category": "b2g_unretractable",
- "description": "one block inside a channel; one push drives it into the curved back wall, which guides it up and left along the top wall to the goal",
+ "description": "one push: right along the bottom wall, then the wall curves up and guides the block up the right side to the goal",
  "board_mm": [
   1200.0,
   900.0
@@ -9,67 +9,100 @@
  "walls": [
   {
    "from": [
-    230,
-    720
-   ],
-   "to": [
-    820,
-    720
-   ],
-   "thickness": 20.0
-  },
-  {
-   "from": [
-    1010,
+    285,
     150
    ],
    "to": [
-    990,
-    420
+    689,
+    150
    ],
    "thickness": 20.0
   },
   {
    "from": [
-    990,
-    420
+    375,
+    365
+   ],
+   "to": [
+    650,
+    365
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    689.0,
+    150.0
+   ],
+   "to": [
+    756.5517707717579,
+    161.14225480347466
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    756.5517707717579,
+    161.14225480347466
+   ],
+   "to": [
+    819.5,
+    193.80969296248855
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    819.5,
+    193.80969296248855
+   ],
+   "to": [
+    873.5548698896889,
+    245.77608255199894
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    873.5548698896889,
+    245.77608255199894
+   ],
+   "to": [
+    915.0326303877384,
+    313.5
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    915.0326303877384,
+    313.5
+   ],
+   "to": [
+    941.1066406614468,
+    392.36617225147575
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    941.1066406614468,
+    392.36617225147575
+   ],
+   "to": [
+    950.0,
+    476.99999999999994
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    950,
+    477
    ],
    "to": [
     950,
-    590
-   ],
-   "thickness": 20.0
-  },
-  {
-   "from": [
-    950,
-    590
-   ],
-   "to": [
-    890,
-    680
-   ],
-   "thickness": 20.0
-  },
-  {
-   "from": [
-    890,
-    680
-   ],
-   "to": [
-    820,
-    720
-   ],
-   "thickness": 20.0
-  },
-  {
-   "from": [
-    520,
-    130
-   ],
-   "to": [
-    760,
-    520
+    780
    ],
    "thickness": 20.0
   }
@@ -77,8 +110,8 @@
  "boxes": [
   {
    "center": [
-    760,
-    300
+    596,
+    231
    ],
    "angle_deg": 0,
    "size": [
@@ -90,22 +123,22 @@
  ],
  "start": {
   "xy": [
-   200.0,
-   80.0
+   180.0,
+   700.0
   ],
-  "heading_deg": 0.0
+  "heading_deg": -90.0
  },
  "goal": {
   "type": "box",
   "box": 0,
   "center": [
-   300.0,
-   640.0
+   870,
+   690
   ],
   "radius": 80
  },
  "planner": {
   "max_bodies": 70
  },
- "notes": "corrected 2026-10-20: one block, inside the channel (right of the diagonal wall); the back wall is a chain of segments so the block slides around the bend instead of jamming"
+ "notes": "from the sketch of 2026-10-27 (about 1.97 mm/px in x, 2.1 in y); the old 2b (a channel with a curved back wall) is envs/archive/2b_v1.json"
 }

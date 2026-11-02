@@ -23,8 +23,16 @@ visible hole lattice (the lattice is cut short where the wall or the frame hides
               track.py ignores them, to_reference.py adds them to the scenario's walls.
 The reference frame is taken just before growth starts (a first tracking pass finds when).
 
+Long-horizon videos (video/long/long_NN.mov, --long; a test set): the vine grows up from the mount,
+turns along a top cardboard panel and a slanted one, runs up a channel between the slanted panel and
+two bricks (one is grey in some videos) and pushes the box out of its end. The panels' feet are
+refined per video from the pegboard holes next to rough lines read off long_02 (LONG_PANELS_MM); the
+bricks are dark red or grey brick-sized regions; both are walls_obb_mm, and the regions behind the
+panels and on the bricks are excluded from the vine's mask. Reference frame 0; growth speed measured.
+
     python video/trials/make_contact_trials.py              # detect, write trials and the manifest
     python video/trials/make_contact_trials.py --growth     # also find growth starts (runs track.py)
+    python video/trials/make_contact_trials.py --long       # the long-horizon trials
 '''
 
 import argparse, glob, json, math, os, subprocess, sys
@@ -258,6 +266,80 @@ def detect_walls(ext, panel, black, boxes, mount):
     return walls, drawn, exclude
 
 
+def detect_panel_lines(ext, panel, max_lines=3, tol_mm=6.0, min_pts=40, min_len_mm=150.0, seed=0):
+    '''Standing panels as segments on the board: the edge of each panel's visible face nearest the
+    camera's nadir (a vertical panel's face is seen pushed away from the nadir, its foot is not), split
+    into straight pieces by sequential RANSAC. Returns [(a, b)] segment ends [board mm].'''
+    nadir = ext.px_to_mm([[ext.image_size[0] / 2, ext.image_size[1] / 2]])[0]
+    pts_px = np.column_stack(np.nonzero(panel)[::-1]).astype(np.float32)
+    if len(pts_px) == 0:
+        return []
+    pts = to_mm(ext, pts_px)
+    A = ext.rect_matrix(RES)
+    toward = (nadir - pts) / (np.linalg.norm(nadir - pts, axis=1, keepdims=True) + 1e-9)
+    probe = _apply_h(A, pts + 6.0 * toward).round().astype(int)
+    h, w = panel.shape
+    inside = (probe[:, 0] >= 0) & (probe[:, 0] < w) & (probe[:, 1] >= 0) & (probe[:, 1] < h)
+    edge = np.ones(len(pts), bool)
+    edge[inside] = panel[probe[inside, 1], probe[inside, 0]] == 0
+    P = pts[edge]
+    rng = np.random.default_rng(seed)
+    segs = []
+    for _ in range(max_lines):
+        if len(P) < min_pts:
+            break
+        best = None
+        for _ in range(400):
+            i, j = rng.choice(len(P), 2, replace=False)
+            d = P[j] - P[i]
+            L = np.linalg.norm(d)
+            if L < 30:
+                continue
+            n = np.array([-d[1], d[0]]) / L
+            inl = np.abs((P - P[i]) @ n) < tol_mm
+            if best is None or inl.sum() > best.sum():
+                best = inl
+        if best is None or best.sum() < min_pts:
+            break
+        Q = P[best]
+        c = Q.mean(0)
+        u = np.linalg.svd(Q - c)[2][0]
+        t = (Q - c) @ u
+        # the longest run of inliers without a gap over 40 mm (one panel, not two in line)
+        order = np.sort(t)
+        gaps = np.nonzero(np.diff(order) > 40)[0]
+        bounds = np.split(order, gaps + 1)
+        run = max(bounds, key=lambda r: r[-1] - r[0])
+        if run[-1] - run[0] >= min_len_mm:
+            segs.append((c + run[0] * u, c + run[-1] * u))
+        P = P[~best]
+    return segs
+
+
+def detect_bricks(ext, rect, roi, cal, height_mm=57.0):
+    '''The largest region of red bricks (static here) as oriented boxes [cx, cy, theta, hw, hh] [board mm]: regions of red hue,
+    split where two touch end to end (each a 203 x 92 mm brick top); centers lifted from the top face.'''
+    hsv = cv2.cvtColor(cv2.medianBlur(rect, 7), cv2.COLOR_BGR2HSV).astype(np.int16)
+    Hh, S, V = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    Vb = np.median(V)
+    red = ((Hh <= 10) | (Hh >= 172)) & (S > 60) & (V > 50) & (V < 0.85 * Vb) & (roi > 0)
+    k = np.ones((5, 5), np.uint8)
+    red = cv2.morphologyEx(cv2.morphologyEx(red.astype(np.uint8) * 255, cv2.MORPH_OPEN, k), cv2.MORPH_CLOSE, k)
+    out = []
+    comps = components(red, 8000)
+    for comp in sorted(comps, key=len)[-1:]:       # the pair in the channel (others stand behind panels)
+        c, (a, b), th = rect_mm(ext, comp)
+        if b > a:
+            a, b, th = b, a, th + math.pi / 2
+        n = max(1, int(round(a / 210)))             # bricks end to end
+        u = np.array([math.cos(th), math.sin(th)])
+        for k_ in range(n):
+            ck = c + ((k_ + 0.5) / n - 0.5) * a * u
+            ck = cal.lift([ck], height_mm)[0]
+            out.append([round(float(ck[0]), 1), round(float(ck[1]), 1), round(float(th), 4), round(a / n / 2, 1), round(b / 2, 1)])
+    return out
+
+
 def obb_corners(c, u, hw, hh):
     n = np.array([-u[1], u[0]])
     return np.array([c - hw * u - hh * n, c + hw * u - hh * n, c + hw * u + hh * n, c - hw * u + hh * n])
@@ -282,7 +364,7 @@ def frame_walls(cal, shift=(0.0, 0.0)):
     LIP, WALL = 12.7, 40.0
     W, H = cal.board_mm
     w_img, h_img = cal.image_size
-    full_w, full_h = abs(W - FULL_BOARD_MM[0]) < 30, abs(H - FULL_BOARD_MM[1]) < 30
+    full_w, full_h = abs(W - FULL_BOARD_MM[0]) < 12, abs(H - FULL_BOARD_MM[1]) < 12
 
     def seen(pts):
         px = cal.mm_to_px(pts)
@@ -298,7 +380,7 @@ def frame_walls(cal, shift=(0.0, 0.0)):
             for full, pts, w in sides if full and seen(np.asarray(pts) + [sx, sy])]
 
 
-def make_trial(kind, name, video, growth):
+def make_trial(kind, name, video, growth, n_boxes=None):
     ref = max(0, growth.get(name, LEAD) - LEAD)
     # detected on frame 0 (the camera's exposure changes once the vine moves), expressed in the
     # calibration of the reference frame (what track.py calibrates on)
@@ -308,7 +390,7 @@ def make_trial(kind, name, video, growth):
     ext, rect = extended(cal, frame)
     holes_px = pegboard_lattice(frame, 25.4)[0]
     white, black, _, panel, roi = masks(ext, rect, cal.px_to_mm(holes_px))
-    boxes = detect_boxes(ext, rect, N_BOXES[kind], roi)
+    boxes = detect_boxes(ext, rect, n_boxes or N_BOXES[kind], roi)
     # the boxes' dark rims are not the mount, and their tops are not the stub
     A = ext.rect_matrix(RES)
     foot = np.zeros(black.shape, np.uint8)
@@ -399,6 +481,184 @@ def make_trial(kind, name, video, growth):
     return trial
 
 
+#------------------------------------------------------------------------ long-horizon videos
+
+LONG_ORIGINAL = [3679, 3736, 3738, 3739, 3741, 3744, 3745, 3747, 3749, 3750]    # long_01 ...
+# The cardboard panels' feet (where they stand on the board), read off long_02 (frame 0, the hole rows
+# next to each panel) in long_02's board frame: the rough lines every video's panels are refined from
+# (make_long_trial; the panels are the same in all ten, but shift by a few cm between them).
+LONG_REF = "long_02"
+LONG_PANELS_MM = [((70.0, 560.0), (70.0, 810.0)),          # left, along the board's edge
+                  ((70.0, 810.0), (465.0, 876.0)),         # top, slanted ~10 deg
+                  ((465.0, 876.0), (725.0, 741.0))]        # slanted ~27 deg, down to the box
+LONG_INSIDE_MM = (600.0, 450.0)                            # a point on the board side of every panel
+
+
+def panel_obbs(panels, inside, thickness=10.0, behind=150.0):
+    '''Walls (10 mm thick, standing on each segment, on its far side from `inside`) and the regions
+    behind them where the vine cannot be (from 12 mm past the foot: the face and the top edge are seen
+    there).'''
+    walls, exclude = [], []
+    for a, b in panels:
+        a, b = np.array(a), np.array(b)
+        u = (b - a) / np.linalg.norm(b - a)
+        n = np.array([-u[1], u[0]])
+        if (np.array(inside) - a) @ n > 0:
+            n = -n                                  # n points away from the board side
+        L = np.linalg.norm(b - a)
+        th = math.atan2(u[1], u[0])
+        c = (a + b) / 2 + thickness / 2 * n
+        walls.append([round(float(c[0]), 1), round(float(c[1]), 1), round(th, 4), round(L / 2, 1), thickness / 2])
+        ce = (a + b) / 2 + (12 + behind / 2) * n
+        exclude.append([round(float(ce[0]), 1), round(float(ce[1]), 1), round(th, 4), round(L / 2 + 20, 1), behind / 2])
+    return walls, exclude
+
+
+def topdown_gray(cal, frame, res=2.0, size=(1400, 1100)):
+    ext = Calibration(H=cal.H, board_mm=size, image_size=cal.image_size, K=cal.K, dist=cal.dist)
+    g = cv2.cvtColor(ext.rectify(frame, res), cv2.COLOR_BGR2GRAY).astype(np.float32)
+    return cv2.GaussianBlur(g - cv2.GaussianBlur(g, (0, 0), 15), (0, 0), 2)
+
+
+def refine_panel(holes, a, b, inside, band=90.0, max_turn_deg=10.0, foot_mm=10.0):
+    '''A panel's foot from the holes seen next to it: of the lines near a-b (turned up to max_turn_deg),
+    the one along which the outermost visible holes line up best (most holes within half a pitch of
+    the envelope); the foot is foot_mm past that envelope (the next row of holes is hidden under the
+    panel's face). Returns the refined (a, b), or None if too few holes are seen along it.'''
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    mid, L = (a + b) / 2, np.linalg.norm(b - a)
+    u0 = (b - a) / L
+    best = None
+    for turn in np.radians(np.arange(-max_turn_deg, max_turn_deg + 0.25, 0.5)):
+        c, s_ = math.cos(turn), math.sin(turn)
+        u = np.array([c * u0[0] - s_ * u0[1], s_ * u0[0] + c * u0[1]])
+        n = np.array([-u[1], u[0]])
+        if (np.asarray(inside) - mid) @ n > 0:
+            n = -n                                  # outward
+        rel = holes - mid
+        t, d = rel @ u, rel @ n
+        near = (np.abs(t) < L / 2 - 15) & (d > -band) & (d < band)
+        if near.sum() < 10:
+            continue
+        env = d[near].max()
+        score = int((d[near] > env - 12.7).sum())
+        if best is None or score > best[0]:
+            best = (score, u, n, env)
+    if best is None or best[0] < 5:
+        return None
+    _, u, n, env = best
+    foot = mid + (env + foot_mm) * n
+    # keep the original extent along the panel, projected on the refined line
+    ta, tb = (a - mid) @ u, (b - mid) @ u
+    return foot + ta * u, foot + tb * u
+
+
+_long_ref = None
+
+
+def make_long_trial(name, video):
+    global _long_ref
+    calib = {"pegboard_pitch_mm": 25.4, "camera_height_mm": CAMERA_HEIGHT_MM}
+    if _long_ref is None:
+        f = read_frame(os.path.join(VIDEO, "long", LONG_REF + ".mov"), 0)
+        _long_ref = topdown_gray(shifted_calibration(f, calib)[0], f)
+    trial = make_trial("long", name, video, {}, n_boxes=1)
+    frame = read_frame(video, trial["reference_frame"])
+    cal, _ = shifted_calibration(frame, calib)
+    # rough: long_02's panels moved by the phase correlation of the two top-down images (good to a few
+    # cm: the panels' faces and tops shift with the camera); then each foot from the holes next to it
+    g = topdown_gray(cal, frame)
+    (dx, dy), _ = cv2.phaseCorrelate(_long_ref, g, cv2.createHanningWindow(g.shape[::-1], cv2.CV_32F))
+    off = np.array([dx * 2.0, -dy * 2.0])
+    holes = cal.px_to_mm(pegboard_lattice(frame, 25.4)[0])
+    inside = np.array(LONG_INSIDE_MM) + off
+    panels, refined = [], []
+    for a, b in LONG_PANELS_MM:
+        a, b = np.array(a) + off, np.array(b) + off
+        r = refine_panel(holes, a, b, inside)
+        refined.append(r is not None)
+        panels.append(r if r is not None else (a, b))
+    # consecutive panels meet: join each corner at the intersection of the refined lines
+    for i in range(len(panels) - 1):
+        (a1, b1), (a2, b2) = panels[i], panels[i + 1]
+        d1, d2 = b1 - a1, b2 - a2
+        den = d1[0] * d2[1] - d1[1] * d2[0]
+        if abs(den) > 1e-6:
+            t = ((a2 - a1)[0] * d2[1] - (a2 - a1)[1] * d2[0]) / den
+            x = a1 + t * d1
+            panels[i], panels[i + 1] = (a1, x), (x, b2)
+    walls, exclude = panel_obbs(panels, inside)
+    # bricks: dark red or grey brick-sized regions, not a panel, the box, the mount or the stub
+    ext, rect = extended(cal, frame)
+    _, black, _, _, roi = masks(ext, rect, holes)
+    A = ext.rect_matrix(RES)
+    # darker than the board as a whole (two bricks end to end fill too much of masks()' local window)
+    hsv = cv2.cvtColor(cv2.medianBlur(rect, 7), cv2.COLOR_BGR2HSV).astype(np.float32)
+    Hh, S, V = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    # red (hue <= 10, not the panels' saturated brown) or grey bricks
+    brickish = (((Hh <= 10) | (Hh >= 172)) & (S <= 125)) | (S < 60)
+    dark = ((V < 0.8 * np.median(V[roi > 0])) & brickish & (roi > 0) & (black == 0)).astype(np.uint8) * 255
+    dark = cv2.morphologyEx(cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8)), cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+    keep = dark.copy()
+    for cx, cy, th, hw, hh in exclude + walls:
+        cv2.fillPoly(keep, [_apply_h(A, obb_corners(np.array([cx, cy]), np.array([math.cos(th), math.sin(th)]), hw, hh)).round().astype(np.int32)], 0)
+    for bx in trial["boxes"]:
+        cx, cy, deg = bx["pose_mm"]
+        u = np.array([math.cos(math.radians(deg)), math.sin(math.radians(deg))])
+        cv2.fillPoly(keep, [_apply_h(A, obb_corners(np.array([cx, cy]), u, 70, 70)).round().astype(np.int32)], 0)
+    base = np.array(trial["base"]["mm"])
+    cv2.circle(keep, tuple(_apply_h(A, [base])[0].round().astype(int)), int(150 / RES), 0, -1)
+    bricks = []
+    for comp in components(keep, 8000):
+        c, (la, lb), th = rect_mm(ext, comp)
+        if lb > la:
+            la, lb, th = lb, la, th + math.pi / 2
+        if not (150 <= la <= 470 and 60 <= lb <= 140):
+            continue
+        k = max(1, int(round(la / 205)))
+        u = np.array([math.cos(th), math.sin(th)])
+        for j in range(k):
+            ck = cal.lift([c + ((j + 0.5) / k - 0.5) * la * u], 57.0)[0]
+            bricks.append([round(float(ck[0]), 1), round(float(ck[1]), 1), round(float(th), 4), round(la / k / 2, 1), round(lb / 2, 1)])
+    # the two bricks lie end to end: give them a brick's footprint (203 x 92 mm) on the line through both;
+    # with one found, the other is the darker of the two places next to it along its length
+    if len(bricks) == 1:
+        c, th = np.array(bricks[0][:2]), bricks[0][2]
+        u = np.array([math.cos(th), math.sin(th)])
+        def darkness(p):
+            x, y = _apply_h(A, [p])[0].round().astype(int)
+            return float(V[max(0, y - 15):y + 15, max(0, x - 30):x + 30].mean())
+        other = min((c + 205 * u, c - 205 * u), key=darkness)
+        bricks.append([round(float(other[0]), 1), round(float(other[1]), 1), th, bricks[0][3], bricks[0][4]])
+        trial["detected"]["brick_added"] = True
+    if len(bricks) == 2:
+        c1, c2 = np.array(bricks[0][:2]), np.array(bricks[1][:2])
+        th = math.atan2(*(c2 - c1)[::-1])
+        bricks = [[b[0], b[1], round(th, 4), 101.5, 46.0] for b in bricks]
+    trial["walls_obb_mm"] = walls + bricks
+    # no vine on the bricks (a grey brick looks like the clear tube to the saturation test): their
+    # footprints and where their tops are seen (57 mm up, pushed away from the nadir)
+    nadir = cal.px_to_mm([[cal.image_size[0] / 2, cal.image_size[1] / 2]])[0]
+    zc = CAMERA_HEIGHT_MM
+    for cx, cy, th, hw, hh in bricks:
+        seen = nadir + (np.array([cx, cy]) - nadir) * zc / (zc - 57.0)
+        # the footprint and the top as seen, with margins that also cover the side faces seen beyond them
+        # (the vine runs up the channel between the bricks and the slanted panel without touching them)
+        for c, margin in ((np.array([cx, cy]), 12.0), (seen, 20.0)):
+            exclude.append([round(float(c[0]), 1), round(float(c[1]), 1), th, hw + margin, hh + margin])
+    trial["exclude_obb_mm"] = exclude
+    trial.pop("grow_rate_mps")                      # measured per video (long_01 grows slower)
+    trial["detected"]["panels"] = {"rough_offset_mm": [round(float(v), 1) for v in off], "refined_from_holes": refined,
+                                   "feet_mm": [[[round(float(v), 1) for v in a], [round(float(v), 1) for v in b]] for a, b in panels]}
+    trial["detected"]["bricks"] = len(bricks)
+    img = cv2.imread(os.path.join(REPO, "out", "video", "_detect", name + ".png"))
+    for w in trial["walls_obb_mm"]:
+        u = np.array([math.cos(w[2]), math.sin(w[2])])
+        cv2.polylines(img, [_apply_h(A, obb_corners(np.array(w[:2]), u, w[3], w[4])).round().astype(np.int32)], True, (255, 0, 0), 2)
+    cv2.imwrite(os.path.join(REPO, "out", "video", "_detect", name + ".png"), img)
+    return trial
+
+
 def manifest():
     rows = []
     for k, n in enumerate(BRICK_ORIGINAL):
@@ -411,8 +671,9 @@ def manifest():
                              dataset="simple_contact",
                              split="excluded" if name in EXCLUDED else "val" if name in VALIDATION else "train",
                              **({"excluded": EXCLUDED[name]} if name in EXCLUDED else {})))
-    for k, p in enumerate(sorted(glob.glob(os.path.join(VIDEO, "long", "*.mov")))):
-        rows.append(dict(path=os.path.relpath(p, REPO), original=None, type="long", dataset="long", split="train"))
+    for k, n in enumerate(LONG_ORIGINAL):
+        rows.append(dict(path=f"video/long/long_{k + 1:02d}.mov", original=f"IMG_{n}", type="long", dataset="long",
+                         split="test"))
     with open(os.path.join(VIDEO, "manifest.json"), "w") as f:
         json.dump({"note": "every video: new path, original camera file name, type, dataset and split "
                            "(simple_contact: one video per type held out for validation)", "videos": rows}, f, indent=1)
@@ -450,8 +711,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("names", nargs="*", help="only these (e.g. block_wall_03)")
     parser.add_argument("--growth", action="store_true", help="find growth starts first (tracking pass)")
+    parser.add_argument("--long", action="store_true", help="the long-horizon videos (video/long/) instead")
     args = parser.parse_args()
     manifest()
+    if args.long:
+        for p in sorted(glob.glob(os.path.join(VIDEO, "long", "long_*.mov"))):
+            name = os.path.splitext(os.path.basename(p))[0]
+            if args.names and name not in args.names:
+                continue
+            trial = make_long_trial(name, p)
+            with open(os.path.join(HERE, name + ".json"), "w") as f:
+                json.dump(trial, f, indent=1)
+            print(f"wrote {name}.json: base {trial['base']['mm']} at {trial['base']['cut_dir_deg']} deg, box "
+                  f"{trial['boxes'][0]['pose_mm']} score {trial['detected']['box_scores']}, {trial['detected']['bricks']} "
+                  f"bricks, panels {trial['detected']['panels']}")
+        return
     videos = {os.path.splitext(os.path.basename(p))[0]: (kind, p) for kind in TYPES
               for p in sorted(glob.glob(os.path.join(VIDEO, "simple_contact", kind, "*.mov")))}
     names = args.names or sorted(videos)

@@ -1,6 +1,5 @@
 import math
 import torch
-from functools import partial
 
 # DiffVine's baked-in ad-hoc unit factors. They keep the QP well-conditioned in the base's native
 # units; dvsim.si absorbs them into the stored non-dim parameter values. Named here so vine.py,
@@ -213,6 +212,7 @@ class VineParams:
         self.obj_damp = 1.0                          # fraction of an object's velocity carried into the
                                                      # next step (1 = momentum is kept; friction slows it)
         self.obj_friction = 0.5                      # Coulomb friction coefficient object <-> table
+        self.obj_spin = 1.0                          # scale on its torque (dynamic_vine.object_friction_weights)
         self.gravity = 9810.0                        # [mm/s^2] in the base's native units (si sets it)
 
         # --- sPAM actuation, used when stiffness_mode == 'spam' (see dvsim/spam.py): a constant
@@ -225,10 +225,19 @@ class VineParams:
         #     The linear elastic model, but relaxing to bend_target instead of straight -- a stable
         #     stand-in for actuation that planners can use as a control (rest angle = curvature * seg len).
         self.bend_target = torch.zeros(max_bodies)   # (max_bodies,)
+        # --- 'wrinkle' stiffness mode: 'curvature' with the wrinkling moment of dvsim/wrinkle.py
+        #     (saturates at pi P R^3, so loaded joints kink) in place of the linear spring.
+        self.pressure = 10_800.0                     # [Pa] vine pressure (20 N stall force / pi R^2)
+        self.wrinkle_scale = 1.0
+        # Coulomb friction between the vine and the movable objects (0 = frictionless contact)
+        self.vine_friction = 0.0
+        # ... between a movable object and a wall, and between two movable objects
+        self.wall_friction = 0.0
+        self.box_friction = 0.0
 
         self.si: dict | None = None                  # dvsim.si scale record (set by vine_params_si)
 
-        # 'linear' (passive), 'spam' (linear + constant actuator moment) or 'curvature'
+        # 'linear' (passive), 'spam' (linear + constant actuator moment), 'curvature' or 'wrinkle'
         self.stiffness_mode = stiffness_mode
 
     def requires_grad_(self):
@@ -381,6 +390,13 @@ def bending_energy(params: VineParams, theta_rel, dtheta_rel, bodies):
         zero_out_custom(bend, bodies)
         return bend
 
+    if params.stiffness_mode == 'wrinkle':
+        # wrinkling moment about the rest angle (bend_target) + damping
+        from .wrinkle import wrinkle_moment
+        bend = wrinkle_moment(params, theta_rel - params.bend_target) - DAMP_FACTOR * params.damping.abs() * dtheta_rel
+        zero_out_custom(bend, bodies)
+        return bend
+
     # 'linear' elastic stiffness + angular velocity damping
     stiffness_response = params.stiffness_val.abs() * theta_rel.abs()
     zero_out_custom(stiffness_response, bodies)
@@ -488,18 +504,18 @@ def forward_batched_part(params: VineParams, init_heading, init_x, init_y, state
     bodies = extend(params, state, dstate, bodies)
 
     # Jacobian of SDF with respect to x and y
-    L = torch.func.jacrev(partial(sdf, params))(state, bodies)
+    L = torch.func.jacrev(lambda s, b: sdf(params, s, b))(state, bodies)
     sdf_now = sdf(params, state, bodies)
 
     # Jacobian of joint deviation wrt state
-    J = torch.func.jacrev(partial(joint_deviation, params, init_x, init_y))(state, bodies)
+    J = torch.func.jacrev(lambda s, b: joint_deviation(params, init_x, init_y, s, b))(state, bodies)
     deviation_now = joint_deviation(params, init_x, init_y, state, bodies)
     
     # print('J isnan', torch.isnan(J).any())
     # print('deviation_now isnan', torch.isnan(deviation_now).any())
     
     # Jacobian of growth rate wrt state
-    growth_wrt_state, growth_wrt_dstate = torch.func.jacrev(partial(growth_rate, params), argnums=(0, 1))(state, dstate, bodies)
+    growth_wrt_state, growth_wrt_dstate = torch.func.jacrev(lambda s, ds, b: growth_rate(params, s, ds, b), argnums=(0, 1))(state, dstate, bodies)
     growth = growth_rate(params, state, dstate, bodies)
     
     # print('growth_wrt_state isnan', torch.isnan(growth_wrt_state).any())

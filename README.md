@@ -40,6 +40,8 @@ the live code for the pushing work.
 | `sPAM/` | used | sPAM actuator model. `torch_*.py` are the Torch ports (`torch_nns.py` = neural surrogate, `torch_nns_usage.py` = bend radius -> pressure / actuator length). The non-`torch_` files are the JAX originals and need `jax`. |
 | `envs/` | **live** | The sim environments, `envs/<name>.json` (written by `envs/make_envs.py`; the block puzzles 5a–5c by `envs/make_puzzles.py`), pictures in `envs/vis/`. See [Environments](#environments). The old `envs/*.txt` files are in `envs/archive/`; master's scripts that default to them (`kinodynamic/`, `experiments/`, `geometric/`) need `--env envs/archive/...`. |
 | `pbd_vine.py`, `render.py`, `kinodynamic/`, `geometric/`, `experiments/` | from master | ActVine PBD simulator, pygame renderer, SST planner, biarc RRT*, paper experiments. Identical to `master` on this branch, except `kinodynamic/env_loader.py`, which also parses `dynamic_obstacles:`. Needs `jax`, which the current `vine` env does not have. |
+| `checkpoints/` | **live** | Fitted simulators, one json of physical parameters each, with what they were trained on and their scores. See [Checkpoints](#checkpoints-fitted-simulators). |
+| `out/` | outputs | Not tracked. `out/solutions/`: the latest solution or best attempt for each env (1a–5d), replaced on every run of `run_envs.py` / `block_puzzle.py`, one folder per kind of file so all envs can be viewed side by side: `videos/<env>.solution.mp4`, `gifs/` (solution and tree), `images/` (env, plan, pushes, final frames), `results/<env>.result.json` and `summary.json`, `data/` (tree logs), `logs/<env>.run.log` (`xnew_rrt/outputs.py`). `out/archive/`: solutions worth keeping (`3a_border_sweep/`). `out/video/`: video tracks. `out/fit_sim/`: fit logs and checkpoint comparisons. `out/ablation/`, `out/bench/`: the data behind the tables below. |
 | `cache/`, `pics/`, `solution.png`, `title.gif`, `x_progress_log.txt` | leftovers | Outputs and notes from earlier runs. |
 
 ### `dvsim/`: the simulator
@@ -49,7 +51,7 @@ relates to SQP, how it is solved and batched, box friction, and how the sPAM mod
 
 | File | Contents |
 |---|---|
-| `vine.py` | `VineParams`, state layout, growth (`extend`), the constraint functions (`sdf`, `joint_deviation`, `growth_rate`), bending torques (`bending_energy`), and `forward_batched_part`, which evaluates them and their Jacobians for one batch element. |
+| `vine.py` | `VineParams`, state layout, growth (`extend`), the constraint functions (`sdf`, `joint_deviation`, `growth_rate`), bending torques (`bending_energy`), and `forward_batched_part`, which evaluates them and their Jacobians for one batch element. Rounded corners: `VineParams.wall_round` / `obj_round` make every wall / box its rectangle shrunk by that radius plus that margin; `rounded_obb_sep` is the exact distance between two such boxes (the separating-axis gap does not see rounding). Both 0 by default, which leaves every contact as before. |
 | `dynamic_vine.py` | Movable boxes: vine-box, box-wall and box-box gap functions, assembly of the full QP (`dynamic_solve`), and `step()`, the single entry point. |
 | `solver.py` | The QP solve: cvxpylayers + Clarabel on CPU (differentiable, default), `BACKEND = "TORCH_IPM"` for `batched_qp.py`, or `qpth` on GPU if installed. |
 | `batched_qp.py` | The whole batch's QP in plain torch on CPU or GPU: friction cone linearized, far rows dropped, equalities eliminated by LU, Mehrotra interior point. See [The batched simulator](#the-batched-simulator). |
@@ -107,10 +109,17 @@ between batch elements.
 | `bench_batch.py` | Times one batched dvsim step against batch size, either backend and device (and master's PBD sim on the GPU, `--pbd`). |
 | `check_batched_qp.py` | Checks the batched torch QP solver against Clarabel and the exact friction cone, and compares rollouts. |
 | `bench_jax_qp.py` | The batched torch QP solver against qpax and MPAX (JAX) on the same problems. |
+| `batched_rollout.py` | Rollouts with the states on the GPU and each step replayed as a CUDA graph (`GraphStep`, `BatchRollout`); used by `Sim.rollout_batch` on CUDA. |
+| `check_graph_rollout.py` | Times and checks those rollouts against the older loop. |
+| `profile_sim.py` | Where a step's time goes: wall time and GPU kernel time per stage (vine, contact geometry, QP stages), eager and graph, and the sPAM design cost. |
+| `check_qp_precision.py` | The QP in float64 against float32 (`batched_qp.DTYPE`): time per step and rollout drift. |
+| `outputs.py` | The `out/solutions/<kind>/<env>.*` layout: a run's scratch folder and its publishing. |
+| `checkpoint.py` | Simulator checkpoints: save, load, apply to a `SimConfig`; `base` writes `checkpoints/base_pbd_brick.json`. |
+| `fit_sim.py` | Fits stiffness, damping and box friction to tracked videos on the GPU, starting from a checkpoint and writing one; `eval` compares checkpoints on held-out videos. |
 | `kino.py` | Batched kinodynamic planners: rrt, rrt_grid, kpiece, kinopax (+ `_shape` variants), with resets. |
 | `ablation.py` | Runs every env x planner x seed on the GPU sim; `--summarize` writes the table. |
 | `funneling.py` | Measures how often tree nodes land on an earlier node, in contact and in free space. |
-| `block_puzzle.py` | Hierarchical planner for the block puzzles 5a–5c: Dijkstra over the block's grid cell, each push realized by a batched search over straight vines from the spawn ring. |
+| `block_puzzle.py` | Hierarchical planner for the block puzzles 5a–5d: Dijkstra over the blocks' grid cells, each push realized by a batched search over straight vines from the spawn ring, depth first with backtracking. |
 | `hierarchical_planner.py` | High-level block-pushing puzzle on a grid of box-sized cells: which pushes, from where, in what order. |
 | `pose_search.py` | Launch-pose search for a passive vine pushing a box (for the live demo). |
 | `rollout.py` | Simulate one rollout from a list of controls (or replay an RRT plan) and render it. |
@@ -138,7 +147,7 @@ There are three categories:
 | Category | Envs | Task |
 |---|---|---|
 | `b2g_unretractable` | 1a one block, 1b two blocks in a row, 1c precise block pose; 2a wall-guided, 2b channel | Block to goal with one vine: the goal is close, or a wall guides the block. |
-| `b2g_retractable` | 3a open board, 3b maze with vine-sized openings | Block to goal with several pushes, resetting the vine between them (`reset_action_rrt.py`). |
+| `b2g_retractable` | 3a open board (the border is off limits); 3b two pushes: right under a ledge, then down into a corner pocket (sketch of 2026-10-25; the old maze is `envs/archive/3b_maze.json`) | Block to goal with several pushes, resetting the vine between them (`reset_action_rrt.py`). |
 | `vine_to_goal` | 4a S-maze, no blocks; 4b block plugging a gap; 4c zig-zag barrier, two 70 mm gaps, only the lower block can be pushed clear; 4d clutter of 13 blocks | Tip to a goal region, past movable blocks. |
 
 In 4c both gaps are narrower than a block (98 mm) and wider than the vine (48.5 mm). The upper
@@ -150,17 +159,31 @@ wall, which guides it up and left along the top wall to the goal.
 The sketches' basic contact experiments (one block, two blocks, block and wall) will come from
 real data, not sim envs.
 
+Rules on top of the geometry:
+- **Box goals: the center in the disc.** A box goal without a heading is reached when the box
+  center is in the disc. `run_envs.GOAL_INSIDE` (or the goal's `min_inside`) can also require a
+  fraction of the box in it: 0.8 allows the center only 25 mm off center for a 60 mm goal, 46 mm for
+  80 mm and 57 mm for 90 mm, which made the planner spend most of its edges on the last few mm. A goal
+  with a heading (1c) is a pose: center within its radius and heading within its tolerance, drawn as the
+  box's outline at that pose.
+- **The border.** Every edge on which the vine or a box touches the board's border is dropped
+  (`run_envs.off_border`, the `edge_valid` hook of `kino.plan`; an env with `"border": "wall"` lets
+  it act as a wall). Earlier solutions swept the block along it (3a's is kept in
+  `out/archive/3a_border_sweep/`).
+- **Solution videos** stay on their last frame for 0.5 s (`run_envs.HOLD_LAST_S`). Each is written
+  as `.mp4` and as `.webm` (VP8): VS Code's viewer, also over Remote SSH, plays only the webm.
+
 ```bash
 python envs/make_envs.py                              # write envs/*.json
 python xnew_rrt/run_envs.py --draw-only               # envs/vis/<name>.png
 python xnew_rrt/run_envs.py                           # plan on all; or list envs/<name>.json
 ```
 
-`run_envs.py` writes, per env, under `out/envs/<name>/`:
+`run_envs.py` writes, per env, under `out/solutions/<kind>/<name>.*`:
 - `env.png`;
 - `tree.gif`, 40 frames spread over the run (`--tree-frames`, or `--tree-every` iterations);
 - `solution.gif` and `solution.mp4`, the solution or the closest attempt (the title says which);
-- `result.json`; and `out/envs/summary.json` over all envs.
+- `result.json`; and `out/solutions/summary.json` over all envs.
 
 Every env runs `kino.plan` with `--planner` (default `rrt`, the batched RRT over (tip, box
 positions)), until the goal, the edge budget or a time limit (45 min; 90 min for the retractable
@@ -184,7 +207,7 @@ The JSON format:
 
 Where a sketch left the geometry open, the env's `notes` say what was chosen.
 
-Results, 2026-10-23 (`out/envs/summary.json`, seed 0, 3 envs at a time on the shared 12-core
+Results, 2026-10-23 (`out/solutions/summary.json`, seed 0, 3 envs at a time on the shared 12-core
 machine). "Off" is the box-to-goal or tip-to-goal distance at the end; the goal radii are 60–90 mm.
 
 | Env | Result | Off (mm) | Pushes | Resets in tree | Nodes | Time (min) |
@@ -204,64 +227,112 @@ machine). "Off" is the box-to-goal or tip-to-goal distance at the end; the goal 
 With 20 iterations of 16 (2026-10-20) only 1b and 4d were solved, and the old reset planner left
 3a at 550 mm and 3b at 713 mm.
 
-### Block puzzles (5a–5c)
+Results, 2026-10-25, with the fitted simulator (`--checkpoint checkpoints/contact_from_base.json`:
+softer joints, more damping, box friction 0.037 instead of 0.08), the 80% inside goal rule, the
+border rule on 3a and the new 3b. Every env reaches its goal, most in under 2 minutes:
 
-The puzzles come from the sketch of 2026-10-24 and are written by `envs/make_puzzles.py`; images are in `envs/vis/5*.png`.
+| Env | Off (mm) | Pushes | Resets in tree | Nodes | Time (min) |
+|---|---|---|---|---|---|
+| 1a | 21 | 1 | – | 2600 | 0.4 |
+| 1b | 22 | 1 | – | 2718 | 0.4 |
+| 1c | 26 (pose) | 1 | – | 34492 | 6.4 |
+| 2a | 37 | 1 | – | 2380 | 0.4 |
+| 2b | 49 | 1 | – | 78178 | 16.9 |
+| 3a | 45 | 1 (207 edges dropped for touching the border) | 22 | 4200 | 0.8 |
+| 3b (new) | 56 | 2 | 41 | 15188 | 2.8 |
+| 4a | 116 | 1 | – | 5651 | 0.8 |
+| 4b | 102 | 1 | – | 3091 | 0.5 |
+| 4c | 113 | 1 | – | 8003 | 1.5 |
+| 4d | 113 | 1 | – | 3334 | 1.3 |
+
+The lower box friction is most of the difference: a pushed box slides about twice as far, so 3a
+needs one straight push instead of several, and 2b and 4b, which failed with the base simulator,
+now succeed. These are not comparable with the table above (different sim, goal rule and 3b).
+
+### Block puzzles (5a–5d)
+
+The puzzles come from the sketches of 2026-10-24 and -25 and are written by `envs/make_puzzles.py`; images are in `envs/vis/5*.png`.
 
 - **Grid:** 110 mm cells, i.e. the 98 mm block plus 12 mm tolerance (`--cell`).
-- **Walls** fill whole cells. They are merged into rectangles: 21 wall cells become 9 in 5c. That makes a step about 4% faster than one rectangle per cell (106 vs 111 ms at B=256). Merging helps little because the solver already drops far rows.
-- **Spawn:** a ring of cells around the map. A vine grows straight (no actuation) from a ring cell's center, at any heading, and is retracted between pushes.
+- **Walls** fill whole cells. They are merged into rectangles (about 4% faster than one per cell).
+  A `q` cell is a triangle (two thin rotated rectangles in the sim; `5c_tri`).
+- **Blocks.** `B` is the block with the goal. `R` (also `S`, `T`) marks the cells of another movable
+  block, which may span several cells: n cells make it n x 110 - 12 mm long, with its mass scaled by
+  area (5d's long block: 98 x 208 mm, 1.07 kg).
+- **Spawn:** a ring of cells around the map. A vine grows straight (no actuation) from a ring
+  cell's center, at any heading, and is retracted between pushes. No block may touch a ring cell.
 - **Puzzles:**
   - 5a: 2 pushes;
   - 5b: 3 pushes;
   - 5c: 6 pushes, two of which need a diagonal vine that a wall turns into a horizontal push.
+    Walls at grid (3, 1) and (3, 8) stop the block from being taken around the map's edge.
+    Variants: `5c_round` (10 mm corners), `5c_tri` (rounded, the stub under the T a triangle),
+    `5c_fill` (cells (6, 7), (7, 7) and (7, 6) filled too), `5c_120` (120 mm cells);
+  - 5d: two blocks. The long block plugs the row; push it up into the pocket, then push the block
+    right along the row into the goal.
 
 `xnew_rrt/block_puzzle.py` is a hierarchical planner.
 
-**High level.** Dijkstra over the block's cell.
-- A move pushes the block k cells along an axis.
-- It needs the k cells ahead free.
-- It needs room for the vine behind the block, in one of two forms:
+**High level.** Dijkstra over every block's cells, until block 0 is in the goal cell.
+- A move pushes one block k cells along an axis.
+- It needs the k cells ahead free: no wall, ring cell or other block.
+- It needs room for the vine behind the block's back face, in one of two forms:
   - a straight free corridor back to the ring;
-  - or a wall beside the cell behind the block, with the cell diagonally behind it free (a deflected vine).
+  - or a wall beside a cell behind the block, with the cell diagonally behind it free (a deflected vine).
 - Deflected moves and moves that no wall stops cost more.
 
-**Low level.** Realizes one move with the batched GPU sim.
-1. **Candidates:** every ring cell × heading whose ray reaches behind the block. The headings are 16 uniform ones plus continuous headings aimed at the cell behind the block, the block's back face and the guide wall.
+**Low level.** Realizes the plan's first move with the batched GPU sim.
+1. **Candidates:** every ring cell × heading whose ray reaches behind the block (the other blocks
+   count as walls). The headings are 16 uniform ones plus continuous headings aimed at the cells
+   behind the block, its back face and the guide walls.
 2. **Rollout:** all candidates grow in one batched rollout.
-3. **Stop time:** per candidate, the step where the predicted resting pose is nearest the target cell. The block keeps sliding after the vine stops, v²/2μg, unless a wall stops it.
+3. **Stop time:** per candidate, the step where the predicted resting pose is nearest a planned
+   cell. The block keeps sliding after the vine stops, v²/2μg, unless a wall or block stops it.
 4. **Settle:** the best stop times are settled in a second batched run with growth off.
-5. **Accept:** the move succeeds if the settled block is within 25 mm of the target cell's center and turned at most the jam angle. The jam angle is the most a 98 mm block can turn and still pass a one-cell corridor: 7.5° at 110 mm.
-6. **Failure:** a failed move is banned and the high level replans.
+5. **Accept:** the settled block must be within 25 mm of a cell the plan puts it in: the first
+   move's target, or a later one if the plan keeps pushing the same block (one vine may do several
+   planned moves). It must be turned at most the jam angle (7.5° for the 98 mm block at 110 mm;
+   3.3° for the long block), no block may have touched a ring cell, and the other blocks must not
+   have moved more than 15 mm. A push that turns the block more than 15° on the way is flagged.
 
-A push that turns the block more than 15° on the way is flagged.
+**Search.** Depth first with backtracking: no push is committed until a whole sequence reaches the
+goal. A push that fails bans that block's moves in that direction from that node, and the high
+level replans there. A node with no plan left is abandoned, and the move that led to it is banned
+at its parent. Every push of the answer is simulated from the exact pose the previous push left,
+so the answer is an open-loop sequence. (The old planner committed each push and replanned from
+wherever the block landed, which made the small correcting pushes.)
 
 ```bash
-python envs/make_puzzles.py                                   # envs/5{a,b,c}.json + envs/vis/
-python xnew_rrt/block_puzzle.py envs/5a.json envs/5b.json envs/5c.json   # out/puzzle/<name>/
+python envs/make_puzzles.py                                   # envs/5{a,b,c,c_tri,d}.json + envs/vis/
+python envs/make_puzzles.py --only 5c --corner-radius 10 --suffix _round
+python xnew_rrt/block_puzzle.py envs/5a.json envs/5d.json --checkpoint checkpoints/contact_from_base.json
 ```
 
-Each run writes these under `out/puzzle/<name>/`:
+Each run writes these under `out/solutions/<kind>/<name>.*`:
 - `plan.png`, the first high-level plan;
-- `pushes.png`, the pushes executed;
-- `solution.mp4`;
-- `result.json`, with every push search, how many candidates reached the target, and how many turned past the flag or jam angle.
+- `pushes.png`, the solution's pushes (or the deepest branch's);
+- `solution.gif` and `solution.mp4`;
+- `result.json`, with every push search (including failed and backed-out ones).
 
-Results, 2026-10-24:
+Results, 2026-10-25, with the fitted simulator (`--checkpoint checkpoints/contact_from_base.json`):
 
 | Env | Result | Pushes | Push searches | Flagged > 15° | Time |
 |---|---|---|---|---|---|
-| 5a | solved | 2 | 2 | 0 | 1.5 min |
-| 5b | solved | 3 | 3 | 0 | 2.9 min |
-| 5c | not solved: 5 of 6 pushes | 5 | 9 | 0 | 6.4 min |
+| 5a | solved | 1 (up 2 lands in the pocket: 2 planned moves) | 1 | 0 | 0.3 min |
+| 5b | solved | 1 (one vine does all 3 planned moves) | 1 | 1 (19°) | 0.8 min |
+| 5d | solved: long block up 2, block right 2 | 2 | 2 | 0 | 0.6 min |
+| 5c | not solved: 4 of 5 pushes | 4 | 5 | 0 | 2.7 min |
+| 5c_round | not solved: 4 of 5 pushes | 4 | 5 | 0 | 2.7 min |
+| 5c_tri | not solved: 5 of 6 pushes | 5 | 6 | 1 | 3.5 min |
 
-**5c, what fails.**
-- **Rejected shortcut.** The high level first tried a 4-push shortcut: down from the start, with a vine deflected along the pillar. The sim rejected it, 46 mm short. It then followed the sketch's route.
-- **Uniform headings can't reach behind the block.** The diagonal push has to thread a 62 mm window between the stub's corner and the pillar's corner, measured on the vine centerline. No ray from a ring-cell center hits it at 16, 32 or 64 uniform headings, because 45° rays pass exactly through grid corners. Aimed headings (38–44° from ring cell (0, 6)) thread it.
-- **The block ends up turned.** Single-cell pushes in a corridor leave the block wedged at the jam angle. Any push that ends where corridors meet leaves it turned more than that, so it no longer enters the next corridor.
-  - With 15° allowed, it got to the goal corridor's entrance turned 11.5°, and every vine wedged it there (`out/puzzle/aim_final15/`).
-  - With 120 mm cells (`envs/5c_120.json`, 15° jam angle), 8 pushes reach the same entrance and the last push fails the same way (`out/puzzle/5c_120/`).
-- **Uniform headings only** (`--no-aim`, `out/puzzle/noaim_h16/`): 5a and 5b solve, with one flagged push in 5b. 5c stops at the first diagonal push.
+**5c, what fails.** With the walls at (3, 1) and (3, 8) the high level has a single route, and every
+variant gets the block to (7, 5), next to the goal pocket. The last move, a deflected push right 2
+into the pocket, finds no vine that leaves the block in the goal cell. The search then backs all the
+way out, because banning a move at a node leaves no other route above it. Backing up only bans
+moves; it never retries the same move with a different vine (a block left a few mm or degrees
+differently at (7, 5)), which is what this last push would need. The triangle (`5c_tri`) changes the
+route through the T but not this last push.
+
 
 ## Install
 
@@ -592,10 +663,11 @@ New: `scene.py`, `viz.py`, `rollout.py`, `tip_block_rrt.py`, `batch_tip_block_rr
   contacts and joints as constraints. Until 2026-10-23 that solve was cvxpylayers -> diffcp ->
   Clarabel, one element at a time on a CPU thread pool.
 
-**Now the whole batch steps together, on the GPU.** Opt in with
-`SimConfig(qp_backend="TORCH_IPM", device="cuda")`, or `--device cuda` on `run_envs.py` and
-`ablation.py`. States stay on the CPU between steps; each batched step moves its inputs to the GPU
-and back. The default is still DIFFCP on the CPU.
+**Now the whole batch steps together, on the GPU, and that is the default** whenever there is a
+GPU: `SimConfig` defaults to `qp_backend="TORCH_IPM"`, `device="cuda"`, `cuda_graphs=True`, and
+`run_envs.py` to `--device cuda --batch-size 256`. On a machine without CUDA it falls back to
+DIFFCP on the CPU. `Sim.rollout_batch` keeps the states on the GPU for the whole rollout and
+replays each step as a CUDA graph (see [GPU-resident rollouts and CUDA graphs](#gpu-resident-rollouts-and-cuda-graphs)).
 
 1. **Device.** `Sim.step_batch` runs the step inside `torch.device("cuda")` with a GPU copy of the
    params. Every bare `torch.zeros` / `eye` / `arange` in dvsim follows the default device, so
@@ -674,10 +746,99 @@ same with CUDA graphs or `torch.compile`. Not worth a port.
 - **The fix:** cut rows before assembling, not after. Compute the gaps (cheap), keep the pairs
   under the 60 mm threshold, and build Jacobian rows only for those. Rows then scale with
   contacts, not with every pair. Not done yet.
-- **Smaller wins left:**
-  - CUDA graphs or `torch.compile` for the forward pass and the interior point loop: the launch
-    latency is most of a step at B ≤ 256;
-  - keeping states on the GPU for a whole edge instead of copying them back every step.
+- **Smaller wins:** CUDA graphs and keeping states on the GPU, both done below.
+
+### GPU-resident rollouts and CUDA graphs
+
+`xnew_rrt/batched_rollout.py`, used by `Sim.rollout_batch` on CUDA (`SimConfig.cuda_graphs`, on
+by default; off gives the older loop).
+- **States stay on the GPU** for the whole rollout. Every step runs the whole batch, padded to a
+  power of two. Finished or failed elements are frozen with masks instead of being dropped in a
+  Python loop, and the batch is compacted to a smaller power of two once half of it is done. Stop
+  tests are tensor ops: `Sim.batched_test` turns the box and tip goal tests into them, and
+  `block_puzzle.py` writes its own. The history comes back to the CPU once, at the end.
+- **CUDA graphs.** A step is recorded once per batch size and replayed: one launch instead of the
+  several hundred small kernels it is made of. That needs a step with no data-dependent shapes and
+  no host syncs:
+  - `dynamic_solve` pins the padding rows with a dense one-hot instead of `nonzero`;
+  - `vine.extend` zeroes with `x * 0`, because under vmap a Python `0` becomes a CPU tensor;
+  - `batched_qp` graph mode (`GRAPH`):
+    - the rows are packed to a fixed count, the friction rows plus the 40 nearest contact rows.
+      With the velocity caps only rows within a few mm can bind in one step, and dropping one
+      within 20 mm sets `OVERFLOW`;
+    - all 30 interior point iterations always run;
+    - the LU is of A' padded to a square with zero columns, which cuSOLVER factors in one
+      recordable batched call. The zero columns change no pivot; MAGMA's batched LU syncs with
+      the host.
+  - Every interior point iteration (graph or not) now inverts its Cholesky factor once and solves
+    by matrix-vector products: one triangular solve instead of four.
+- **Graphs only pay below about 200 elements.** A graph step does about 4x the GPU work of an
+  eager step: fixed iterations on padded rows, where the eager step stops once the batch has
+  converged. It wins while launches dominate, so batches above `GRAPH_MAX_BATCH` (128; 32 with
+  more than 2 boxes) step eagerly, still on the GPU. A large batch drops into graph mode on its
+  own as it is compacted.
+
+Bare step on 1a, shared 4090, ms:
+
+| Batch | 16 | 32 | 64 | 128 | 256 | 512 |
+|---|---|---|---|---|---|---|
+| Eager | 63 | 62 | 64 | 65 | 69 | 84 |
+| Graph | 23 | 26 | 33 | 46 | 78 | 147 |
+
+Whole rollouts, against the older loop (states on the CPU between eager steps;
+`python xnew_rrt/check_graph_rollout.py envs/1a.json ... --batch 32 128 256`):
+
+| Env | B=32 | B=128 | B=256 |
+|---|---|---|---|
+| 1a | 2.5x | 1.5x | 1.1x |
+| 4c | 2.5x | 1.4x | 1.1x |
+| 5c | 2.9x | 1.7x | 1.0x |
+| 4d (13 boxes) | 1.7x | 0.7x (since capped at 32) | 1.2x |
+
+Final tip positions agree within 2 mm (median 0) and boxes within 0.1 mm, except 4d's pile
+(9 mm). Rollout lengths are the same, with no extra failures.
+
+Left for later:
+- split the step into graphs around the interior point loop, so a graph can stop early like the
+  eager step does;
+- cut rows before assembling them (above).
+
+### Where a step's time goes (2026-10-25)
+
+`python xnew_rrt/profile_sim.py envs/3a.json envs/5c.json --batch 32 128 512` times each stage of a
+step, eager, with CUDA-synchronized timers (wall time), and attributes every GPU kernel to the
+stage that launched it (GPU time, what a graph replay pays). Steps are taken from mid-rollout
+states (120 steps in), so there is contact. The 4090 is shared, so expect ±20%.
+
+There is no JAX (MPAX) and no `torch.compile` anywhere in the sim: the solver is the
+`TORCH_IPM` interior point method above, and launch overhead is removed with CUDA graphs.
+`bench_jax_qp.py` is only the earlier comparison against MPAX and qpax.
+
+| | 3a B=32 | 3a B=128 | 3a B=512 | 5c B=32 | 5c B=128 | 5c B=512 |
+|---|---|---|---|---|---|---|
+| Step, eager (ms) | 52–73 | 78–96 | 96–115 | 98–126 | 98–124 | 144–153 |
+| Step, CUDA graph (ms) | 21–25 | 37–46 | – | 21–24 | 45–46 | – |
+| GPU kernel time (ms) | 7 | 20 | 56 | 18 | 33 | 115 |
+| Element-steps/s (best) | ~1,500 | ~3,400 | ~4,900 | ~1,500 | ~2,800 | ~3,500 |
+| Share of GPU time: QP (IPM + LU + other) | 57% | 82% | 86% | 82% | 85% | 83% |
+| Share of GPU time: vine and contact geometry | 17% | 6% | 3% | 7% | 4% | 1% |
+
+- **The QP is the cost.** IPM iterations alone are 27–68% of GPU time, the equality elimination
+  (LU) 10–21%. The vine's forward pass and all contact geometry are under 1 ms of GPU work, but in
+  eager mode they are ~40 ms of wall time (hundreds of tiny vmap kernels), which is what the graph
+  removes.
+- **sPAM is free per step.** The actuator's moment is constant for a design, so a step only adds
+  a per-joint moment. In `spam` mode each rollout first designs its actuator with the MLP surrogate
+  (24 calls on the CPU), 2 ms per rollout, once. The default checkpoints use `curvature` mode
+  (a bend target per joint), so not even that.
+- **float64 on a GeForce card.** Everything in `batched_qp` runs in float64, which the 4090 runs
+  at 1/64 of its float32 rate. `batched_qp.DTYPE = torch.float32` (with `TOL_F32 = 3e-3`) makes a
+  graph step 2.5–2.7x faster at B=128 (5c 49 → 19 ms, 3a 40 → 16 ms), and 1.2–1.3x eager at 512
+  (`python xnew_rrt/check_qp_precision.py`). Over 300 steps the final tips differ by a median of
+  1.5–2 mm (90%: 6–8 mm), all rollouts solve, but a few contact-heavy rollouts end up on a
+  different branch (box up to 70–180 mm apart). With the tighter `1e-4` tolerance 10–17% of the
+  float32 solves do not converge. It is off by default until a planner run with it has been
+  checked against float64.
 
 ## Batched kinodynamic planners and the funneling ablation
 
@@ -890,7 +1051,7 @@ setup:
   drops the orange board's saturation. The vine is where saturation falls below the reference
   frame's, with the holes smoothed away, the vine stub and mount painted out of the reference,
   and the background slowly following lighting changes away from the vine.
-  - The reference frame is taken just before growth starts (`GROWTH_START`). In IMG_3497 the
+  - The reference frame is taken just before growth starts (`GROWTH_START`). In brick_01 the
     light changes while the vine waits.
   - Mask pieces up to `gap_mm` apart are joined, so the vine survives dropouts.
   - Everything behind the base is dropped, which removes the mount.
@@ -911,8 +1072,8 @@ setup:
 
 ```bash
 python video/trials/make_trials.py
-for t in video/trials/IMG_*.json; do python video/track.py $t; done        # ~15 s per video on CPU
-python video/to_reference.py out/video/IMG_* --out xnew_rrt/data/video_ref.npz
+for t in video/trials/brick_*.json; do python video/track.py $t; done        # ~15 s per video on CPU
+python video/to_reference.py out/video/brick_* --out xnew_rrt/data/video_ref.npz
 python xnew_rrt/fit_to_master.py --ref xnew_rrt/data/video_ref.npz --vine-radius 0.025 --max-bodies 70 \
     --grow-force 20 --seg-inertia 1e-3 --start 3 5 0.2 --out out/fit_video_gf20
 ```
@@ -928,9 +1089,9 @@ candidates.
 | 40 N | 73.1 mm | 46.5 mm | 36 | 24 | 0.115 |
 
 Per video, 20 N: 11 of 15 within about 50 mm (22-50 mm). The misses:
-- IMG_3501, 126 mm: the sim's vine passes the brick on the other side.
-- IMG_3522, 95 mm: the real brick slid 133 mm, much further than the sim pushes it.
-- IMG_3497, 76 mm and IMG_3518, 54 mm: the real vine rotates further about its base than the
+- brick_04, 126 mm: the sim's vine passes the brick on the other side.
+- brick_13, 95 mm: the real brick slid 133 mm, much further than the sim pushes it.
+- brick_01, 76 mm and brick_10, 54 mm: the real vine rotates further about its base than the
   sim's.
 
 What the fit says:
@@ -944,6 +1105,102 @@ What the fit says:
   the stall force. A lighter block at a known mass separates mu from m.
 - **Launch-side errors:** vine-box contact is frictionless, matching the rolling tip (low tip
   friction). The remaining side errors come down to the launch heading.
+
+### Simple-contact videos (`video/simple_contact/`)
+
+All videos are named by type now; `video/manifest.json` maps each to its original `IMG_` name,
+type, dataset and split. The brick demos are `brick_01`–`brick_15`, in `IMG_` order.
+
+33 overhead videos on the same pegboard. They use the real 98 mm, 0.503 kg boxes and the clear,
+unactuated tube. Each type is in its own folder:
+
+| Type | Videos | What happens |
+|---|---|---|
+| `vine_block` | 11 | the vine pushes one box |
+| `block_block` | 9 | the vine pushes one box into another |
+| `block_wall` | 13 | the vine pushes a box into a slanted cardboard panel held by a black weight; the mount moves between videos |
+
+- **Split.** One per type is held out for validation: `vine_block_06`, `block_block_08`,
+  `block_wall_07`. The other 29 are for training. `block_wall_01` is excluded: it is a different,
+  zoomed-in view.
+- **Trials** (`video/trials/make_contact_trials.py`). These are found on frame 0:
+  - the base: the white stub's end away from the boxes;
+  - the boxes: a template match over position and rotation;
+  - the panel: more saturated and darker than the board. It becomes a 10 mm wall on its face
+    toward the box, and the weight is a wall too.
+- **Coordinates.** Everything is expressed in the reference frame's calibration, because the hole
+  lattice can anchor a pitch or more differently between frames.
+- **Growth.** Free growth is 177 mm/s, the vine_block median. In block_wall the vine stalls, so
+  that video's own estimate is meaningless there.
+- **Lost tracks.** `to_reference.py --min-box-score 0.4` ends a scenario where a box track is lost:
+  `block_block_09`, and block_wall `_05`, `_09`, `_10`, `_11`. Block_wall scenarios cover 180–570 mm
+  of growth.
+- **Outputs:**
+  - `xnew_rrt/data/contact_train.npz` (29 scenarios);
+  - `contact_val.npz` (3);
+  - `contact_train_{vine_block,block_block,block_wall}.npz`, one per type.
+
+  Oriented walls are in `walls_obb_mm`, which `fit_sim.py` reads.
+
+### Long-horizon videos (`video/long/`, a test set)
+
+Ten videos, `long_01`–`long_10`, about 1.1 m of growth each:
+1. The vine grows up from the mount.
+2. It turns along a top cardboard panel and a slanted one.
+3. It runs up a channel between the slanted panel and two bricks.
+4. It pushes a 98 mm box out of the channel's end.
+
+- **Differences between videos.** long_01 was recorded earlier with the same layout and grows
+  slower. From long_06 on, the mount sits lower and turned.
+- **Trials** (`make_contact_trials.py --long`). Each panel's foot is fitted to the edge of the
+  pegboard holes next to it; the panels shift by a few cm between videos. Bricks are found as dark
+  red or grey brick-sized regions. Growth speed is measured per video (147–243 mm/s).
+- **Output.** `xnew_rrt/data/long.npz` holds all ten. They are never trained on.
+- **Known issue.** In 8 of 10 the centerline jumps 80–280 mm once or twice, where the skeleton
+  detours along the grey brick or the slanted panel. long_01 and long_02 are clean.
+
+```bash
+python video/trials/make_contact_trials.py --growth     # contact trials + manifest
+python video/trials/make_contact_trials.py --long       # long trials
+for t in video/trials/{vine_block,block_block,block_wall,long}_*.json; do python video/track.py $t; done
+python video/to_reference.py out/video/<train runs> --min-box-score 0.4 --out xnew_rrt/data/contact_train.npz
+python video/to_reference.py out/video/long_?? --min-box-score 0.4 --out xnew_rrt/data/long.npz
+```
+
+## Checkpoints: fitted simulators
+
+A checkpoint (`checkpoints/<name>.json`, see `xnew_rrt/checkpoint.py`) is the physical `SimConfig`
+fields of a fitted simulator, plus where it came from (`parent`), what it was fitted to (`trained_on`),
+how (`fit`), and its scores on each dataset (`metrics`). `run_envs.py`, `block_puzzle.py` and
+`fit_sim.py` take `--checkpoint <path>`.
+
+- `base_pbd_brick`: `run_envs.DEFAULT_SIM`. Stiffness and damping were fitted to master's PBD vine and
+  the 15 brick demos (heavier brick, more friction); box friction 0.08 is set by hand.
+- `contact_from_base`: `base_pbd_brick` fine-tuned on the 29 simple-contact training videos by
+  cross-entropy search on the GPU (population 24, 6 generations) over joint stiffness, angular damping
+  and box friction. Result: stiffness 24 → 15.6, ang_damp 1.04e-3 → 2.25e-3, box friction 0.08 → 0.037.
+
+```bash
+python xnew_rrt/checkpoint.py base
+python xnew_rrt/fit_sim.py fit --ref xnew_rrt/data/contact_train.npz --init checkpoints/base_pbd_brick.json \
+    --name contact_from_base --max-bodies 60 --population 24 --generations 6
+python xnew_rrt/fit_sim.py eval checkpoints/base_pbd_brick.json checkpoints/contact_from_base.json \
+    --ref xnew_rrt/data/{contact_val,long,contact_train,video_ref}.npz --table out/fit_sim/compare.md
+```
+
+Mean error in mm (vine centerline shape / box position):
+
+| Checkpoint | contact_val (3, held out) | long (10, test) | contact_train (29) | video_ref (15 brick demos) |
+|---|---|---|---|---|
+| base_pbd_brick | 29.4 / 68.3 | 144.0 / 25.4 | 30.9 / 39.7 | 24.5 / 20.3 |
+| contact_from_base | 29.9 / 52.6 | 144.1 / 25.7 | 29.7 / 36.6 | 24.9 / 28.8 |
+
+- Fitting on the contact videos improves the held-out box error by 23% (68 → 53 mm); vine shape error does
+  not change (about 30 mm).
+- On the long videos neither checkpoint differs. Their shape error (144 mm) is dominated by the tracking
+  jumps listed under the long videos above, not by the sim.
+- On the brick demos the fitted checkpoint is worse for the box (20 → 29 mm), as expected: lower box
+  friction suits the 0.5 kg box, not the heavier brick.
 
 ## Fitting to master
 

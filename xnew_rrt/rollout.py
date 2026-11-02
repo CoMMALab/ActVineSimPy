@@ -55,7 +55,8 @@ def simulate(sim: Sim, controls):
     return states, labels
 
 
-def render_states(sim: Sim, states, labels, out_dir, name="rollout", every=2, html=False, frame_ms=None):
+def render_states(sim: Sim, states, labels, out_dir, name="rollout", every=2, html=False, frame_ms=None,
+                  hold_last_ms=1500):
     '''Draw every `every`-th state and assemble <name>.gif / <name>_final.png (/ <name>.html).'''
     os.makedirs(out_dir, exist_ok=True)
     frame_dir = os.path.join(out_dir, f"_{name}_frames")
@@ -88,7 +89,7 @@ def render_states(sim: Sim, states, labels, out_dir, name="rollout", every=2, ht
 
     outputs = {"gif": os.path.join(out_dir, f"{name}.gif"),
                "final": os.path.join(out_dir, f"{name}_final.png")}
-    viz.write_gif(frame_paths, outputs["gif"], frame_ms=frame_ms)
+    viz.write_gif(frame_paths, outputs["gif"], frame_ms=frame_ms, hold_last_ms=hold_last_ms)
     shutil.copyfile(frame_paths[-1], outputs["final"])
     if html:
         outputs["html"] = os.path.join(out_dir, f"{name}.html")

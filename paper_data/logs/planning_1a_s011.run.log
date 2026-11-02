@@ -1,0 +1,3 @@
+=== 1a (b2g_unretractable)
+ rrt iter 1  edges 256  nodes 257  pruned 0  resets 0  closest 160 mm  3 s    rrt iter 2  edges 512  nodes 513  pruned 0  resets 0  closest 160 mm  5 s    rrt iter 3  edges 768  nodes 769  pruned 0  resets 0  closest 160 mm  7 s    rrt iter 4  edges 1024  nodes 1025  pruned 0  resets 0  closest 160 mm  8 s    rrt iter 5  edges 1280  nodes 1281  pruned 0  resets 0  closest 160 mm  10 s    rrt iter 6  edges 1536  nodes 1537  pruned 0  resets 0  closest 140 mm  12 s    rrt iter 7  edges 1792  nodes 1793  pruned 0  resets 0  closest 82 mm  15 s    rrt iter 8  edges 2048  nodes 1797  pruned 0  resets 0  closest 59 mm  17 s   
+1a: reached the goal, 59 mm, 1797 nodes, 0 resets, 2048 edges in 0.3 min

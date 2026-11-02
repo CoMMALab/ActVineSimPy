@@ -1,0 +1,64 @@
+{
+ "name": "4b_r50",
+ "category": "vine_to_goal",
+ "description": "4b with the block 50 mm to the right, out of the gap on the goal side",
+ "board_mm": [
+  1200.0,
+  900.0
+ ],
+ "walls": [
+  {
+   "from": [
+    472,
+    0
+   ],
+   "to": [
+    472,
+    430
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    472,
+    573
+   ],
+   "to": [
+    472,
+    900
+   ],
+   "thickness": 20.0
+  }
+ ],
+ "boxes": [
+  {
+   "center": [
+    522,
+    501
+   ],
+   "angle_deg": 0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  }
+ ],
+ "start": {
+  "xy": [
+   153.0,
+   143.0
+  ],
+  "heading_deg": 60.0
+ },
+ "goal": {
+  "type": "tip",
+  "center": [
+   983,
+   562
+  ],
+  "radius": 80
+ },
+ "planner": {},
+ "notes": "variant of 4b: the block sits just past the wall, still covering the gap's far side"
+}

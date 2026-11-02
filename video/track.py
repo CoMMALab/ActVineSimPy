@@ -51,6 +51,8 @@ DEFAULTS = dict(
     base_cut_mm=150.0,      # mask behind the base (against its heading) within this distance is
                             # dropped: the mount
     box_margin_mm=6.0,      # removed around each box footprint from the vine's mask
+    box_silhouette=False,   # remove the box's whole silhouette (the hull of its footprint and its top as
+                            # seen), not only its top: a tall box's side faces show beside its top
     box_search_mm=25.0,     # box tracking: translation searched per processed frame
     box_search_deg=8.0,     #               rotation searched per processed frame
     box_res_mm=1.0,         #               resolution of the box templates
@@ -524,7 +526,14 @@ def track(trial, out_dir, stride=1, start=None, end=None, overlay=True, log_ever
         cut = np.zeros_like(mask)
         if boxes:
             for pose, b in zip(poses, boxes):
-                cv2.fillPoly(cut, [to_rect(box_corners(pose, b["size_mm"])).round().astype(np.int32)], 255)
+                pts = box_corners(pose, b["size_mm"])
+                if p["box_silhouette"] and b["height_mm"]:
+                    foot = cal.lift([pose[:2]], b["height_mm"])[0]
+                    zc = cal.camera_height_mm or 1e9
+                    top = box_corners(pose, [v * zc / (zc - b["height_mm"]) for v in b["size_mm"]])   # nearer the camera: seen larger
+                    pts = np.vstack([top, box_corners((foot[0], foot[1], pose[2]), b["size_mm"])])
+                    pts = cv2.convexHull(np.asarray(pts, np.float32)).reshape(-1, 2)
+                cv2.fillPoly(cut, [to_rect(pts).round().astype(np.int32)], 255)
             mask[cv2.dilate(cut, np.ones((int(2 * p["box_margin_mm"] / res) | 1,) * 2, np.uint8)) > 0] = 0
         if p["diff_mode"] == "saturation" and p["bg_rate"] > 0:
             # follow slow changes of the board, but not where the vine or a box is (or just was)

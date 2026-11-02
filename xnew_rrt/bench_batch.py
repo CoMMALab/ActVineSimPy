@@ -113,7 +113,7 @@ def main():
         return
     torch.set_num_threads(args.threads)
     if args.device.startswith("cuda"):
-        torch.cuda.set_per_process_memory_fraction(0.5)
+        torch.cuda.set_per_process_memory_fraction(0.7)
 
     rows = []
     for path in args.envs:

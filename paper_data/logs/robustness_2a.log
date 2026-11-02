@@ -1,0 +1,36 @@
+start Wed Oct 28 09:06:44 PM EDT 2026
+2a: 10 controls, 230 steps; nominal replay reaches the goal, box at (470, 653) mm
+  launch x0.5: 256 rollouts, 19 s
+  launch x1.0: 256 rollouts, 38 s
+  launch x2.0: 256 rollouts, 57 s
+  launch x4.0: 256 rollouts, 76 s
+  heading x0.5: 256 rollouts, 95 s
+  heading x1.0: 256 rollouts, 114 s
+  heading x2.0: 256 rollouts, 133 s
+  heading x4.0: 256 rollouts, 153 s
+  actuation x0.5: 256 rollouts, 171 s
+  actuation x1.0: 256 rollouts, 190 s
+  actuation x2.0: 256 rollouts, 210 s
+  actuation x4.0: 256 rollouts, 229 s
+  all x0.5: 256 rollouts, 248 s
+  all x1.0: 256 rollouts, 267 s
+  all x2.0: 256 rollouts, 286 s
+  all x4.0: 256 rollouts, 306 s
+family  scale  sigma                       reached  box spread [mm]  to nominal [mm]  failed
+launch     0.5  2.5 mm                       40.6%             2.9              3.0       0
+launch     1.0  5.0 mm                       41.4%             4.9              4.5       0
+launch     2.0  10.0 mm                      44.9%            10.2              8.6       0
+launch     4.0  20.0 mm                      44.1%            19.2             15.7       0
+heading    0.5  1.0 deg                      27.3%             1.7              2.2       0
+heading    1.0  2.0 deg                      30.5%             2.5              2.7       0
+heading    2.0  4.0 deg                      35.9%             4.3              3.9       0
+heading    4.0  8.0 deg                      39.1%            57.4             18.8       0
+actuation  0.5  0.25 1/m                      3.9%             1.7              4.4       0
+actuation  1.0  0.50 1/m                      3.1%             2.3              5.3       0
+actuation  2.0  1.00 1/m                      2.0%             3.8              7.3       0
+actuation  4.0  2.00 1/m                      1.2%            66.9             30.9       0
+all        0.5  2.5mm 1.0deg 0.25/m          10.5%             3.1              5.2       0
+all        1.0  5.0mm 2.0deg 0.50/m          19.9%             6.0              6.9       0
+all        2.0  10.0mm 4.0deg 1.00/m         25.0%            43.6             18.0       0
+all        4.0  20.0mm 8.0deg 2.00/m         21.1%            83.6             47.2       0
+wrote out/funnel/2a/funnel.json out/funnel/2a/funnel.png

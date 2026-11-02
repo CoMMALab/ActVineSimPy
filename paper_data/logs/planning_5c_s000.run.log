@@ -1,0 +1,15 @@
+=== 5c
+  plan from (2, 6): up 2, right 2, up 1, right 4*, down 2, right 1*
+[W1029 20:21:17.457731858 Context.cpp:508] Warning: torch.backends.cuda.preferred_linalg_library is an experimental feature. If you see any error or unexpected behavior when this flag is set please file an issue on GitHub. (function operator())
+  push up 2 from (2, 6) -> (2, 4) (1 planned move): spawn [1, 9] at 73 deg, 168 steps, 1 mm off, max turn 6.7 deg; 16/119 candidates reached (0 flagged), 17 s
+    plan from (2, 4): right 2, up 1, right 4*, down 2, right 1*
+    push right 2 from (2, 4) -> (4, 4) (1 planned move): spawn [0, 4] at 1 deg, 120 steps, 4 mm off, max turn 6.7 deg; 16/74 candidates reached (0 flagged), 19 s
+      plan from (4, 4): up 1, right 4*, down 2, right 1*
+      push up 1 from (4, 4) -> (4, 3) (1 planned move): spawn [4, 9] at 90 deg, 203 steps, 0 mm off, max turn 1.8 deg; 16/251 candidates reached (0 flagged), 38 s
+        plan from (4, 3): right 4*, down 2, right 1*
+        push right 4* from (4, 3) -> (8, 3) (1 planned move): spawn [0, 6] at 44 deg, 315 steps, 13 mm off, max turn 11.5 deg; 16/95 candidates reached (0 flagged), 21 s
+          plan from (8, 3): down 2, right 1*
+          push down 2 from (8, 3) -> (8, 5) (1 planned move): spawn [8, 0] at 263 deg, 169 steps, 6 mm off, max turn 11.5 deg; 16/256 candidates reached (0 flagged), 39 s
+            plan from (8, 5): right 1*
+            push right 1* from (8, 5) -> (9, 5) (1 planned move): spawn [5, 9] at 66 deg, 246 steps, 17 mm off, max turn 6.7 deg; 16/32 candidates reached (0 flagged), 8 s
+5c SOLVED: 6 pushes, 6 push searches (0 failed or backed out), 0 flagged (>15 deg), 2.4 min

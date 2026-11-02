@@ -1,0 +1,89 @@
+{
+ "name": "4c",
+ "category": "vine_to_goal",
+ "description": "zig-zag barrier, two 70 mm gaps; the upper block is jammed in its corner, only the lower one can be pushed clear",
+ "board_mm": [
+  1200.0,
+  900.0
+ ],
+ "walls": [
+  {
+   "from": [
+    490,
+    900
+   ],
+   "to": [
+    740.9,
+    649.1
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    740.9,
+    550.9
+   ],
+   "to": [
+    539.1,
+    349.1
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    539.1,
+    250.9
+   ],
+   "to": [
+    790,
+    0
+   ],
+   "thickness": 20.0
+  }
+ ],
+ "boxes": [
+  {
+   "center": [
+    576.5,
+    300.0
+   ],
+   "angle_deg": 45.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  },
+  {
+   "center": [
+    703.5,
+    600.0
+   ],
+   "angle_deg": 45.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  }
+ ],
+ "start": {
+  "xy": [
+   150.0,
+   780.0
+  ],
+  "heading_deg": -90.0
+ },
+ "goal": {
+  "type": "tip",
+  "center": [
+   1020,
+   480
+  ],
+  "radius": 90
+ },
+ "planner": {
+  "max_bodies": 60
+ },
+ "notes": "gaps 70 mm between the walls' faces (vine 48.5 mm, block 98 mm); both bends are 90 deg corners with a block flush in them, 2 mm clear. Box 1 (upper) is in the corner that opens toward the start, so any push drives it into a wall; box 0 (lower) is in the corner on the goal side, so the vine grows through the lower gap and pushes it out"
+}

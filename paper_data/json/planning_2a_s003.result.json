@@ -1,0 +1,173 @@
+{
+ "reached": true,
+ "goal_distance_mm": 69.78738522750453,
+ "controls": [
+  [
+   3.3255714515327757,
+   9
+  ],
+  [
+   0.4020669491696509,
+   9
+  ],
+  [
+   -3.182180040999521,
+   9
+  ],
+  [
+   2.390745373125104,
+   9
+  ],
+  [
+   -0.1191039649346819,
+   9
+  ],
+  [
+   -2.856677046859846,
+   9
+  ],
+  [
+   -2.640772128747165,
+   9
+  ],
+  [
+   3.1217840444393277,
+   9
+  ],
+  [
+   -0.7860269094259635,
+   9
+  ],
+  [
+   0.9663204462315429,
+   2
+  ]
+ ],
+ "pushes": 1,
+ "planner": {
+  "planner": "rrt",
+  "max_edges": 300000,
+  "time_limit_min": 20.0,
+  "batch_size": 256,
+  "steps_per_edge": 25,
+  "min_steps_per_edge": null,
+  "node_every": null,
+  "max_curvature": 3.33,
+  "goal_bias": 0.1,
+  "box_weight": 1.0,
+  "cell_mm": 15.0,
+  "heading_deg": 30.0,
+  "coarse": 5,
+  "unlock_mm": 50.0,
+  "straight_prob": 0.3
+ },
+ "iterations": 10,
+ "edges": 2560,
+ "failed_rollouts": 0,
+ "pruned": 0,
+ "invalid": 0,
+ "resets": 0,
+ "stopped": "goal",
+ "edges_to_goal": 2560,
+ "seconds_to_goal": 24.872743129730225,
+ "nodes": 2308,
+ "seconds": 24.87274670600891,
+ "best_mm": 69.78738522750453,
+ "regions": 38,
+ "env": "2a",
+ "category": "b2g_unretractable",
+ "scene": {
+  "walls_m": [
+   [
+    -0.05,
+    -0.05,
+    1.25,
+    0.0
+   ],
+   [
+    -0.05,
+    0.9,
+    1.25,
+    0.9500000000000001
+   ],
+   [
+    -0.05,
+    0.0,
+    0.0,
+    0.9
+   ],
+   [
+    1.2,
+    0.0,
+    1.25,
+    0.9
+   ],
+   [
+    0.72,
+    0.56,
+    -0.691336928769462,
+    0.3864306044943742,
+    0.01
+   ]
+  ],
+  "objects_m": [
+   [
+    0.6617000000000001,
+    0.4408,
+    0.7597,
+    0.5388
+   ]
+  ],
+  "masses_kg": [
+   0.503
+  ],
+  "start": [
+   0.8200000000000001,
+   0.06,
+   1.5707963267948966
+  ],
+  "goal_m": [
+   0.43810000000000004,
+   0.7154
+  ],
+  "goal_radius_m": 0.0,
+  "bounds_m": [
+   -0.05,
+   1.25,
+   -0.05,
+   0.9500000000000001
+  ],
+  "box_goal_m": [
+   0.43810000000000004,
+   0.7154,
+   0.07
+  ],
+  "name": "2a",
+  "objects_theta": [
+   -0.6911503837897546
+  ],
+  "box_goal_theta": null,
+  "corner_radius_m": null,
+  "box_goal_inside": null
+ },
+ "sim": {
+  "max_bodies": 60,
+  "grow_rate_mps": 0.25,
+  "vine_radius_m": 0.02426,
+  "seg_len_m": 0.03,
+  "stiffness_mode": "wrinkle",
+  "grow_force_n": 20.0,
+  "seg_mass_kg": 0.005,
+  "joint_stiffness": 15.567001641976868,
+  "ang_damp": 0.0032521590904512495,
+  "seg_inertia_kgm2": 0.001,
+  "obj_friction": 0.3,
+  "vine_friction": 0.09277594536523326,
+  "obj_spin": 8.0,
+  "pressure_pa": 9900.723659030205,
+  "wrinkle_scale": 1.380452700180847,
+  "qp_backend": "TORCH_IPM",
+  "device": "cuda",
+  "cuda_graphs": true
+ }
+}

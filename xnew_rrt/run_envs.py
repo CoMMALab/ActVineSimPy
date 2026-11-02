@@ -5,9 +5,14 @@ planner on each.
     b2g_unretractable   tree over (tip, box positions) to box 0's goal
     vine_to_goal        the same, to the tip goal
     b2g_retractable     the same with vine resets as an action in the one tree
+Every edge on which the vine or a box touches the board's border is dropped (an env with "border": "wall"
+lets it act as a wall instead).
+A box goal is reached when the box center is in the disc (GOAL_INSIDE: also require that fraction of the box in it;
+the goal's "min_inside" overrides).
 All of them are kino.plan with --planner (rrt, rrt_grid, kpiece, kinopax; default rrt), run until
 the goal, the edge budget, or the time limit (DEFAULT_PLANNER / CATEGORY_PLANNER, minutes).
---device cuda runs the batched QP solver (dvsim/batched_qp.py) on the GPU, capped at half its memory.
+--device cuda runs the batched QP solver (dvsim/batched_qp.py) on the GPU, capped at 70% of its memory
+(run through xnew_rrt/py.sh to also cap RAM at 70%).
 
 Sim settings (DEFAULT_SIM): the real vine and boxes (real_measurements.md) and the stiff vine fitted
 to the brick videos. Joint stiffness and damping are rescaled from the fit's 18 mm segments to 30 mm
@@ -18,14 +23,14 @@ Run from the repo root (actvine env):
     python xnew_rrt/run_envs.py --draw-only                 # envs/vis/<name>.png for every env
     python xnew_rrt/run_envs.py envs/1a.json envs/4b.json   # plan on some
     python xnew_rrt/run_envs.py                             # plan on all
-Per env, under out/envs/<name>/:
+Per env, in out/solutions/<kind>/<name>.* (xnew_rrt/outputs.py; replaced on every run):
     env.png          the environment
     tree.gif         the tree, --tree-frames frames spread over the run (or one per --tree-every iterations)
     solution.gif/.mp4  the best branch: the solution, or the closest attempt (title says which)
     result.json      reached or not, distance to goal, nodes, resets, controls; summary.json for all envs
 '''
 
-import argparse, json, math, os, random, sys
+import argparse, json, math, os, random, shutil, sys
 from dataclasses import asdict
 
 import numpy as np
@@ -34,6 +39,7 @@ import torch
 from scene import Scene, Sim, SimConfig, scene_to_dict  # (puts the repo root on sys.path)
 import checkpoint
 import kino
+import outputs
 import reset_action_rrt
 import tree_stages
 import viz
@@ -41,6 +47,8 @@ from rollout import render_states
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WALL_OUT_MM = 50.0     # boundary walls, outside the board
+GOAL_INSIDE = None     # e.g. 0.8: a box goal (without a goal heading) also needs this fraction of the box in the disc
+HOLD_LAST_S = 0.5      # solution videos stay on their last frame this long
 
 # real vine and boxes, stiffness from the video fit (see the module docstring)
 DEFAULT_SIM = dict(max_bodies=60, grow_rate_mps=0.25, vine_radius_m=0.02426, seg_len_m=0.03,
@@ -48,6 +56,7 @@ DEFAULT_SIM = dict(max_bodies=60, grow_rate_mps=0.25, vine_radius_m=0.02426, seg
                    joint_stiffness=40.0 * 0.018 / 0.03, ang_damp=1.73e-3 * 0.018 / 0.03,
                    seg_inertia_kgm2=1.0e-3, obj_friction=0.08)
 DEFAULT_PLANNER = dict(planner="rrt", max_edges=100000, time_limit_min=45, batch_size=32, steps_per_edge=25,
+                       min_steps_per_edge=None, node_every=None,
                        max_curvature=3.33, goal_bias=0.1, box_weight=1.0,
                        # cells (kino.Projection): fine cells for pruning, coarse ones for picking
                        cell_mm=15.0, heading_deg=30.0, coarse=5,
@@ -70,6 +79,9 @@ def load_env(path):
     for w in e["walls"]:
         if "rect" in w:
             walls.append([v * mm for v in w["rect"]])
+        elif "obb" in w:                              # oriented box [cx, cy, theta_deg, hw, hh]
+            cx, cy, th, hw, hh = w["obb"]
+            walls.append([cx * mm, cy * mm, math.radians(th), hw * mm, hh * mm])
         else:                                         # a segment -> oriented box, ends capped
             (ax, ay), (bx, by) = w["from"], w["to"]
             L = math.hypot(bx - ax, by - ay)
@@ -91,6 +103,8 @@ def load_env(path):
                   box_goal_m=(g["center"][0] * mm, g["center"][1] * mm, g["radius"] * mm))
         if "angle_deg" in g:
             kw["box_goal_theta"] = (math.radians(g["angle_deg"]), math.radians(g.get("angle_tol_deg", 5.0)))
+        else:
+            kw["box_goal_inside"] = g.get("min_inside", GOAL_INSIDE)
     else:
         kw.update(goal_m=(g["center"][0] * mm, g["center"][1] * mm), goal_radius_m=g["radius"] * mm)
     planner = dict(DEFAULT_PLANNER, **CATEGORY_PLANNER.get(e["category"], {}),
@@ -102,8 +116,6 @@ def load_env(path):
 #----------------------------------------------------------------------- drawing
 
 def draw_env(e, sim, path):
-    import matplotlib
-    from matplotlib.patches import Polygon
     fig, ax = viz.new_figure(sim.scene, max_dim_in=9)
     start = sim.initial_state()
     viz.draw_scene(ax, sim, start)
@@ -114,28 +126,25 @@ def draw_env(e, sim, path):
     sx, sy, h = sim.scene.start
     ax.annotate("", (sx * 1000 + 90 * math.cos(h), sy * 1000 + 90 * math.sin(h)), (sx * 1000, sy * 1000),
                 arrowprops=dict(arrowstyle="->", color=viz.INK, lw=1.5), zorder=9)
-    g = e["goal"]
-    if g["type"] == "box" and "angle_deg" in g:            # the goal pose
-        size = e["boxes"][0]["size"]
-        a = math.radians(g["angle_deg"])
-        c, s = math.cos(a), math.sin(a)
-        local = np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]]) * np.array(size) / 2
-        ax.add_patch(Polygon(local @ np.array([[c, s], [-s, c]]) + g["center"], closed=True, fill=False,
-                             ec=viz.BOX, lw=1.5, ls=":", zorder=3))
     ax.set_title(f"{e['name']} ({e['category']}): {e['description']}", color=viz.INK, fontsize=9, loc="left")
     viz.save_figure(fig, path)
 
 
-def gif_to_mp4(gif_path, mp4_path, fps=15):
+def gif_to_mp4(gif_path, mp4_path, fps=15, hold_last_s=HOLD_LAST_S, webm=True):
+    '''The gif as an mp4 (MPEG-4 part 2), and as a .webm (VP8) next to it: VS Code's built-in viewer
+    (also over Remote SSH) plays WebM but not this mp4.'''
     import cv2, imageio.v2 as imageio
     frames = imageio.mimread(gif_path, memtest=False)
+    frames += [frames[-1]] * round(hold_last_s * fps)
     h, w = frames[0].shape[:2]
     h2, w2 = h - h % 2, w - w % 2
-    out = cv2.VideoWriter(mp4_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w2, h2))
-    for f in frames:
-        f = np.asarray(f)[:h2, :w2, :3]
-        out.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
-    out.release()
+    paths = [(mp4_path, "mp4v")] + ([(os.path.splitext(mp4_path)[0] + ".webm", "VP80")] if webm else [])
+    for path, codec in paths:
+        out = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*codec), fps, (w2, h2))
+        for f in frames:
+            f = np.asarray(f)[:h2, :w2, :3]
+            out.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
+        out.release()
 
 
 #----------------------------------------------------------------------- planning
@@ -146,6 +155,34 @@ def goal_fns(sim, e):
     return sim.reached_goal, sim.goal_distance_m
 
 
+def off_border(sim, e, margin_mm=2.0, every=5):
+    '''edge_valid for kino.plan: False if the vine or a box touches the board's border (the boundary
+    walls) anywhere along the edge (every `every`-th state and the last). Every env, unless "border": "wall".'''
+    W, H = e["board_mm"]
+    r = sim.cfg.vine_radius_m * 1000 + margin_mm
+    hw, hh = sim.params.obj_hw.reshape(-1), sim.params.obj_hh.reshape(-1)
+
+    def out_of(x, y, pad):
+        return bool(((x < pad) | (x > W - pad) | (y < pad) | (y > H - pad)).any())
+
+    def valid(states):
+        for s in states[every - 1::every] + states[-1:]:
+            n = s.num_bodies
+            b = s.state[0, :3 * n].reshape(n, 3)
+            if out_of(b[:, 0], b[:, 1], r):
+                return False
+            p = s.moveable_obj_pose[0]                                            # (n_obj, 3)
+            for k in range(p.shape[0]):
+                c, sn = math.cos(float(p[k, 2])), math.sin(float(p[k, 2]))
+                ex = abs(c) * hw[k] + abs(sn) * hh[k]                             # half extents of its AABB
+                ey = abs(sn) * hw[k] + abs(c) * hh[k]
+                x, y = float(p[k, 0]), float(p[k, 1])
+                if x - ex < margin_mm or x + ex > W - margin_mm or y - ey < margin_mm or y + ey > H - margin_mm:
+                    return False
+        return True
+    return valid
+
+
 def run(e, sim, planner, out, seed, tree_frames, tree_every=None, render=True):
     '''Plan with kino.plan (planner["planner"]); resets only for b2g_retractable.'''
     goal_test, goal_distance = goal_fns(sim, e)
@@ -154,12 +191,14 @@ def run(e, sim, planner, out, seed, tree_frames, tree_every=None, render=True):
     tree, best, stats = kino.plan(
         sim, planner["planner"], goal_test, goal_distance, random.Random(seed),
         batch_size=planner["batch_size"], steps_per_edge=planner["steps_per_edge"],
+        min_steps_per_edge=planner["min_steps_per_edge"], node_every=planner["node_every"],
         max_curvature=planner["max_curvature"], goal_bias=planner["goal_bias"],
         straight_prob=planner["straight_prob"] if retractable else 0.0,
         max_edges=planner["max_edges"], time_limit_s=60 * planner["time_limit_min"],
         unlock_mm=planner["unlock_mm"] if retractable else None, cell_mm=planner["cell_mm"],
         heading_deg=planner["heading_deg"], coarse=planner["coarse"], box_weight=planner["box_weight"],
-        on_iteration=(lambda it, t, *_: log.update(t, it)) if render else None)
+        on_iteration=(lambda it, t, *_: log.update(t, it)) if render else None,
+        edge_valid=None if e.get("border") == "wall" else off_border(sim, e))
     reached = tree.goal_node is not None
     dist = goal_distance(best.info)
     controls = reset_action_rrt.branch_controls(best)
@@ -176,7 +215,7 @@ def run(e, sim, planner, out, seed, tree_frames, tree_every=None, render=True):
     states, labels = reset_action_rrt.branch_states(best)
     tag = "SOLVED" if reached else f"FAILED, closest {dist * 1000:.0f} mm from the goal"
     render_states(sim, states, [f"{e['name']} {planner['planner']} {tag} | {l}" for l in labels], out,
-                  name="solution", every=1)
+                  name="solution", every=1, hold_last_ms=int(1000 * HOLD_LAST_S))
     gif_to_mp4(os.path.join(out, "solution.gif"), os.path.join(out, "solution.mp4"))
     return result
 
@@ -188,6 +227,9 @@ def main():
     parser.add_argument("--planner", default=None, choices=kino.PLANNERS, help="default: rrt")
     parser.add_argument("--max-edges", type=int, default=None, help="override every env's edge budget")
     parser.add_argument("--batch-size", type=int, default=None, help="edges simulated together (default 256 on a GPU, 32 on the CPU)")
+    parser.add_argument("--steps-per-edge", type=int, default=None, help="sim steps per edge (default 25), the most with --min-steps-per-edge")
+    parser.add_argument("--min-steps-per-edge", type=int, default=None, help="edges get a random step count from this to --steps-per-edge")
+    parser.add_argument("--node-every", type=int, default=None, help="also make every this many-th state along an edge a node (default: only the last)")
     parser.add_argument("--time-limit", type=float, default=None, help="override every env's time limit [min]")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu",
                         help="cuda (default when there is a GPU): batched QP solver (TORCH_IPM), states on the GPU, CUDA graphs")
@@ -197,19 +239,20 @@ def main():
     parser.add_argument("--tree-every", type=int, default=None, help="instead one tree.gif frame per this many iterations")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--checkpoint", default=None, help="sim parameters from checkpoints/<name>.json (default DEFAULT_SIM)")
-    parser.add_argument("--out", default="out/envs")
+    parser.add_argument("--out", default="out/solutions", help="one folder per env, replaced on every run")
+    parser.add_argument("--no-render", dest="render", action="store_false", help="skip the tree log, gifs and videos (for timing runs)")
     args = parser.parse_args()
 
     paths = args.envs or sorted(p for p in (os.path.join(REPO, "envs", f) for f in os.listdir(os.path.join(REPO, "envs")))
                                 if p.endswith(".json"))
     os.makedirs(os.path.join(REPO, "envs", "vis"), exist_ok=True)
     if torch.cuda.is_available():
-        torch.cuda.set_per_process_memory_fraction(0.5)
+        torch.cuda.set_per_process_memory_fraction(0.7)
     for path in paths:
         e, scene, cfg, planner = load_env(path)
         if args.device.startswith("cuda"):
             planner["batch_size"] = 256
-        for key in ("planner", "max_edges", "batch_size"):
+        for key in ("planner", "max_edges", "batch_size", "steps_per_edge", "min_steps_per_edge", "node_every"):
             if getattr(args, key) is not None:
                 planner[key] = getattr(args, key)
         if args.time_limit:
@@ -219,35 +262,37 @@ def main():
         cfg.device = args.device
         cfg.qp_backend = args.qp_backend or ("TORCH_IPM" if args.device.startswith("cuda") else "DIFFCP")
         sim = Sim(scene, cfg)
-        out = os.path.join(args.out, e["name"])
-        os.makedirs(out, exist_ok=True)
         draw_env(e, sim, os.path.join(REPO, "envs", "vis", e["name"] + ".png"))
-        draw_env(e, sim, os.path.join(out, "env.png"))
         if args.draw_only:
             print("drew", e["name"])
             continue
+        out = outputs.work_dir(args.out, e["name"])            # published to <out>/<kind>/<env>.* at the end
+        draw_env(e, sim, os.path.join(out, "env.png"))
         print(f"=== {e['name']} ({e['category']})", flush=True)
-        result = run(e, sim, planner, out, args.seed, args.tree_frames, args.tree_every)
+        result = run(e, sim, planner, out, args.seed, args.tree_frames, args.tree_every, render=args.render)
         result.update(env=e["name"], category=e["category"], scene=scene_to_dict(scene), sim=asdict(cfg), planner=planner)
         with open(os.path.join(out, "result.json"), "w") as f:
             json.dump(result, f, indent=1)
         print(f"{e['name']}: {'reached the goal' if result['reached'] else 'did not reach the goal'}, "
               f"{result['goal_distance_mm']:.0f} mm, {result['nodes']} nodes, {result['resets']} resets, "
               f"{result['edges']} edges in {result['seconds'] / 60:.1f} min", flush=True)
+        outputs.publish(out, args.out, e["name"])
         write_summary(args.out)
 
 
 def write_summary(out_dir):
-    '''summary.json from every result.json under out_dir (several runs can share it).'''
+    '''results/summary.json from every results/<env>.result.json under out_dir (block puzzles included).'''
     summary = {}
-    for name in sorted(os.listdir(out_dir)):
-        path = os.path.join(out_dir, name, "result.json")
-        if os.path.exists(path):
-            with open(path) as f:
+    rdir = os.path.join(out_dir, "results")
+    for fname in sorted(os.listdir(rdir)) if os.path.isdir(rdir) else []:
+        if fname.endswith(".result.json"):
+            with open(os.path.join(rdir, fname)) as f:
                 r = json.load(f)
-            summary[name] = {k: r.get(k) for k in ("category", "planner", "reached", "goal_distance_mm", "pushes",
-                                                    "resets", "nodes", "edges", "pruned", "seconds", "stopped")}
-    with open(os.path.join(out_dir, "summary.json"), "w") as f:
+            summary[fname[:-len(".result.json")]] = {k: r.get(k) for k in (
+                "category", "planner", "reached", "solved", "goal_distance_mm", "pushes", "resets", "nodes", "edges",
+                "pruned", "seconds", "stopped") if k in r and not isinstance(r[k], list)} | (
+                {"pushes": len(r["pushes"])} if isinstance(r.get("pushes"), list) else {})
+    with open(os.path.join(rdir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=1)
 
 

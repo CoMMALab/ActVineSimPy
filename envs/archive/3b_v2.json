@@ -1,0 +1,89 @@
+{
+ "name": "3b",
+ "category": "b2g_retractable",
+ "description": "two pushes: right under a ledge until the block is over a corner pocket, then down into it",
+ "board_mm": [
+  1200.0,
+  900.0
+ ],
+ "walls": [
+  {
+   "from": [
+    290,
+    630
+   ],
+   "to": [
+    520,
+    470
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    520,
+    470
+   ],
+   "to": [
+    700,
+    470
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    840,
+    0
+   ],
+   "to": [
+    840,
+    310
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    840,
+    310
+   ],
+   "to": [
+    960,
+    310
+   ],
+   "thickness": 20.0
+  }
+ ],
+ "boxes": [
+  {
+   "center": [
+    610,
+    380
+   ],
+   "angle_deg": 0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  }
+ ],
+ "start": {
+  "xy": [
+   60.0,
+   800.0
+  ],
+  "heading_deg": -35.0
+ },
+ "goal": {
+  "type": "box",
+  "box": 0,
+  "center": [
+   1040,
+   160
+  ],
+  "radius": 90
+ },
+ "planner": {
+  "max_bodies": 70
+ },
+ "notes": "from the sketch of 2026-10-25 (x scaled 1.875 mm/px, y 2.2 mm/px). The pocket's right and bottom sides are the board's border, which neither the vine nor the block may touch. The lip ends at x=960; the block (98 mm) drops past it on the right"
+}

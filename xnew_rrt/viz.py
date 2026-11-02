@@ -55,10 +55,10 @@ def new_figure(scene, max_dim_in=11):
     return fig, ax
 
 
-def draw_scene(ax, sim, objects_state=None):
-    '''Static walls, goal, start marker and (optionally) the movable boxes of one state.'''
+def draw_scene(ax, sim, objects_state=None, walls=True):
+    '''Static walls (unless walls=False), goal, start marker and (optionally) the movable boxes of one state.'''
     scene = sim.scene
-    for (pose, hw, hh) in sim.static_boxes():
+    for (pose, hw, hh) in (sim.static_boxes() if walls else []):
         ax.add_patch(Polygon(_box_corners_mm(pose, hw, hh), closed=True, facecolor=WALL_FACE,
                              edgecolor=WALL_EDGE, lw=1, zorder=1))
 
@@ -76,8 +76,14 @@ def draw_scene(ax, sim, objects_state=None):
 
     if scene.box_goal_m is not None:
         bx, by, br = [v * 1000 for v in scene.box_goal_m]
-        ax.add_patch(Circle((bx, by), br, fill=False, edgecolor=BOX, lw=2, ls="--", zorder=2))
-        ax.annotate("box goal", (bx, by), ha="center", va="center", color=INK_2, fontsize=9, zorder=2)
+        if scene.box_goal_theta is not None:      # a goal pose: the block's outline there, and the position tolerance
+            pose = (si.len_to_nd(scene.box_goal_m[0]), si.len_to_nd(scene.box_goal_m[1]), scene.box_goal_theta[0])
+            ax.add_patch(Polygon(_box_corners_mm(pose, float(sim.params.obj_hw[0]), float(sim.params.obj_hh[0])), closed=True,
+                                 fill=False, edgecolor=BOX, lw=2, ls="--", zorder=2))
+            ax.add_patch(Circle((bx, by), br, fill=False, edgecolor=BOX, lw=1, ls=":", zorder=2))
+        else:
+            ax.add_patch(Circle((bx, by), br, fill=False, edgecolor=BOX, lw=2, ls="--", zorder=2))
+            ax.annotate("box goal", (bx, by), ha="center", va="center", color=INK_2, fontsize=9, zorder=2)
 
     if objects_state is not None:
         draw_objects(ax, sim, objects_state)

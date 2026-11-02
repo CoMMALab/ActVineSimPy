@@ -337,6 +337,167 @@
    "type": "block_wall",
    "dataset": "simple_contact",
    "split": "train"
+  },
+  {
+   "path": "video/long/long_01.mov",
+   "original": "IMG_3679",
+   "type": "long",
+   "dataset": "long",
+   "split": "test"
+  },
+  {
+   "path": "video/long/long_02.mov",
+   "original": "IMG_3736",
+   "type": "long",
+   "dataset": "long",
+   "split": "test"
+  },
+  {
+   "path": "video/long/long_03.mov",
+   "original": "IMG_3738",
+   "type": "long",
+   "dataset": "long",
+   "split": "test"
+  },
+  {
+   "path": "video/long/long_04.mov",
+   "original": "IMG_3739",
+   "type": "long",
+   "dataset": "long",
+   "split": "test"
+  },
+  {
+   "path": "video/long/long_05.mov",
+   "original": "IMG_3741",
+   "type": "long",
+   "dataset": "long",
+   "split": "test"
+  },
+  {
+   "path": "video/long/long_06.mov",
+   "original": "IMG_3744",
+   "type": "long",
+   "dataset": "long",
+   "split": "test"
+  },
+  {
+   "path": "video/long/long_07.mov",
+   "original": "IMG_3745",
+   "type": "long",
+   "dataset": "long",
+   "split": "test"
+  },
+  {
+   "path": "video/long/long_08.mov",
+   "original": "IMG_3747",
+   "type": "long",
+   "dataset": "long",
+   "split": "test"
+  },
+  {
+   "path": "video/long/long_09.mov",
+   "original": "IMG_3749",
+   "type": "long",
+   "dataset": "long",
+   "split": "test"
+  },
+  {
+   "path": "video/long/long_10.mov",
+   "original": "IMG_3750",
+   "type": "long",
+   "dataset": "long",
+   "split": "test"
+  },
+  {
+   "path": "video/puzzle/puzzle_01.mov",
+   "original": "IMG_3760",
+   "type": "puzzle_up",
+   "dataset": "puzzle",
+   "split": "train"
+  },
+  {
+   "path": "video/puzzle/puzzle_02.mov",
+   "original": "IMG_3762",
+   "type": "puzzle_up",
+   "dataset": "puzzle",
+   "split": "train"
+  },
+  {
+   "path": "video/puzzle/puzzle_03.mov",
+   "original": "IMG_3763",
+   "type": "puzzle_up",
+   "dataset": "puzzle",
+   "split": "train"
+  },
+  {
+   "path": "video/puzzle/puzzle_04.mov",
+   "original": "IMG_3764",
+   "type": "puzzle_up",
+   "dataset": "puzzle",
+   "split": "train"
+  },
+  {
+   "path": "video/puzzle/puzzle_05.mov",
+   "original": "IMG_3765",
+   "type": "puzzle_up",
+   "dataset": "puzzle",
+   "split": "train"
+  },
+  {
+   "path": "video/puzzle/puzzle_06.mov",
+   "original": "IMG_3766",
+   "type": "puzzle_left",
+   "dataset": "puzzle",
+   "split": "train"
+  },
+  {
+   "path": "video/puzzle/puzzle_07.mov",
+   "original": "IMG_3767",
+   "type": "puzzle_left",
+   "dataset": "puzzle",
+   "split": "train"
+  },
+  {
+   "path": "video/puzzle/puzzle_08.mov",
+   "original": "IMG_3768",
+   "type": "puzzle_left",
+   "dataset": "puzzle",
+   "split": "val"
+  },
+  {
+   "path": "video/puzzle/puzzle_09.mov",
+   "original": "IMG_3769",
+   "type": "puzzle_left",
+   "dataset": "puzzle",
+   "split": "train"
+  },
+  {
+   "path": "video/puzzle/puzzle_10.mov",
+   "original": "IMG_3770",
+   "type": "puzzle_left",
+   "dataset": "puzzle",
+   "split": "train"
+  },
+  {
+   "path": "video/puzzle/demo_5b_push1.mov",
+   "original": "IMG_3834",
+   "type": "demo_5b",
+   "dataset": "demo",
+   "split": "demo"
+  },
+  {
+   "path": "video/puzzle/demo_5b_push2.mov",
+   "original": "IMG_3835",
+   "type": "demo_5b",
+   "dataset": "demo",
+   "split": "demo"
+  },
+  {
+   "path": "video/puzzle/demo_5b_push3.mov",
+   "original": "IMG_3837",
+   "type": "demo_5b",
+   "dataset": "demo",
+   "split": "demo"
   }
  ]
 }

@@ -1,0 +1,30 @@
+=== 5c
+  plan from (2, 6): up 2, right 2, up 1, right 4*, down 2, right 1*
+[W1029 21:07:22.118509143 Context.cpp:508] Warning: torch.backends.cuda.preferred_linalg_library is an experimental feature. If you see any error or unexpected behavior when this flag is set please file an issue on GitHub. (function operator())
+  push up 2 from (2, 6) -> (2, 4) (1 planned move): spawn [2, 9] at 91 deg, 191 steps, 0 mm off, max turn 8.3 deg; 16/126 candidates reached (0 flagged), 17 s
+    plan from (2, 4): right 2, up 1, right 4*, down 2, right 1*
+    push right 2 from (2, 4) FAILED: no vine moved the block toward a planned cell cleanly
+    plan from (2, 4): left 1*, right 3, up 1, right 4*, down 2, right 1*
+    push left 1* from (2, 4) FAILED: no vine moved the block toward a planned cell cleanly
+    dead end at (2, 4): no plan left, back up
+  retry up 2 with another vine: spawn [2, 9] at 91 deg, 3 mm off
+    plan from (2, 4): right 2, up 1, right 4*, down 2, right 1*
+    push right 2 from (2, 4) FAILED: no vine moved the block toward a planned cell cleanly
+    plan from (2, 4): left 1*, right 3, up 1, right 4*, down 2, right 1*
+    push left 1* from (2, 4) -> (1, 4) (1 planned move): spawn [14, 2] at 188 deg, 489 steps, 22 mm off, max turn 7.9 deg; 1/18 candidates reached (0 flagged), 19 s
+      plan from (1, 4): right 3, up 1, right 4*, down 2, right 1*
+      push right 3 from (1, 4) FAILED: no vine moved the block toward a planned cell cleanly
+      dead end at (1, 4): no plan left, back up
+    dead end at (2, 4): no plan left, back up
+  retry up 2 with another vine: spawn [1, 9] at 71 deg, 4 mm off
+    plan from (2, 4): right 2, up 1, right 4*, down 2, right 1*
+    push right 2 from (2, 4) -> (4, 4) (1 planned move): spawn [0, 5] at 29 deg, 360 steps, 6 mm off, max turn 7.7 deg; 11/65 candidates reached (0 flagged), 16 s
+      plan from (4, 4): up 1, right 4*, down 2, right 1*
+      push up 1 from (4, 4) -> (4, 3) (1 planned move): spawn [4, 9] at 94 deg, 197 steps, 1 mm off, max turn 3.8 deg; 16/244 candidates reached (0 flagged), 36 s
+        plan from (4, 3): right 4*, down 2, right 1*
+        push right 4* from (4, 3) -> (8, 3) (1 planned move): spawn [0, 6] at 43 deg, 315 steps, 13 mm off, max turn 11.4 deg; 16/95 candidates reached (0 flagged), 22 s
+          plan from (8, 3): down 2, right 1*
+          push down 2 from (8, 3) -> (8, 5) (1 planned move): spawn [8, 0] at 261 deg, 173 steps, 6 mm off, max turn 11.4 deg; 16/256 candidates reached (0 flagged), 37 s
+            plan from (8, 5): right 1*
+            push right 1* from (8, 5) -> (9, 5) (1 planned move): spawn [5, 9] at 68 deg, 248 steps, 16 mm off, max turn 6.5 deg; 15/37 candidates reached (0 flagged), 11 s
+5c SOLVED: 6 pushes, 11 push searches (5 failed or backed out), 0 flagged (>15 deg), 3.5 min

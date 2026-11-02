@@ -1,0 +1,188 @@
+{
+ "reached": true,
+ "goal_distance_mm": 104.04770905154949,
+ "controls": [
+  [
+   -3.234764683323818,
+   9
+  ],
+  [
+   -3.322775490219107,
+   9
+  ],
+  [
+   -3.262414211118527,
+   9
+  ],
+  [
+   -3.2940237967631654,
+   9
+  ],
+  [
+   -3.270554034890991,
+   9
+  ],
+  [
+   2.5453819767059738,
+   9
+  ],
+  [
+   -3.059185096172724,
+   9
+  ],
+  [
+   -0.8330898147216304,
+   9
+  ],
+  [
+   -3.1590890299912533,
+   9
+  ],
+  [
+   -2.5302255009882915,
+   9
+  ],
+  [
+   -3.2577754828897048,
+   9
+  ],
+  [
+   -3.2094590038632345,
+   9
+  ],
+  [
+   1.2829047702004956,
+   9
+  ]
+ ],
+ "pushes": 1,
+ "planner": {
+  "planner": "rrt",
+  "max_edges": 300000,
+  "time_limit_min": 20.0,
+  "batch_size": 256,
+  "steps_per_edge": 25,
+  "min_steps_per_edge": null,
+  "node_every": null,
+  "max_curvature": 3.33,
+  "goal_bias": 0.1,
+  "box_weight": 1.0,
+  "cell_mm": 15.0,
+  "heading_deg": 30.0,
+  "coarse": 5,
+  "unlock_mm": 50.0,
+  "straight_prob": 0.3
+ },
+ "iterations": 13,
+ "edges": 3328,
+ "failed_rollouts": 0,
+ "pruned": 0,
+ "invalid": 67,
+ "resets": 0,
+ "stopped": "goal",
+ "edges_to_goal": 3328,
+ "seconds_to_goal": 29.598281145095825,
+ "nodes": 3008,
+ "seconds": 29.59828495979309,
+ "best_mm": 104.04770905154949,
+ "regions": 77,
+ "env": "4b_r50",
+ "category": "vine_to_goal",
+ "scene": {
+  "walls_m": [
+   [
+    -0.05,
+    -0.05,
+    1.25,
+    0.0
+   ],
+   [
+    -0.05,
+    0.9,
+    1.25,
+    0.9500000000000001
+   ],
+   [
+    -0.05,
+    0.0,
+    0.0,
+    0.9
+   ],
+   [
+    1.2,
+    0.0,
+    1.25,
+    0.9
+   ],
+   [
+    0.47200000000000003,
+    0.215,
+    1.5707963267948966,
+    0.225,
+    0.01
+   ],
+   [
+    0.47200000000000003,
+    0.7365,
+    1.5707963267948966,
+    0.17350000000000002,
+    0.01
+   ]
+  ],
+  "objects_m": [
+   [
+    0.47300000000000003,
+    0.452,
+    0.5710000000000001,
+    0.55
+   ]
+  ],
+  "masses_kg": [
+   0.503
+  ],
+  "start": [
+   0.153,
+   0.14300000000000002,
+   1.0471975511965976
+  ],
+  "goal_m": [
+   0.983,
+   0.562
+  ],
+  "goal_radius_m": 0.08,
+  "bounds_m": [
+   -0.05,
+   1.25,
+   -0.05,
+   0.9500000000000001
+  ],
+  "box_goal_m": null,
+  "name": "4b_r50",
+  "objects_theta": [
+   0.0
+  ],
+  "box_goal_theta": null,
+  "corner_radius_m": null,
+  "box_goal_inside": null
+ },
+ "sim": {
+  "max_bodies": 60,
+  "grow_rate_mps": 0.25,
+  "vine_radius_m": 0.02426,
+  "seg_len_m": 0.03,
+  "stiffness_mode": "wrinkle",
+  "grow_force_n": 20.0,
+  "seg_mass_kg": 0.005,
+  "joint_stiffness": 15.567001641976868,
+  "ang_damp": 0.0032521590904512495,
+  "seg_inertia_kgm2": 0.001,
+  "obj_friction": 0.3,
+  "vine_friction": 0.09277594536523326,
+  "obj_spin": 8.0,
+  "pressure_pa": 9900.723659030205,
+  "wrinkle_scale": 1.380452700180847,
+  "qp_backend": "TORCH_IPM",
+  "device": "cuda",
+  "cuda_graphs": true
+ }
+}

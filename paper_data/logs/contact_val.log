@@ -1,0 +1,17 @@
+vine_block_06: shape 23.2 mm, box 55.7 mm, turn 24.2 deg, 23/26 frames reached
+   window-matched over 23 unsuspect frames: vine 7.3 mm, block 49.0 mm (suspect: [])
+wrote out/paper_figs/contact_envfric_mu2/contact_vine_block_06_col.{pdf,png}
+wrote out/paper_figs/contact_envfric_mu2/contact_vine_block_06_wide.{pdf,png}
+block_block_08: shape 19.3 mm, box 41.3 mm, turn 3.8 deg, 21/25 frames reached
+   window-matched over 21 unsuspect frames: vine 16.8 mm, block 12.2 mm (suspect: [])
+wrote out/paper_figs/contact_envfric_mu2/contact_block_block_08_col.{pdf,png}
+wrote out/paper_figs/contact_envfric_mu2/contact_block_block_08_wide.{pdf,png}
+block_wall_07: shape 11.8 mm, box 18.3 mm, turn 8.6 deg, 23/26 frames reached
+   window-matched over 21 unsuspect frames: vine 5.5 mm, block 14.3 mm (suspect: [24, 25])
+wrote out/paper_figs/contact_envfric_mu2/contact_block_wall_07_col.{pdf,png}
+wrote out/paper_figs/contact_envfric_mu2/contact_block_wall_07_wide.{pdf,png}
+wrote out/paper_figs/contact_envfric_mu2/contact_val_pairs.{pdf,png}
+wrote out/paper_figs/contact_envfric_mu2/contact_val_wide.{pdf,png}
+wrote out/paper_figs/contact_envfric_mu2/contact_val_col.{pdf,png}
+wrote out/paper_figs/contact_envfric_mu2/errors.json
+done

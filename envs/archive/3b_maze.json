@@ -1,0 +1,144 @@
+{
+ "name": "3b",
+ "category": "b2g_retractable",
+ "description": "maze; small openings (narrower than a block, wider than the vine) let the vine reach blocks in corners",
+ "board_mm": [
+  1200.0,
+  900.0
+ ],
+ "walls": [
+  {
+   "from": [
+    210,
+    652
+   ],
+   "to": [
+    660,
+    652
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    548,
+    678
+   ],
+   "to": [
+    548,
+    740
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    548,
+    810
+   ],
+   "to": [
+    548,
+    900
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    659,
+    339
+   ],
+   "to": [
+    659,
+    665
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    925,
+    222
+   ],
+   "to": [
+    925,
+    587
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    443,
+    203
+   ],
+   "to": [
+    925,
+    203
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    408,
+    300
+   ],
+   "to": [
+    408,
+    457
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    408,
+    183
+   ],
+   "to": [
+    408,
+    230
+   ],
+   "thickness": 20.0
+  },
+  {
+   "from": [
+    687,
+    0
+   ],
+   "to": [
+    687,
+    183
+   ],
+   "thickness": 20.0
+  }
+ ],
+ "boxes": [
+  {
+   "center": [
+    210,
+    770
+   ],
+   "angle_deg": 0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  }
+ ],
+ "start": {
+  "xy": [
+   396.0,
+   809.0
+  ],
+  "heading_deg": 180.0
+ },
+ "goal": {
+  "type": "box",
+  "box": 0,
+  "center": [
+   1060,
+   183
+  ],
+  "radius": 90
+ },
+ "planner": {
+  "max_bodies": 70
+ },
+ "notes": "geometry measured off the sketch; openings are 70 mm (vine 48.5 mm wide, block 98 mm)"
+}

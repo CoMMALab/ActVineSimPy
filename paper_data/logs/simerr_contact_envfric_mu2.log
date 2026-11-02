@@ -1,0 +1,35 @@
+contact_train: shape 22.3 box 31.5 turn 14.6 deg
+    vine_block_01          shape   22.3  box   47.1
+    vine_block_02          shape   38.7  box   39.2
+    vine_block_03          shape   30.5  box   15.1
+    vine_block_04          shape   22.3  box   48.0
+    vine_block_05          shape   22.1  box   20.8
+    vine_block_07          shape   46.6  box   19.0
+    vine_block_08          shape   21.4  box   31.6
+    vine_block_09          shape   43.3  box   39.0
+    vine_block_10          shape   21.4  box   30.5
+    vine_block_11          shape   21.7  box   11.5
+    block_block_01         shape   15.7  box   19.4
+    block_block_02         shape   11.2  box   25.3
+    block_block_03         shape   45.3  box   49.9
+    block_block_04         shape   14.9  box   33.5
+    block_block_05         shape   30.9  box   53.1
+    block_block_06         shape   16.1  box  111.4
+    block_block_07         shape   19.5  box   48.8
+    block_block_09         shape   14.0  box   32.5
+    block_wall_02          shape   16.7  box   11.9
+    block_wall_03          shape   10.3  box   15.5
+    block_wall_04          shape   12.8  box   10.3
+    block_wall_05          shape    4.7  box   12.2
+    block_wall_06          shape   17.5  box   12.9
+    block_wall_08          shape   27.2  box   56.1
+    block_wall_09          shape   18.5  box   32.9
+    block_wall_10          shape   23.6  box   29.2
+    block_wall_11          shape   12.7  box    9.1
+    block_wall_12          shape   17.5  box   22.8
+    block_wall_13          shape   26.3  box   24.2
+contact_val: shape 18.1 box 38.4 turn 12.2 deg
+    vine_block_06          shape   23.2  box   55.7
+    block_block_08         shape   19.3  box   41.3
+    block_wall_07          shape   11.8  box   18.3
+wrote checkpoints/contact_envfric_mu2.json

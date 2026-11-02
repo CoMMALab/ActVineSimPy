@@ -39,6 +39,8 @@ class Scene:
     objects_theta: list = None          # optional initial heading [rad] per movable box (default 0)
     box_goal_theta: tuple = None        # optional (theta_rad, tol_rad): box 0's goal orientation too
     corner_radius_m: tuple = None       # optional (walls, boxes) corner radius [m]; None = sharp corners
+    box_goal_inside: float = None       # optional: at least this fraction of box 0 must lie in the goal
+                                        # disc (instead of only its center); not with box_goal_theta
 
     def __post_init__(self):
         if self.bounds_m is None:
@@ -78,7 +80,7 @@ def load_scene(env_path):
                  name=os.path.splitext(os.path.basename(env_path))[0])
 
 
-STIFFNESS_MODES = ("curvature", "linear", "spam")
+STIFFNESS_MODES = ("curvature", "wrinkle", "linear", "spam")
 
 
 def params_to(params, device):
@@ -113,6 +115,13 @@ class SimConfig:
     ang_damp: float = 1.24e-4
     seg_inertia_kgm2: float = 1.0e-5
     obj_friction: float = 0.5           # box-table Coulomb friction coefficient
+    vine_friction: float = 0.0          # vine-box Coulomb friction coefficient (0 = frictionless)
+    wall_friction: float = 0.0          # box-wall Coulomb friction coefficient
+    box_friction: float = 0.0           # box-box Coulomb friction coefficient
+    obj_spin: float = 1.0               # scale on the box-table friction torque (1: evenly pressed box)
+    # 'wrinkle' mode (dvsim/wrinkle.py): vine pressure [Pa] and a scale on its wrinkling moment
+    pressure_pa: float = 10_800.0
+    wrinkle_scale: float = 1.0
     # QP solver: "DIFFCP" (cvxpylayers, one element at a time on CPU threads) or "TORCH_IPM"
     # (dvsim/batched_qp.py: the whole batch at once, friction cone linearized). device: where a
     # batched step runs ("cpu" or "cuda"). Default: the batched solver on the GPU when there is one.
@@ -129,6 +138,7 @@ class Sim:
     part of the vine grown during it; bodies that already exist keep what they were grown with,
     like a fabricated vine keeps its actuators. What the control does depends on cfg.stiffness_mode:
         'curvature'  spring toward that curvature (dvsim 'curvature' mode)
+        'wrinkle'    the same, with the wrinkling moment (saturating, so the vine kinks) for the spring
         'spam'       sPAM actuators whose (constant) moment balances the vine's stiffness there
         'linear'     passive vine, spring toward straight; the control is ignored
     '''
@@ -148,6 +158,10 @@ class Sim:
                                         seg_mass_kg=self.cfg.seg_mass_kg, ang_damp=self.cfg.ang_damp,
                                         seg_inertia_kgm2=self.cfg.seg_inertia_kgm2)
         self.params.obj_friction = self.cfg.obj_friction
+        self.params.vine_friction = self.cfg.vine_friction
+        self.params.wall_friction, self.params.box_friction = self.cfg.wall_friction, self.cfg.box_friction
+        self.params.obj_spin = self.cfg.obj_spin
+        self.params.pressure, self.params.wrinkle_scale = self.cfg.pressure_pa, self.cfg.wrinkle_scale
         if scene.corner_radius_m is not None:
             self.params.wall_round, self.params.obj_round = [si.len_to_nd(r) for r in scene.corner_radius_m]
         self.params.stiffness_mode = self.cfg.stiffness_mode
@@ -165,7 +179,7 @@ class Sim:
         self.base0 = torch.tensor([si.len_to_nd(x0), si.len_to_nd(y0), float(heading0)])
         self.device = torch.device(self.cfg.device)
         if self.device.type == "cuda":
-            torch.cuda.set_per_process_memory_fraction(0.5)      # the GPU is shared
+            torch.cuda.set_per_process_memory_fraction(0.7)      # the GPU is shared
         self.device_params = params_to(self.params, self.device)
 
     def step_batch(self, bases, state, dstate, bodies, obj_pose, obj_dstate, per_batch):
@@ -229,7 +243,7 @@ class Sim:
         n = start.num_bodies
         design = [start.p_control, start.l0_control, start.moment_control, start.bend_target]
 
-        if self.cfg.stiffness_mode == "curvature":
+        if self.cfg.stiffness_mode in ("curvature", "wrinkle"):
             design[3] = design[3].clone()
             design[3][n:] = float(curvature) * self.cfg.seg_len_m
 
@@ -262,16 +276,20 @@ class Sim:
         '''
         rollout() for several (start state, curvature) pairs at once: each sim step is ONE batched
         dvsim step over all rollouts that are still running. Returns [(states, ok)], one per pair.
+        num_steps: one budget for all, or a list with each pair's own.
         '''
         N = len(starts)
+        limits = list(num_steps) if isinstance(num_steps, (list, tuple)) else [num_steps] * N
+        num_steps = max(limits, default=0)
         designs = [self.apply_control(s, c) for s, c in zip(starts, curvatures)]
         if self.device.type == "cuda" and self.cfg.cuda_graphs:
-            return self._rollout_batch_device(starts, designs, num_steps, stop_fn)
+            return self._rollout_batch_device(starts, designs, limits, stop_fn)
         current = list(starts)
         results = [([], True) for _ in range(N)]
         running = [i for i in range(N) if self.can_grow(starts[i])]
 
-        for _ in range(num_steps):
+        for t in range(num_steps):
+            running = [i for i in running if t < limits[i]]
             if not running:
                 break
 
@@ -304,16 +322,22 @@ class Sim:
 
         return results
 
-    def _rollout_batch_device(self, starts, designs, num_steps, stop_fn):
+    def _rollout_batch_device(self, starts, designs, limits, stop_fn):
         '''rollout_batch with the states kept on the GPU (batched_rollout.BatchRollout). Known goal
-        tests run as tensor ops; any other stop_fn is evaluated on the CPU (one sync per step).'''
+        tests run as tensor ops; any other stop_fn is evaluated on the CPU (one sync per step).
+        limits: each element's step budget.'''
         from batched_rollout import BatchRollout
         roll = BatchRollout(self, starts, designs)
         batched = self.batched_test(stop_fn)
-        for _ in range(num_steps):
+        same = len(set(limits)) <= 1
+        if not same:
+            lim = torch.tensor(limits + [0], device=self.device)      # (row -1, padding: index -1 -> 0)
+        for t in range(max(limits, default=0)):
             if not roll.any_alive():
                 break
             roll.step()
+            if not same:
+                roll.stop(lim[roll.element_ids()] <= t + 1)
             if stop_fn is None:
                 continue
             if batched is not None:
@@ -338,9 +362,17 @@ class Sim:
         name = fn.__func__.__name__
         if name == "box_reached_goal":
             gx, gy, r = [si.len_to_nd(v) for v in self.scene.box_goal_m]
+            frac = self.scene.box_goal_inside
+            if frac is not None and self.scene.box_goal_theta is None:
+                local = self._box_samples().to(self.device)                             # (S, 2) internal units
             def test(state, bodies, obj_pose):
                 p = obj_pose[:, 0]
                 hit = torch.hypot(p[:, 0] - gx, p[:, 1] - gy) < r
+                if frac is not None and self.scene.box_goal_theta is None:
+                    c, s = torch.cos(p[:, 2:3]), torch.sin(p[:, 2:3])
+                    x = p[:, 0:1] + c * local[:, 0] - s * local[:, 1]
+                    y = p[:, 1:2] + s * local[:, 0] + c * local[:, 1]
+                    hit = hit & ((torch.hypot(x - gx, y - gy) < r).float().mean(1) >= frac)
                 if self.scene.box_goal_theta is not None:
                     sym = math.pi / 2 if abs(float(self.params.obj_hw[0] - self.params.obj_hh[0])) < 1e-6 else math.pi
                     e = torch.remainder(p[:, 2] - self.scene.box_goal_theta[0], sym)
@@ -388,12 +420,31 @@ class Sim:
         e = (float(state.moveable_obj_pose[0, 0, 2]) - self.scene.box_goal_theta[0]) % sym
         return min(e, sym - e)
 
+    def _box_samples(self, n=7):
+        '''(n*n, 2) points spread over box 0, in its own frame (internal units).'''
+        hw, hh = float(self.params.obj_hw[0]), float(self.params.obj_hh[0])
+        u = (torch.arange(n, dtype=torch.float32) + 0.5) / n * 2 - 1
+        gx, gy = torch.meshgrid(u * hw, u * hh, indexing="ij")
+        return torch.stack([gx.reshape(-1), gy.reshape(-1)], 1)
+
+    def box_inside_fraction(self, state: StateInfo):
+        '''Fraction of box 0 that lies in the box goal disc.'''
+        gx, gy, r = [si.len_to_nd(v) for v in self.scene.box_goal_m]
+        x, y, th = [float(v) for v in state.moveable_obj_pose[0, 0, :3]]
+        local = self._box_samples()
+        c, s = math.cos(th), math.sin(th)
+        px = x + c * local[:, 0] - s * local[:, 1]
+        py = y + s * local[:, 0] + c * local[:, 1]
+        return float((torch.hypot(px - gx, py - gy) < r).float().mean())
+
     def box_reached_goal(self, state: StateInfo):
         gx, gy, r = self.scene.box_goal_m
         x, y = [si.len_to_si(float(v)) for v in state.moveable_obj_pose[0, 0, :2]]
         if ((x - gx) ** 2 + (y - gy) ** 2) ** 0.5 >= r:
             return False
-        return self.scene.box_goal_theta is None or self.box_angle_error(state) <= self.scene.box_goal_theta[1]
+        if self.scene.box_goal_theta is not None:
+            return self.box_angle_error(state) <= self.scene.box_goal_theta[1]
+        return self.scene.box_goal_inside is None or self.box_inside_fraction(state) >= self.scene.box_goal_inside
 
     def goal_distance_m(self, state: StateInfo):
         x, y = self.tip_m(state)

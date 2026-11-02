@@ -1,0 +1,49 @@
+{
+ "checkpoint": "checkpoints/contact_envfric_mu2.json",
+ "ref": "xnew_rrt/data/long.npz",
+ "trials": {
+  "long_02": {
+   "shape_mm": 25.30306146977425,
+   "box_mm": 32.61667819804651,
+   "box_deg": 3.9310374835796655,
+   "frames_compared": 47,
+   "suspect_frames": [],
+   "window_matched": {
+    "vine_mm": 9.005312830144645,
+    "box_mm": 6.259403426495352,
+    "frames": 47
+   },
+   "launch_fix": true,
+   "snapshots": [
+    {
+     "ref_frame": 7,
+     "video_frame": 63,
+     "vine_mm": 249.79127502441406,
+     "sim_vine_mm": 255.0,
+     "t_s": 2.101060606060606
+    },
+    {
+     "ref_frame": 16,
+     "video_frame": 93,
+     "vine_mm": 425.37078857421875,
+     "sim_vine_mm": 430.0,
+     "t_s": 3.1015656565656564
+    },
+    {
+     "ref_frame": 29,
+     "video_frame": 157,
+     "vine_mm": 691.2669677734375,
+     "sim_vine_mm": 605.0,
+     "t_s": 5.2359764309764305
+    },
+    {
+     "ref_frame": 44,
+     "video_frame": 225,
+     "vine_mm": 1051.683349609375,
+     "sim_vine_mm": 950.0,
+     "t_s": 7.503787878787879
+    }
+   ]
+  }
+ }
+}

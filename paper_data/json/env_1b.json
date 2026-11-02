@@ -1,0 +1,54 @@
+{
+ "name": "1b",
+ "category": "b2g_unretractable",
+ "description": "two blocks in a row, pushed together; the front one to the goal",
+ "board_mm": [
+  1200.0,
+  900.0
+ ],
+ "walls": [],
+ "boxes": [
+  {
+   "center": [
+    645.2,
+    523.1
+   ],
+   "angle_deg": 37.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  },
+  {
+   "center": [
+    565.3,
+    462.9
+   ],
+   "angle_deg": 37.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  }
+ ],
+ "start": {
+  "xy": [
+   150.0,
+   150.0
+  ],
+  "heading_deg": 37.0
+ },
+ "goal": {
+  "type": "box",
+  "box": 0,
+  "center": [
+   764.9,
+   613.4
+  ],
+  "radius": 60
+ },
+ "planner": {},
+ "notes": "box 0 is the front block (the one with the goal); the vine meets box 1 first"
+}

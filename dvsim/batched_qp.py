@@ -24,7 +24,7 @@ with v_k = (vx, vy, vtheta) of movable object k and f_k its friction weights (w,
    method, a fixed number of iterations for the whole batch; each iteration is one batched
    Cholesky factorization of a k x k matrix. Elements that do not converge come back as NaN rows
    (dynamic_vine.step then reports them not ok); the others are unaffected.
-Everything inside runs in float64.
+Everything inside runs in DTYPE (float64 by default).
 """
 import math
 import torch
@@ -33,11 +33,20 @@ N_XY = 16          # directions for || (vx, vy) ||
 N_RC = 9           # directions for || (r, c * vtheta) ||, over the half circle r >= 0
 ITERS = 30
 TOL = 1e-7         # converged when the scaled residuals and the duality gap are below this
+TOL_F32 = 3e-3     # the same in float32
 CULL = 60.0        # [internal length units, mm] drop rows whose gap is larger than this
 GRAPH = False       # graph mode (see the docstring)
 STATIC_ROWS = None  # graph mode: pack the culled rows to exactly this many (None: the batch's largest count)
 SAFE = 20.0         # [mm] graph mode: dropping a row with a smaller gap than this sets OVERFLOW
 OVERFLOW = None     # graph mode: (1,) bool tensor, True when the last step dropped a row within SAFE
+STATS = None        # profiling: a list, and every eager solve appends the iteration each element converged at ((B,) CPU, -1: never)
+FACTOR_DTYPE = None     # mixed precision: build and factor the Newton matrix in this dtype (e.g. float32), with
+                        # residuals, iterates and REFINE refinement passes per Newton step in DTYPE. None: DTYPE
+REFINE = 2
+COMPACT = 0.75     # eager mode: every 5 iterations, once at most this fraction of the elements is still
+                   # unconverged, iterate on those alone (most converge in ~4 iterations, a few need ~15).
+COMPACT_MIN_BATCH = 512   # only for batches this large: 1.15-1.3x at 1024, but slower at 256 (launch bound)
+DTYPE = torch.float64   # precision of the solve (float32 is far faster on GeForce cards: fp64 runs at 1/64 rate)
 
 
 def _directions():
@@ -153,6 +162,7 @@ def ipm(H, g, G, h, iters=ITERS, tol=TOL):
     B, m, k = G.shape
     dev = H.device
     eye = torch.eye(k, dtype=H.dtype, device=dev)
+    tiny = torch.finfo(H.dtype).tiny
     reg = 1e-12 * torch.diagonal(H, dim1=1, dim2=2).abs().amax(1).clamp_min(1.0)
     u = torch.zeros(B, k, dtype=H.dtype, device=dev)
     s = torch.clamp(h, min=1.0)
@@ -164,29 +174,70 @@ def ipm(H, g, G, h, iters=ITERS, tol=TOL):
     def mv(Mt, x):
         return (Mt @ x.unsqueeze(-1)).squeeze(-1)
 
+    fd = FACTOR_DTYPE or H.dtype
+    mixed = fd != H.dtype
+    eyef = eye.to(fd)
+
     def max_step(x, dx):
         ratio = torch.where(dx < 0, -x / dx, torch.full_like(x, math.inf))
         return ratio.amin(1).clamp(max=1.0)
 
+    at = torch.full((B,), -1, dtype=torch.long, device=dev) if STATS is not None and not GRAPH else None
+    rows = None                     # after a compaction: the original index of each remaining element
+    u_out = ok_out = None
     for i in range(iters):
         rd = mv(H, u) + g + mv(G.transpose(1, 2), z)
         rp = mv(G, u) + s - h
         mu = (s * z).sum(1) / m
         done = done | ((rd.abs().amax(1) < tol * scale) & (rp.abs().amax(1) < tol * scale) & (mu < tol * scale))
-        if not GRAPH and i % 5 == 4 and bool(done.all()):       # (a GPU sync, so not every iteration)
-            break
+        if at is not None:
+            idx = rows if rows is not None else slice(None)
+            at[idx] = torch.where(done & (at[idx] < 0), i, at[idx])
+        if not GRAPH and i % 5 == 4:                           # (a GPU sync, so not every iteration)
+            n_left = int((~done).sum())
+            if n_left == 0:
+                break
+            if COMPACT and B >= COMPACT_MIN_BATCH and n_left <= COMPACT * u.shape[0]:
+                if rows is None:
+                    rows = torch.arange(B, device=dev)
+                    u_out, ok_out = torch.zeros_like(u), torch.zeros_like(ok)
+                u_out[rows[done]], ok_out[rows[done]] = u[done], ok[done]       # converged: final
+                keep = ~done
+                rows = rows[keep]
+                H, g, G, h, u, s, z, scale, ok, done, reg = \
+                    (t[keep] for t in (H, g, G, h, u, s, z, scale, ok, done, reg))
+                rd, rp, mu = rd[keep], rp[keep], mu[keep]
         W = z / s
-        K = H + G.transpose(1, 2) @ (W.unsqueeze(-1) * G) + reg[:, None, None] * eye
-        L, info = torch.linalg.cholesky_ex(K)
+        if mixed:
+            # K = H + G'WG in the factor dtype (the O(m k^2) product and the O(k^3) factorization),
+            # scaled to a unit diagonal, D K D with D = diag(K)^-1/2: late iterations spread W over
+            # many orders of magnitude, beyond what a float32 Cholesky of K itself survives
+            dg = (torch.diagonal(H, dim1=1, dim2=2) + (G * G * W.unsqueeze(-1)).sum(1)).clamp_min(tiny).rsqrt()
+            Gs = (G * dg.unsqueeze(1)).to(fd)
+            Kf = (dg.unsqueeze(2) * H * dg.unsqueeze(1)).to(fd) + Gs.transpose(1, 2) @ (W.to(fd).unsqueeze(-1) * Gs) \
+                + 1e-6 * eyef
+        else:
+            Kf = H + G.transpose(1, 2) @ (W.unsqueeze(-1) * G) + reg[:, None, None] * eye
+        L, info = torch.linalg.cholesky_ex(Kf)
         ok = ok & (info == 0)
-        L = torch.where((info == 0)[:, None, None], L, eye.expand_as(L))
+        L = torch.where((info == 0)[:, None, None], L, eyef.expand_as(L))
         # L^-1 once, then both solves are matrix-vector products (one triangular solve per iteration
         # instead of four: on a GPU each is a slow, latency-bound kernel)
-        Li = torch.linalg.solve_triangular(L, eye.expand_as(L), upper=False)
+        Li = torch.linalg.solve_triangular(L, eyef.expand_as(L), upper=False)
+
+        def kinv(r):
+            if not mixed:
+                return mv(Li.transpose(1, 2), mv(Li, r))
+            def approx(r):             # K^-1 r through the scaled float32 factor
+                return dg * mv(Li.transpose(1, 2), mv(Li, (dg * r).to(fd))).to(H.dtype)
+            x = approx(r)
+            for _ in range(REFINE):    # iterative refinement: residual of K x = r in DTYPE, K applied as H + G'WG
+                x = x + approx(r - mv(H, x) - mv(G.transpose(1, 2), W * mv(G, x)))
+            return x
 
         def solve(rc):
             rhs = -rd - mv(G.transpose(1, 2), W * rp - rc / s)
-            du = mv(Li.transpose(1, 2), mv(Li, rhs))
+            du = kinv(rhs)
             dz = W * (mv(G, du) + rp) - rc / s
             ds = -rp - mv(G, du)
             return du, ds, dz
@@ -195,14 +246,20 @@ def ipm(H, g, G, h, iters=ITERS, tol=TOL):
         du, ds, dz = solve(s * z)
         a = torch.minimum(max_step(s, ds), max_step(z, dz))
         mu_aff = ((s + a[:, None] * ds) * (z + a[:, None] * dz)).sum(1) / m
-        sigma = (mu_aff / mu.clamp_min(1e-300)).clamp(0, 1) ** 3
+        sigma = (mu_aff / mu.clamp_min(tiny)).clamp(0, 1) ** 3
         du, ds, dz = solve(s * z + ds * dz - (sigma * mu)[:, None])
         a = 0.99 * torch.minimum(max_step(s, ds), max_step(z, dz))
         a = torch.where(done, torch.zeros_like(a), a)          # converged elements stay put
         u = u + a[:, None] * du
-        s = (s + a[:, None] * ds).clamp_min(1e-300)
-        z = (z + a[:, None] * dz).clamp_min(1e-300)
-    return u, ok & done & torch.isfinite(u).all(1)
+        s = (s + a[:, None] * ds).clamp_min(tiny)
+        z = (z + a[:, None] * dz).clamp_min(tiny)
+    if at is not None:
+        STATS.append(at.cpu())
+    ok = ok & done & torch.isfinite(u).all(1)
+    if rows is not None:
+        u_out[rows], ok_out[rows] = u, ok
+        u, ok = u_out, ok_out & torch.isfinite(u_out).all(1)
+    return u, ok
 
 
 def solve(M, p, G, h, A, b, fric=None, obj_start=None, cull=CULL, iters=None):
@@ -212,11 +269,11 @@ def solve(M, p, G, h, A, b, fric=None, obj_start=None, cull=CULL, iters=None):
     out_dtype = p.dtype
     B, n = p.shape
     with torch.device(p.device):
-        M, p, G, h, A, b = (t.to(torch.float64) for t in (M, p, G, h, A, b))
+        M, p, G, h, A, b = (t.to(DTYPE) for t in (M, p, G, h, A, b))
         if M.dim() == 2:
             M = M.unsqueeze(0).expand(B, -1, -1)
         if fric is not None and fric.numel() > 0:
-            M, p, G, h, A, b = linearize_friction(M[0], p, G, h, A, b, fric.to(torch.float64), obj_start)
+            M, p, G, h, A, b = linearize_friction(M[0], p, G, h, A, b, fric.to(DTYPE), obj_start)
             M = M.unsqueeze(0).expand(B, -1, -1)
         G, h = cull_rows(G, h, cull, STATIC_ROWS)
         x0, Z = eliminate_equalities(A, b)
@@ -225,7 +282,7 @@ def solve(M, p, G, h, A, b, fric=None, obj_start=None, cull=CULL, iters=None):
         g = (Zt @ ((M @ x0.unsqueeze(-1)).squeeze(-1) + p).unsqueeze(-1)).squeeze(-1)
         Gr = G @ Z
         hr = h - (G @ x0.unsqueeze(-1)).squeeze(-1)
-        u, ok = ipm(H, g, Gr, hr, iters=iters or ITERS)
+        u, ok = ipm(H, g, Gr, hr, iters=iters or ITERS, tol=TOL if DTYPE == torch.float64 else TOL_F32)
         x = x0 + (Z @ u.unsqueeze(-1)).squeeze(-1)
         x = torch.where(ok[:, None], x, torch.full_like(x, math.nan))
         return x[:, :n].to(out_dtype)

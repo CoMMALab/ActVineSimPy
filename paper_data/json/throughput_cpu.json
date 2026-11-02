@@ -1,0 +1,276 @@
+{
+ "checkpoint": "checkpoints/spin8_manual.json",
+ "steps": 25,
+ "rows": [
+  {
+   "env": "4a",
+   "boxes": 0,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 1,
+   "seconds_per_rollout": 2.308121565001784,
+   "element_steps_per_s": 10.831318583508263
+  },
+  {
+   "env": "4a",
+   "boxes": 0,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 4,
+   "seconds_per_rollout": 2.3420481676682052,
+   "element_steps_per_s": 42.697670090859916
+  },
+  {
+   "env": "4a",
+   "boxes": 0,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 16,
+   "seconds_per_rollout": 1.0872108350061656,
+   "element_steps_per_s": 367.9139198403331
+  },
+  {
+   "env": "4a",
+   "boxes": 0,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 64,
+   "seconds_per_rollout": 1.2265836976681992,
+   "element_steps_per_s": 1304.436055233479
+  },
+  {
+   "env": "4a",
+   "boxes": 0,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 256,
+   "seconds_per_rollout": 1.2462990053366714,
+   "element_steps_per_s": 5135.204290940699
+  },
+  {
+   "env": "4a",
+   "boxes": 0,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 1024,
+   "seconds_per_rollout": 3.6821703523261626,
+   "element_steps_per_s": 6952.421411960893
+  },
+  {
+   "env": "4a",
+   "boxes": 0,
+   "backend": "DIFFCP",
+   "device": "cpu",
+   "batch": 1,
+   "seconds_per_rollout": 0.37491589633282274,
+   "element_steps_per_s": 66.68162178380092
+  },
+  {
+   "env": "4a",
+   "boxes": 0,
+   "backend": "DIFFCP",
+   "device": "cpu",
+   "batch": 4,
+   "seconds_per_rollout": 0.9147893180003545,
+   "element_steps_per_s": 109.31478760441894
+  },
+  {
+   "env": "4a",
+   "boxes": 0,
+   "backend": "DIFFCP",
+   "device": "cpu",
+   "batch": 16,
+   "seconds_per_rollout": 2.0467920850011674,
+   "element_steps_per_s": 195.42776373388793
+  },
+  {
+   "env": "4a",
+   "boxes": 0,
+   "backend": "DIFFCP",
+   "device": "cpu",
+   "batch": 64,
+   "seconds_per_rollout": 9.453019707337566,
+   "element_steps_per_s": 169.25808361089713
+  },
+  {
+   "env": "1a",
+   "boxes": 1,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 1,
+   "seconds_per_rollout": 0.862259159660122,
+   "element_steps_per_s": 28.993603280311092
+  },
+  {
+   "env": "1a",
+   "boxes": 1,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 4,
+   "seconds_per_rollout": 0.8600161556678358,
+   "element_steps_per_s": 116.27688542937443
+  },
+  {
+   "env": "1a",
+   "boxes": 1,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 16,
+   "seconds_per_rollout": 0.4520019693300128,
+   "element_steps_per_s": 884.9518965435183
+  },
+  {
+   "env": "1a",
+   "boxes": 1,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 64,
+   "seconds_per_rollout": 0.6638204639990969,
+   "element_steps_per_s": 2410.2902618593826
+  },
+  {
+   "env": "1a",
+   "boxes": 1,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 256,
+   "seconds_per_rollout": 1.5629135689911589,
+   "element_steps_per_s": 4094.9161405842297
+  },
+  {
+   "env": "1a",
+   "boxes": 1,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 1024,
+   "seconds_per_rollout": 2.8627521950014247,
+   "element_steps_per_s": 8942.443584428815
+  },
+  {
+   "env": "1a",
+   "boxes": 1,
+   "backend": "DIFFCP",
+   "device": "cpu",
+   "batch": 1,
+   "seconds_per_rollout": 0.584903077329121,
+   "element_steps_per_s": 42.74212424075292
+  },
+  {
+   "env": "1a",
+   "boxes": 1,
+   "backend": "DIFFCP",
+   "device": "cpu",
+   "batch": 4,
+   "seconds_per_rollout": 1.063409786002012,
+   "element_steps_per_s": 94.03712596623669
+  },
+  {
+   "env": "1a",
+   "boxes": 1,
+   "backend": "DIFFCP",
+   "device": "cpu",
+   "batch": 16,
+   "seconds_per_rollout": 1.8185142696699284,
+   "element_steps_per_s": 219.95978072396565
+  },
+  {
+   "env": "1a",
+   "boxes": 1,
+   "backend": "DIFFCP",
+   "device": "cpu",
+   "batch": 64,
+   "seconds_per_rollout": 4.702933688667447,
+   "element_steps_per_s": 340.2131745670758
+  },
+  {
+   "env": "4d",
+   "boxes": 13,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 1,
+   "seconds_per_rollout": 1.5903284446685575,
+   "element_steps_per_s": 15.720023171194855
+  },
+  {
+   "env": "4d",
+   "boxes": 13,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 4,
+   "seconds_per_rollout": 1.5908595146611333,
+   "element_steps_per_s": 62.859101685858704
+  },
+  {
+   "env": "4d",
+   "boxes": 13,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 16,
+   "seconds_per_rollout": 0.7850451260067833,
+   "element_steps_per_s": 509.5248499084927
+  },
+  {
+   "env": "4d",
+   "boxes": 13,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 64,
+   "seconds_per_rollout": 1.6173831300014474,
+   "element_steps_per_s": 989.2523115401656
+  },
+  {
+   "env": "4d",
+   "boxes": 13,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 256,
+   "seconds_per_rollout": 2.8154766823281534,
+   "element_steps_per_s": 2273.1497085984597
+  },
+  {
+   "env": "4d",
+   "boxes": 13,
+   "backend": "TORCH_IPM",
+   "device": "cuda",
+   "batch": 1024,
+   "seconds_per_rollout": 410.53229223033605,
+   "element_steps_per_s": 62.35806655043031
+  },
+  {
+   "env": "4d",
+   "boxes": 13,
+   "backend": "DIFFCP",
+   "device": "cpu",
+   "batch": 1,
+   "seconds_per_rollout": 0.9642407270051384,
+   "element_steps_per_s": 25.927135516924473
+  },
+  {
+   "env": "4d",
+   "boxes": 13,
+   "backend": "DIFFCP",
+   "device": "cpu",
+   "batch": 4,
+   "seconds_per_rollout": 2.181648852992415,
+   "element_steps_per_s": 45.83689069065217
+  },
+  {
+   "env": "4d",
+   "boxes": 13,
+   "backend": "DIFFCP",
+   "device": "cpu",
+   "batch": 16,
+   "seconds_per_rollout": 6.00369507499272,
+   "element_steps_per_s": 66.62563554670288
+  },
+  {
+   "env": "4d",
+   "boxes": 13,
+   "backend": "DIFFCP",
+   "device": "cpu",
+   "batch": 64,
+   "seconds_per_rollout": 25.81373993566376,
+   "element_steps_per_s": 61.98249474844484
+  }
+ ]
+}

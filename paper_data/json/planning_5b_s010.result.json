@@ -1,0 +1,380 @@
+{
+ "env": "5b",
+ "solved": true,
+ "seconds": 107.69751739501953,
+ "final": [
+  [
+   714.9688110351562,
+   384.9497985839844,
+   -0.13026483356952667
+  ]
+ ],
+ "first_plan": [
+  [
+   [
+    [
+     4,
+     6
+    ]
+   ],
+   0,
+   "up",
+   2,
+   "straight",
+   true
+  ],
+  [
+   [
+    [
+     4,
+     4
+    ]
+   ],
+   0,
+   "right",
+   2,
+   "straight",
+   true
+  ],
+  [
+   [
+    [
+     6,
+     4
+    ]
+   ],
+   0,
+   "down",
+   2,
+   "straight",
+   true
+  ]
+ ],
+ "pushes": [
+  {
+   "block": 0,
+   "cell": [
+    4,
+    6
+   ],
+   "direction": "up",
+   "k": 2,
+   "planned_cell": [
+    4,
+    4
+   ],
+   "candidates": 242,
+   "grow_s": 32.64979887008667,
+   "settle_s": 2.009094476699829,
+   "steps": 371,
+   "trials": 48,
+   "reached": 15,
+   "reached_flagged": 0,
+   "reached_crooked": 12,
+   "touched_ring": 0,
+   "best_err_mm": 1.7240759004467447,
+   "ok": true,
+   "spawn_cell": [
+    2,
+    9
+   ],
+   "heading_deg": 68.9,
+   "first_contact": "wall",
+   "landed_cell": [
+    4,
+    4
+   ],
+   "moves_done": 1,
+   "grow_steps": 201,
+   "err_mm": 1.7774938616922444,
+   "final": [
+    [
+     495.1172790527344,
+     606.7736206054688,
+     0.09046480804681778
+    ]
+   ],
+   "max_angle_deg": 5.991040666321447,
+   "final_angle_deg": 5.183251695543787,
+   "flagged": false,
+   "kind": "straight",
+   "wall_stopped": true,
+   "depth": 0
+  },
+  {
+   "block": 0,
+   "cell": [
+    4,
+    4
+   ],
+   "direction": "right",
+   "k": 2,
+   "planned_cell": [
+    6,
+    4
+   ],
+   "candidates": 256,
+   "grow_s": 34.39859628677368,
+   "settle_s": 0.9155018329620361,
+   "steps": 411,
+   "trials": 48,
+   "reached": 16,
+   "reached_flagged": 0,
+   "reached_crooked": 2,
+   "touched_ring": 0,
+   "best_err_mm": 0.8349977407096518,
+   "ok": true,
+   "spawn_cell": [
+    0,
+    5
+   ],
+   "heading_deg": 13.1,
+   "first_contact": "wall",
+   "landed_cell": [
+    6,
+    4
+   ],
+   "moves_done": 1,
+   "grow_steps": 207,
+   "err_mm": 0.8349977407096518,
+   "final": [
+    [
+     714.8793334960938,
+     604.1737670898438,
+     -0.05528128519654274
+    ]
+   ],
+   "max_angle_deg": 5.183251695543787,
+   "final_angle_deg": 3.1673843278209346,
+   "flagged": false,
+   "kind": "straight",
+   "wall_stopped": true,
+   "depth": 1
+  },
+  {
+   "block": 0,
+   "cell": [
+    6,
+    4
+   ],
+   "direction": "down",
+   "k": 2,
+   "planned_cell": [
+    6,
+    6
+   ],
+   "candidates": 256,
+   "grow_s": 35.07609176635742,
+   "settle_s": 1.728952169418335,
+   "steps": 449,
+   "trials": 47,
+   "reached": 16,
+   "reached_flagged": 0,
+   "reached_crooked": 9,
+   "touched_ring": 0,
+   "best_err_mm": 0.0,
+   "ok": true,
+   "spawn_cell": [
+    0,
+    0
+   ],
+   "heading_deg": 337.1,
+   "first_contact": "wall",
+   "landed_cell": [
+    6,
+    6
+   ],
+   "moves_done": 1,
+   "grow_steps": 421,
+   "err_mm": 0.05910104650510449,
+   "final": [
+    [
+     714.9688110351562,
+     384.9497985839844,
+     -0.13026483356952667
+    ]
+   ],
+   "max_angle_deg": 7.531817791181372,
+   "final_angle_deg": 7.463625182507965,
+   "flagged": false,
+   "kind": "straight",
+   "wall_stopped": true,
+   "depth": 2
+  }
+ ],
+ "attempts": [
+  {
+   "block": 0,
+   "cell": [
+    4,
+    6
+   ],
+   "direction": "up",
+   "k": 2,
+   "planned_cell": [
+    4,
+    4
+   ],
+   "candidates": 242,
+   "grow_s": 32.64979887008667,
+   "settle_s": 2.009094476699829,
+   "steps": 371,
+   "trials": 48,
+   "reached": 15,
+   "reached_flagged": 0,
+   "reached_crooked": 12,
+   "touched_ring": 0,
+   "best_err_mm": 1.7240759004467447,
+   "ok": true,
+   "spawn_cell": [
+    2,
+    9
+   ],
+   "heading_deg": 68.9,
+   "first_contact": "wall",
+   "landed_cell": [
+    4,
+    4
+   ],
+   "moves_done": 1,
+   "grow_steps": 201,
+   "err_mm": 1.7774938616922444,
+   "final": [
+    [
+     495.1172790527344,
+     606.7736206054688,
+     0.09046480804681778
+    ]
+   ],
+   "max_angle_deg": 5.991040666321447,
+   "final_angle_deg": 5.183251695543787,
+   "flagged": false,
+   "kind": "straight",
+   "wall_stopped": true,
+   "depth": 0
+  },
+  {
+   "block": 0,
+   "cell": [
+    4,
+    4
+   ],
+   "direction": "right",
+   "k": 2,
+   "planned_cell": [
+    6,
+    4
+   ],
+   "candidates": 256,
+   "grow_s": 34.39859628677368,
+   "settle_s": 0.9155018329620361,
+   "steps": 411,
+   "trials": 48,
+   "reached": 16,
+   "reached_flagged": 0,
+   "reached_crooked": 2,
+   "touched_ring": 0,
+   "best_err_mm": 0.8349977407096518,
+   "ok": true,
+   "spawn_cell": [
+    0,
+    5
+   ],
+   "heading_deg": 13.1,
+   "first_contact": "wall",
+   "landed_cell": [
+    6,
+    4
+   ],
+   "moves_done": 1,
+   "grow_steps": 207,
+   "err_mm": 0.8349977407096518,
+   "final": [
+    [
+     714.8793334960938,
+     604.1737670898438,
+     -0.05528128519654274
+    ]
+   ],
+   "max_angle_deg": 5.183251695543787,
+   "final_angle_deg": 3.1673843278209346,
+   "flagged": false,
+   "kind": "straight",
+   "wall_stopped": true,
+   "depth": 1
+  },
+  {
+   "block": 0,
+   "cell": [
+    6,
+    4
+   ],
+   "direction": "down",
+   "k": 2,
+   "planned_cell": [
+    6,
+    6
+   ],
+   "candidates": 256,
+   "grow_s": 35.07609176635742,
+   "settle_s": 1.728952169418335,
+   "steps": 449,
+   "trials": 47,
+   "reached": 16,
+   "reached_flagged": 0,
+   "reached_crooked": 9,
+   "touched_ring": 0,
+   "best_err_mm": 0.0,
+   "ok": true,
+   "spawn_cell": [
+    0,
+    0
+   ],
+   "heading_deg": 337.1,
+   "first_contact": "wall",
+   "landed_cell": [
+    6,
+    6
+   ],
+   "moves_done": 1,
+   "grow_steps": 421,
+   "err_mm": 0.05910104650510449,
+   "final": [
+    [
+     714.9688110351562,
+     384.9497985839844,
+     -0.13026483356952667
+    ]
+   ],
+   "max_angle_deg": 7.531817791181372,
+   "final_angle_deg": 7.463625182507965,
+   "flagged": false,
+   "kind": "straight",
+   "wall_stopped": true,
+   "depth": 2
+  }
+ ],
+ "checkpoint": "checkpoints/spin8_manual.json",
+ "args": {
+  "envs": [
+   "envs/5b.json"
+  ],
+  "device": "cuda",
+  "mem_fraction": 0.7,
+  "tol": 25.0,
+  "max_candidates": 256,
+  "settle_candidates": 16,
+  "settle_steps": 150,
+  "max_grow_steps": 700,
+  "max_attempts": 400,
+  "max_final_angle": null,
+  "aim": true,
+  "n_headings": null,
+  "seed": 10,
+  "checkpoint": "checkpoints/spin8_manual.json",
+  "box_mass_scale": 1.0,
+  "obj_friction": null,
+  "out": "out/bench_overnight/runs/5b/s010",
+  "render": false
+ }
+}

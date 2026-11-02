@@ -1,0 +1,201 @@
+{
+ "name": "5d",
+ "category": "block_puzzle",
+ "description": "two blocks: the long block up into the pocket to clear the row, then the block right into the goal",
+ "board_mm": [
+  1210.0,
+  990.0
+ ],
+ "walls": [
+  {
+   "rect": [
+    330.0,
+    660.0,
+    660.0,
+    770.0
+   ],
+   "cells": [
+    3,
+    2,
+    5,
+    2
+   ]
+  },
+  {
+   "rect": [
+    330.0,
+    440.0,
+    440.0,
+    660.0
+   ],
+   "cells": [
+    3,
+    3,
+    3,
+    4
+   ]
+  },
+  {
+   "rect": [
+    550.0,
+    440.0,
+    660.0,
+    660.0
+   ],
+   "cells": [
+    5,
+    3,
+    5,
+    4
+   ]
+  },
+  {
+   "rect": [
+    660.0,
+    440.0,
+    990.0,
+    550.0
+   ],
+   "cells": [
+    6,
+    4,
+    8,
+    4
+   ]
+  },
+  {
+   "rect": [
+    880.0,
+    220.0,
+    990.0,
+    440.0
+   ],
+   "cells": [
+    8,
+    5,
+    8,
+    6
+   ]
+  },
+  {
+   "rect": [
+    330.0,
+    220.0,
+    440.0,
+    330.0
+   ],
+   "cells": [
+    3,
+    6,
+    3,
+    6
+   ]
+  },
+  {
+   "rect": [
+    550.0,
+    220.0,
+    880.0,
+    330.0
+   ],
+   "cells": [
+    5,
+    6,
+    7,
+    6
+   ]
+  }
+ ],
+ "boxes": [
+  {
+   "center": [
+    605.0,
+    385.0
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    98.0
+   ],
+   "mass_kg": 0.503
+  },
+  {
+   "center": [
+    495.0,
+    330.0
+   ],
+   "angle_deg": 0.0,
+   "size": [
+    98.0,
+    208.0
+   ],
+   "mass_kg": 1.068
+  }
+ ],
+ "start": {
+  "xy": [
+   605.0,
+   55.0
+  ],
+  "heading_deg": 90.0
+ },
+ "goal": {
+  "type": "box",
+  "box": 0,
+  "center": [
+   825.0,
+   385.0
+  ],
+  "radius": 25.0
+ },
+ "grid": {
+  "cell_mm": 110.0,
+  "rows": [
+   "ooooooooooo",
+   "o.........o",
+   "o..###....o",
+   "o..#.#....o",
+   "o..#.####.o",
+   "o...RB.G#.o",
+   "o..#R####.o",
+   "o.........o",
+   "ooooooooooo"
+  ],
+  "block": [
+   5,
+   5
+  ],
+  "blocks": [
+   {
+    "cells": [
+     [
+      5,
+      5
+     ]
+    ]
+   },
+   {
+    "cells": [
+     [
+      4,
+      5
+     ],
+     [
+      4,
+      6
+     ]
+    ]
+   }
+  ],
+  "goal": [
+   7,
+   5
+  ],
+  "n_headings": 16,
+  "spawn": "ring"
+ },
+ "planner": {
+  "max_bodies": 56
+ },
+ "notes": "110 mm cells (12 mm tolerance around the 98 mm block); 7 wall rectangles for 16 wall cells"
+}

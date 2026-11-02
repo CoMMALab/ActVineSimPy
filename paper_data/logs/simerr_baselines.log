@@ -1,0 +1,73 @@
+pbd_only                 contact_train      loss   110.9  shape   44.3 mm  box   63.6 mm  box turn  15.5 deg
+    vine_block_01          shape   55.5  box  106.4  turn  28.1 deg
+    vine_block_02          shape   62.3  box   77.1  turn  19.5 deg
+    vine_block_03          shape   36.1  box   29.5  turn  11.1 deg
+    vine_block_04          shape   60.8  box  132.3  turn  15.3 deg
+    vine_block_05          shape   56.3  box   39.1  turn  19.5 deg
+    vine_block_07          shape   48.6  box   19.6  turn   0.3 deg
+    vine_block_08          shape   45.6  box   61.5  turn  12.8 deg
+    vine_block_09          shape   56.9  box   88.6  turn  19.6 deg
+    vine_block_10          shape   60.1  box  118.9  turn  27.7 deg
+    vine_block_11          shape   24.7  box   15.9  turn   9.4 deg
+    block_block_01         shape   38.8  box   56.5  turn  14.6 deg
+    block_block_02         shape   38.8  box  104.2  turn   4.9 deg
+    block_block_03         shape   97.2  box  148.1  turn  28.8 deg
+    block_block_04         shape   39.4  box  159.0  turn  18.9 deg
+    block_block_05         shape   76.3  box   74.9  turn  21.7 deg
+    block_block_06         shape   81.1  box  152.3  turn  26.1 deg
+    block_block_07         shape   60.2  box   83.8  turn  23.9 deg
+    block_block_09         shape   23.9  box   22.4  turn  18.4 deg
+    block_wall_02          shape   28.9  box   20.9  turn  13.9 deg
+    block_wall_03          shape   25.5  box   38.0  turn   9.2 deg
+    block_wall_04          shape   22.7  box   13.4  turn   3.8 deg
+    block_wall_05          shape   27.3  box   45.0  turn   7.2 deg
+    block_wall_06          shape   21.5  box   16.6  turn   6.3 deg
+    block_wall_08          shape   52.5  box   74.8  turn  22.5 deg
+    block_wall_09          shape   36.2  box   13.9  turn  14.7 deg
+    block_wall_10          shape   36.6  box   45.6  turn  14.8 deg
+    block_wall_11          shape   19.1  box   25.1  turn   9.3 deg
+    block_wall_12          shape   23.7  box   19.5  turn  14.5 deg
+    block_wall_13          shape   29.0  box   42.5  turn  11.6 deg
+pbd_only                 contact_val        loss   122.0  shape   37.4 mm  box   82.4 mm  box turn  13.3 deg
+    vine_block_06          shape   50.0  box   85.6  turn  21.8 deg
+    block_block_08         shape   45.3  box  132.0  turn   6.6 deg
+    block_wall_07          shape   16.8  box   29.5  turn  11.6 deg
+base_pbd_brick           contact_train      loss    76.3  shape   23.7 mm  box   49.6 mm  box turn  13.4 deg
+    vine_block_01          shape   24.5  box   71.6  turn  11.2 deg
+    vine_block_02          shape   48.0  box   73.0  turn  20.2 deg
+    vine_block_03          shape   35.8  box   28.4  turn  10.5 deg
+    vine_block_04          shape   23.9  box   76.9  turn  12.6 deg
+    vine_block_05          shape   21.6  box   10.8  turn  10.3 deg
+    vine_block_07          shape   46.7  box   19.5  turn   0.5 deg
+    vine_block_08          shape   21.6  box   47.5  turn   3.7 deg
+    vine_block_09          shape   50.3  box   78.6  turn  14.5 deg
+    vine_block_10          shape   24.6  box   29.1  turn  17.8 deg
+    vine_block_11          shape   21.8  box   11.0  turn   5.7 deg
+    block_block_01         shape   13.5  box   32.3  turn  10.9 deg
+    block_block_02         shape   19.3  box   76.4  turn  15.8 deg
+    block_block_03         shape   54.8  box   80.9  turn  33.0 deg
+    block_block_04         shape   24.6  box  138.9  turn  18.6 deg
+    block_block_05         shape   47.3  box   54.8  turn  19.9 deg
+    block_block_06         shape   18.1  box  109.0  turn  13.2 deg
+    block_block_07         shape   20.5  box   50.5  turn  19.2 deg
+    block_block_09         shape   12.1  box   15.0  turn  13.2 deg
+    block_wall_02          shape   16.1  box   25.4  turn  18.1 deg
+    block_wall_03          shape   10.1  box   29.1  turn  22.2 deg
+    block_wall_04          shape   16.6  box   34.0  turn   3.2 deg
+    block_wall_05          shape    7.8  box   21.7  turn  16.3 deg
+    block_wall_06          shape   15.3  box   14.9  turn   6.3 deg
+    block_wall_08          shape   32.6  box  106.7  turn  19.0 deg
+    block_wall_09          shape   14.3  box   40.2  turn   5.0 deg
+    block_wall_10          shape   11.2  box   56.0  turn   9.0 deg
+    block_wall_11          shape   11.5  box   17.9  turn  17.9 deg
+    block_wall_12          shape   15.9  box   34.2  turn  18.9 deg
+    block_wall_13          shape    5.8  box   54.2  turn   2.8 deg
+base_pbd_brick           contact_val        loss    70.3  shape   15.9 mm  box   52.4 mm  box turn   9.0 deg
+    vine_block_06          shape   22.1  box   66.8  turn  10.6 deg
+    block_block_08         shape   11.9  box   69.2  turn  10.8 deg
+    block_wall_07          shape   13.7  box   21.2  turn   5.6 deg
+| Checkpoint | contact_train: shape / box (mm) | contact_val: shape / box (mm) |
+|---|---|---|
+| pbd_only | 44.3 / 63.6 | 37.4 / 82.4 |
+| base_pbd_brick | 23.7 / 49.6 | 15.9 / 52.4 |
+done

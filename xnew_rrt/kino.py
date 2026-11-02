@@ -50,6 +50,24 @@ PLANNERS = ("rrt", "rrt_grid", "kpiece", "kinopax", "rrt_grid_shape", "kinopax_s
 EDGE_STRIDE = 3        # keep every 3rd sim state along an edge (and the last); enough to draw and replay
 
 
+class BatchNodeIndex(NodeIndex):
+    '''NodeIndex with all of a batch's nearest-node queries in one vectorized pass (the same answers
+    as nearest() one at a time: the tree does not change between them). Needed once every edge adds
+    several nodes (node_every) and the tree reaches hundreds of thousands of them.'''
+
+    def nearest_many(self, samples, chunk=64):
+        n = len(self.nodes)
+        f = self.features[:n] * self.weights
+        out = []
+        for i in range(0, len(samples), chunk):
+            q = np.asarray(samples[i:i + chunk]) * self.weights                   # (c, dim)
+            d = (q ** 2).sum(1)[:, None] - 2 * q @ f.T + (f ** 2).sum(1)[None]     # (c, n)
+            d[:, ~self.expandable[:n]] = np.inf
+            j = d.argmin(1)
+            out += [self.nodes[k] if np.isfinite(d[r, k]) else None for r, k in enumerate(j)]
+        return out
+
+
 class Projection:
     '''shape: the fine cells also cut the vine's body points at 1/3 and 2/3 of its length (at
     2 * cell_mm), so states with the same tip but a different body path are not duplicates.'''
@@ -97,7 +115,7 @@ class Planner:
         self.np_rng = np.random.default_rng(rng.randrange(2 ** 32))
         self.goal_distance, self.goal_bias = goal_distance, goal_bias
         self.prune = name in ("rrt_grid", "kinopax")
-        self.index = NodeIndex(sim.num_objs, box_weight) if name.startswith("rrt") else None
+        self.index = BatchNodeIndex(sim.num_objs, box_weight) if name.startswith("rrt") else None
         self.fine = {}          # fine cell -> its node (pruning planners)
         self.regions = {}       # coarse cell -> Region
         self.region_of = {}     # node id -> coarse key
@@ -153,8 +171,8 @@ class Planner:
     # ---- choosing what to expand
     def choose(self, n):
         if self.index is not None:
-            return [self.index.nearest(tip_block_rrt.sample_tip_and_boxes(self.sim, self.rng, self.goal_bias))
-                    for _ in range(n)]
+            return self.index.nearest_many([tip_block_rrt.sample_tip_and_boxes(self.sim, self.rng, self.goal_bias)
+                                            for _ in range(n)])
         keys = [k for k, r in self.regions.items() if any(nd.expandable for nd in r.nodes)]
         if not keys:
             return []
@@ -179,12 +197,19 @@ class Planner:
         return out
 
 
-def plan(sim: Sim, planner_name, goal_test, goal_distance, rng, batch_size=256, steps_per_edge=25,
+def plan(sim: Sim, planner_name, goal_test, goal_distance, rng, batch_size=256, steps_per_edge=25, min_steps_per_edge=None,
          max_curvature=3.33, goal_bias=0.1, straight_prob=0.0, max_edges=20000, time_limit_s=None,
-         unlock_mm=None, cell_mm=15.0, heading_deg=30.0, coarse=5, on_iteration=None, box_weight=1.0):
+         unlock_mm=None, cell_mm=15.0, heading_deg=30.0, coarse=5, on_iteration=None, box_weight=1.0,
+         edge_valid=None, node_every=None):
     '''
     Grow a tree with one of PLANNERS until the goal, max_edges simulated edges or time_limit_s.
     Returns (tree, best node, stats). on_iteration(it, tree, best) is called after every batch.
+    edge_valid(states) -> bool: an edge it rejects is dropped like a pruned one (counted in stats['invalid']).
+    min_steps_per_edge: each edge grows for a random number of steps in [min_steps_per_edge, steps_per_edge]
+    (short edges can make the small corrections that land a block); None: always steps_per_edge.
+    node_every: also make every node_every-th state along an edge a node (a chain, each the child of the
+    one before, as master's SST do_maximal), so one batch of rollouts adds several nodes per edge; an
+    edge that fails edge_valid keeps its nodes up to the failing piece. None: only the last state.
     '''
     proj = Projection(sim, cell_mm, heading_deg, coarse, shape=planner_name.endswith("_shape"))
     planner = Planner(planner_name, sim, proj, rng, goal_distance, goal_bias, box_weight)
@@ -196,7 +221,7 @@ def plan(sim: Sim, planner_name, goal_test, goal_distance, rng, batch_size=256, 
     resets.add(start)
 
     best, best_dist = tree.root, goal_distance(start)
-    stats = dict(planner=planner_name, iterations=0, edges=0, failed_rollouts=0, pruned=0, resets=0,
+    stats = dict(planner=planner_name, iterations=0, edges=0, failed_rollouts=0, pruned=0, invalid=0, resets=0,
                  stopped="edge budget", edges_to_goal=None, seconds_to_goal=None)
     t0 = time.time()
     it = 0
@@ -209,7 +234,9 @@ def plan(sim: Sim, planner_name, goal_test, goal_distance, rng, batch_size=256, 
             break
         controls = [0.0 if rng.random() < straight_prob else rng.uniform(-max_curvature, max_curvature)
                     for _ in parents]
-        results = sim.rollout_batch([p.info for p in parents], controls, steps_per_edge, stop_fn=goal_test)
+        steps = steps_per_edge if min_steps_per_edge is None else \
+            [rng.randint(min_steps_per_edge, steps_per_edge) for _ in parents]
+        results = sim.rollout_batch([p.info for p in parents], controls, steps, stop_fn=goal_test)
         stats["edges"] += len(parents)
 
         new = []
@@ -222,19 +249,28 @@ def plan(sim: Sim, planner_name, goal_test, goal_distance, rng, batch_size=256, 
                 if planner.index is None:
                     planner.expanded(parent, False)
                 continue
-            kept = planner.accept(states[-1])
+            k = node_every or len(states)
+            node, carry, kept = parent, [], False
+            for piece in (states[i:i + k] for i in range(0, len(states), k)):
+                if edge_valid is not None and not edge_valid(piece):
+                    stats["invalid"] += 1
+                    break
+                carry += piece
+                if not planner.accept(piece[-1]):
+                    stats["pruned"] += 1
+                    continue                    # not a node; its states go into the next node's edge
+                edge = carry[EDGE_STRIDE - 1::EDGE_STRIDE]
+                if not edge or edge[-1] is not carry[-1]:
+                    edge = edge + [carry[-1]]
+                node = tree.add_node(node, carry[-1], control=c, edge=edge)
+                node.expandable = sim.can_grow(node.info)
+                planner.register(node)
+                new.append(node)
+                carry, kept = [], True
+                if tree.goal_node is not None:
+                    break
             if planner.index is None:
                 planner.expanded(parent, kept)
-            if not kept:
-                stats["pruned"] += 1
-                continue
-            edge = states[EDGE_STRIDE - 1::EDGE_STRIDE]
-            if not edge or edge[-1] is not states[-1]:
-                edge = edge + [states[-1]]
-            child = tree.add_node(parent, states[-1], control=c, edge=edge)
-            child.expandable = sim.can_grow(child.info)
-            planner.register(child)
-            new.append(child)
             if tree.goal_node is not None:
                 break
 

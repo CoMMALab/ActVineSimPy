@@ -55,7 +55,9 @@ def static_rows(params):
     CONTACT_ROWS nearest contact rows. Live contact rows within the 60 mm cull measured 8-40 for 1-2
     boxes; only those within a few mm can bind in one step (batched_qp.SAFE).'''
     n_obj = int(params.obj_mass.shape[0])
-    return n_obj * (bq.N_XY + bq.N_RC) + CONTACT_ROWS
+    # vine-box (and box-wall, box-box) friction doubles the contact rows
+    friction = 2 if max(float(params.vine_friction), float(params.wall_friction), float(params.box_friction)) > 0 else 1
+    return n_obj * (bq.N_XY + bq.N_RC) + friction * CONTACT_ROWS
 
 
 class GraphStep:

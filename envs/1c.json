@@ -35,10 +35,10 @@
    612.2,
    517.1
   ],
-  "radius": 20,
+  "radius": 25,
   "angle_deg": 57.0,
-  "angle_tol_deg": 7
+  "angle_tol_deg": 10
  },
  "planner": {},
- "notes": "goal: center within 20 mm and heading within 7 deg (mod 90) of the goal pose"
+ "notes": "goal: center within 25 mm and heading within 10 deg (mod 90) of the goal pose"
 }

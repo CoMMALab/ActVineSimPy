@@ -22,7 +22,8 @@ import argparse, datetime, json, os, sys
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIR = os.path.join(REPO, "checkpoints")
 FIELDS = ("max_bodies", "grow_rate_mps", "vine_radius_m", "seg_len_m", "stiffness_mode", "grow_force_n",
-          "seg_mass_kg", "joint_stiffness", "ang_damp", "seg_inertia_kgm2", "obj_friction")
+          "seg_mass_kg", "joint_stiffness", "ang_damp", "seg_inertia_kgm2", "obj_friction", "vine_friction",
+          "pressure_pa", "wrinkle_scale", "obj_spin", "wall_friction", "box_friction")
 
 
 def make(name, sim, description="", parent=None, trained_on=(), fit=None, metrics=None):

@@ -1,0 +1,47 @@
+contact_envfric_mu2  long_01: 54/54 frames, real block moves at 38, shape 28.2 mm, box 39.8 mm
+contact_envfric_mu2  long_02: 47/47 frames, real block moves at 36, shape 25.3 mm, box 32.6 mm
+contact_envfric_mu2  long_03: 43/43 frames, real block moves at 34, shape 11.4 mm, box 14.0 mm
+contact_envfric_mu2  long_04: 39/39 frames, real block moves at 29, shape 45.9 mm, box 37.1 mm
+contact_envfric_mu2  long_05: 45/45 frames, real block moves at 37, shape 11.8 mm, box 11.9 mm
+contact_envfric_mu2  long_06: 9/37 frames, real block moves at 24, shape 5.8 mm, box 0.0 mm
+contact_envfric_mu2  long_07: 16/42 frames, real block moves at 25, shape 44.8 mm, box 0.1 mm
+contact_envfric_mu2  long_08: 41/41 frames, real block moves at 28, shape 10.6 mm, box 20.3 mm
+contact_envfric_mu2  long_09: 29/29 frames, real block moves at 17, shape 24.6 mm, box 30.0 mm
+contact_envfric_mu2  long_10: 38/38 frames, real block moves at 25, shape 11.6 mm, box 31.8 mm
+contact_launchfix    long_01: 54/54 frames, real block moves at 38, shape 146.3 mm, box 28.4 mm
+contact_launchfix    long_02: 47/47 frames, real block moves at 36, shape 33.3 mm, box 36.8 mm
+contact_launchfix    long_03: 43/43 frames, real block moves at 34, shape 13.2 mm, box 17.6 mm
+contact_launchfix    long_04: 39/39 frames, real block moves at 29, shape 49.3 mm, box 38.3 mm
+contact_launchfix    long_05: 45/45 frames, real block moves at 37, shape 16.0 mm, box 13.7 mm
+contact_launchfix    long_06: 9/37 frames, real block moves at 24, shape 5.8 mm, box 0.0 mm
+contact_launchfix    long_07: 10/42 frames, real block moves at 25, shape 7.0 mm, box 0.0 mm
+contact_launchfix    long_08: 41/41 frames, real block moves at 28, shape 11.4 mm, box 20.0 mm
+contact_launchfix    long_09: 29/29 frames, real block moves at 17, shape 25.4 mm, box 32.0 mm
+contact_launchfix    long_10: 38/38 frames, real block moves at 25, shape 12.8 mm, box 32.4 mm
+base_pbd_brick       long_01: 54/54 frames, real block moves at 38, shape 81.9 mm, box 28.4 mm
+base_pbd_brick       long_02: 47/47 frames, real block moves at 36, shape 25.2 mm, box 11.6 mm
+base_pbd_brick       long_03: 43/43 frames, real block moves at 34, shape 11.5 mm, box 7.4 mm
+base_pbd_brick       long_04: 39/39 frames, real block moves at 29, shape 118.6 mm, box 28.7 mm
+base_pbd_brick       long_05: 45/45 frames, real block moves at 37, shape 11.6 mm, box 5.3 mm
+base_pbd_brick       long_06: 9/37 frames, real block moves at 24, shape 5.8 mm, box 0.0 mm
+base_pbd_brick       long_07: 15/42 frames, real block moves at 25, shape 39.7 mm, box 0.1 mm
+base_pbd_brick       long_08: 41/41 frames, real block moves at 28, shape 10.9 mm, box 15.8 mm
+base_pbd_brick       long_09: 29/29 frames, real block moves at 17, shape 24.7 mm, box 21.5 mm
+base_pbd_brick       long_10: 38/38 frames, real block moves at 25, shape 11.7 mm, box 7.8 mm
+pbd_only             long_01: 54/54 frames, real block moves at 38, shape 149.3 mm, box 28.4 mm
+pbd_only             long_02: 47/47 frames, real block moves at 36, shape 72.4 mm, box 17.9 mm
+pbd_only             long_03: 43/43 frames, real block moves at 34, shape 79.1 mm, box 23.3 mm
+pbd_only             long_04: 39/39 frames, real block moves at 29, shape 110.4 mm, box 28.7 mm
+pbd_only             long_05: 45/45 frames, real block moves at 37, shape 86.1 mm, box 17.0 mm
+pbd_only             long_06: 37/37 frames, real block moves at 24, shape 172.6 mm, box 18.6 mm
+pbd_only             long_07: 42/42 frames, real block moves at 25, shape 210.8 mm, box 40.5 mm
+pbd_only             long_08: 41/41 frames, real block moves at 28, shape 29.1 mm, box 24.1 mm
+pbd_only             long_09: 29/29 frames, real block moves at 17, shape 39.9 mm, box 43.9 mm
+pbd_only             long_10: 38/38 frames, real block moves at 25, shape 49.2 mm, box 23.9 mm
+| Checkpoint | vine [mm] | block [mm] | frames reached | reaches block |
+|---|---|---|---|---|
+| contact_envfric_mu2 | 22.0 | 21.8 | 87% | 8/10 |
+| contact_launchfix | 32.0 | 21.9 | 86% | 8/10 |
+| base_pbd_brick | 34.2 | 12.7 | 87% | 8/10 |
+| pbd_only | 99.9 | 26.6 | 100% | 10/10 |
+done
