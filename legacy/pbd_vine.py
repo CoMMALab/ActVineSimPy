@@ -463,7 +463,7 @@ jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0)
 
     
 # from pbd_render import *
-from render import _compute_vine_points, init_vis, draw_dead_state, draw_live_state, render
+from legacy.render import _compute_vine_points, init_vis, draw_dead_state, draw_live_state, render
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ Reference rollouts from master's quasi-static PBD vine (the ActVine paper sim), 
 fit_to_master.py to fit dvsim's vine parameters.
 
 Master runs on jax, so this script does NOT run in the `vine` env, and it runs master's code
-unchanged from a copy of the branch (the working tree's sPAM/ differs from master):
+unchanged from a copy of the branch (this branch keeps only part of it, in legacy/):
 
     git archive master | tar -x -C /tmp/master_src
     <python with jax+flax+jaxopt> xnew_rrt/master_reference.py --master-src /tmp/master_src

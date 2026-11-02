@@ -4,7 +4,7 @@ Draw every environment file to a picture: envs/<name>.txt -> envs/vis/<name>.png
 Shows the static obstacles, the movable boxes (labelled with their mass), the start pose
 (with its heading) and the goal region, in the file's units times its `scale:`.
 
-This has its own small parser instead of kinodynamic/env_loader.py, because the older env files
+This has its own small parser instead of legacy/env_loader.py, because the older env files
 (one-number `bound:`, circle / line obstacles) are in formats that loader does not read.
 
 Run from the repo root:
@@ -126,7 +126,7 @@ def draw_env(env_path, out_dir):
     if env["dynamic"]:
         notes += f", {len(env['dynamic'])} movable"
     if env["ob_type"] == "tube":
-        notes += " (the tube itself is hard-coded in pbd_vine.py, not in this file)"
+        notes += " (the tube itself is hard-coded in legacy/pbd_vine.py, not in this file)"
     ax.set_title(f"{env['name']}   |   {notes}   |   start heading {math.degrees(heading):.0f} deg, "
                  + (f"goal radius {goal_radius:g}" if show_goal_disc else "no goal radius in file"),
                  color=viz.INK, fontsize=10, loc="left")

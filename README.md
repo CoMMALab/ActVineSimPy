@@ -37,12 +37,10 @@ the live code for the pushing work.
 | `dvsim/` | **live** | Torch impulse/QP simulator with movable boxes. See below. |
 | `xnew_rrt/` | **live** | RRT over `dvsim`, tree visualizer, single-rollout viewer. |
 | `video/` | **live** | Vine centerlines and box poses from top-down videos, for system identification. See [Video tracking](#video-tracking). |
-| `sPAM/` | used | sPAM actuator model. `torch_*.py` are the Torch ports (`torch_nns.py` = neural surrogate, `torch_nns_usage.py` = bend radius -> pressure / actuator length). The non-`torch_` files are the JAX originals and need `jax`. |
-| `envs/` | **live** | The sim environments, `envs/<name>.json` (written by `envs/make_envs.py`; the block puzzles 5a–5c by `envs/make_puzzles.py`), pictures in `envs/vis/`. See [Environments](#environments). The old `envs/*.txt` files are in `envs/archive/`; master's scripts that default to them (`kinodynamic/`, `experiments/`, `geometric/`) need `--env envs/archive/...`. |
-| `pbd_vine.py`, `render.py`, `kinodynamic/`, `geometric/`, `experiments/` | from master | ActVine PBD simulator, pygame renderer, SST planner, biarc RRT*, paper experiments. Identical to `master` on this branch, except `kinodynamic/env_loader.py`, which also parses `dynamic_obstacles:`. Needs `jax`, which the current `vine` env does not have. |
+| `envs/` | **live** | The sim environments, `envs/<name>.json` (written by `envs/make_envs.py`; the block puzzles 5a–5c by `envs/make_puzzles.py`), pictures in `envs/vis/`. See [Environments](#environments). The old `envs/*.txt` files are in `envs/archive/`; `legacy/env_loader.py` still reads them. |
+| `legacy/` | used | The parts of master's code still in use: `pbd_vine.py` (ActVine PBD simulator, jax; `xnew_rrt/bench_batch.py --pbd`) with its pygame renderer `render.py`, `env_loader.py` (reads the old `envs/archive/*.txt`, also `dynamic_obstacles:`), and `sPAM/` (the Torch sPAM surrogate `torch_nns.py` and its trained checkpoint, used by `dvsim/spam.py`). Master's SST planner, biarc RRT*, paper experiments and JAX sPAM are on `master`. |
 | `checkpoints/` | **live** | Fitted simulators, one json of physical parameters each, with what they were trained on and their scores. See [Checkpoints](#checkpoints-fitted-simulators). |
 | `out/` | outputs | Not tracked. `out/solutions/`: the latest solution or best attempt for each env (1a–5d), replaced on every run of `run_envs.py` / `block_puzzle.py`, one folder per kind of file so all envs can be viewed side by side: `videos/<env>.solution.mp4`, `gifs/` (solution and tree), `images/` (env, plan, pushes, final frames), `results/<env>.result.json` and `summary.json`, `data/` (tree logs), `logs/<env>.run.log` (`xnew_rrt/outputs.py`). `out/archive/`: solutions worth keeping (`3a_border_sweep/`). `out/video/`: video tracks. `out/fit_sim/`: fit logs and checkpoint comparisons. `out/ablation/`, `out/bench/`: the data behind the tables below. |
-| `cache/`, `pics/`, `solution.png`, `title.gif`, `x_progress_log.txt` | leftovers | Outputs and notes from earlier runs. |
 
 ### `dvsim/`: the simulator
 
@@ -342,7 +340,7 @@ conda activate actvine
 ```
 
 One env for everything: dvsim and `xnew_rrt/` (`torch`, `cvxpy`, `cvxpylayers`, ...) and master's
-jax code (`pbd_vine.py`, `sPAM/`, `kinodynamic/`: `jax`, `flax`, `optax`, `jaxopt`, `ompl`,
+jax code (`legacy/pbd_vine.py`, and `xnew_rrt/master_reference.py` on a copy of `master`: `jax`, `flax`, `optax`, `jaxopt`, `ompl`,
 `pygame`), plus `opencv-python-headless` and `scikit-image` for `video/`. Activating it makes jax allocate GPU memory only as needed, capped at 20% (the GPU is
 shared); `JAX_PLATFORMS=cpu` keeps jax off it entirely. `qpth`, the optional batched GPU QP
 solver, is not included because it no longer builds with current setuptools. The older `vine`
@@ -1234,8 +1232,8 @@ Per scenario, 5 N growth, previous -> fitted: straight 1.7 -> 1.7 mm, 1 1/m 6.8 
 
 ## Bugs found on master
 
-Found while generating the reference. Both are fixed on `master` in `befe1e1`; this branch's
-`sPAM/` still has the undergrad's copies (see the end of item 2).
+Found while generating the reference. Both are fixed on `master` in `befe1e1`; this branch
+keeps only the Torch surrogate (`legacy/sPAM/`).
 
 1. **The sPAM surrogate does not load.** The only checkpoint committed is
    `sPAM/model_.../checkpoint_100.orbax-checkpoint-tmp-0`, an orbax save that never finished.
@@ -1246,13 +1244,12 @@ Found while generating the reference. Both are fixed on `master` in `befe1e1`; t
    any commanded curvature below about 3. The fix replaces it with a finished checkpoint, trained
    with master's own training functions and settings on the committed `data.csv` (error 0.021 /
    0.012), and `get_or_train_model` now raises when there is no finished checkpoint. The torch
-   port on this branch (`sPAM/model_.../checkpoint.pt`) is fine (0.021 / 0.014).
+   port on this branch (`legacy/sPAM/model_.../checkpoint.pt`) is fine (0.021 / 0.014).
 2. **The designed rest length is doubled.** `sPAM.nns_usage.solve` picks the actuator at rest
    length `l0` but returns `l0 * 2.0`, and `solve_fwd` evaluates the actuator at the length it
    is given. The vine then settles at the wrong curvature: commanding 1, 2 and 3.33 1/m gives
    2.9, 1.9 and 1.0 1/m. Returning `l0` as designed puts the equilibrium within 0.02 1/m of the
-   command for 0.5-3.33 1/m. On this branch `sPAM/nns_usage.py` and `sPAM/torch_nns_usage.py`
-   still double it; nothing in `dvsim` uses either.
+   command for 0.5-3.33 1/m. `dvsim` does not use `solve`.
 
 Results produced by master's planner before `befe1e1` depend on how both of these behaved when they were run.
 

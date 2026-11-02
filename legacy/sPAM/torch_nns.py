@@ -17,8 +17,8 @@ import numpy as np
 # from flax.linen import initializers
 # import optax
 # import jaxopt
-from sPAM.torch_ellip import F, E
-from sPAM.torch_spam import l_m_to_phi_eps, params
+from legacy.sPAM.torch_ellip import F, E
+from legacy.sPAM.torch_spam import l_m_to_phi_eps, params
 import pandas as pd
 
 import torch
@@ -282,7 +282,7 @@ def get_or_train_model(params, epochs=100, learning_rate=5e-2, batch_size=256, d
     """
 
     # Define checkpoint directory and name
-    ckpt_dir = './sPAM'
+    ckpt_dir = os.path.dirname(os.path.abspath(__file__))
     ckpt_name = f"model_a_{params.a}_Rc_{params.R_c}_R_act_max_{params.R_act_max}_l0_{params.min_l_0}-{params.max_l_0}"
     ckpt_path = os.path.join(ckpt_dir, ckpt_name)
     ckpt_path = os.path.abspath(ckpt_path)

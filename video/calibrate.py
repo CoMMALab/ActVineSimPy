@@ -388,7 +388,7 @@ def walls_mm(trial):
     if "walls_mm" in trial:
         walls = trial["walls_mm"]
     elif trial.get("env"):
-        from kinodynamic.env_loader import load_box_config
+        from legacy.env_loader import load_box_config
         walls = load_box_config(trial["env"])["obstacles"]
     else:
         walls = []

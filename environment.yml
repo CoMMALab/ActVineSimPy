@@ -1,5 +1,5 @@
 # Everything this repo needs, in one env: dvsim (torch + cvxpylayers), the planners and
-# visualizers in xnew_rrt/, and master's jax code (pbd_vine.py, sPAM/, kinodynamic/).
+# visualizers in xnew_rrt/, and master's jax code (legacy/pbd_vine.py, xnew_rrt/master_reference.py).
 #
 #   conda env create -f environment.yml
 #   conda activate actvine

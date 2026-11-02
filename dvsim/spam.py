@@ -28,8 +28,8 @@ P_ACT_MAX = 35e3   # Pa, the pressure limit master's inverse model uses
 def _load():
     global _predict, _act_params
     if _predict is None:
-        from sPAM.torch_nns import get_or_train_model, get_prediction_function
-        from sPAM.torch_spam import params as act_params
+        from legacy.sPAM.torch_nns import get_or_train_model, get_prediction_function
+        from legacy.sPAM.torch_spam import params as act_params
         scaling_info, model = get_or_train_model(act_params)
         _predict = get_prediction_function(scaling_info, model)
         _act_params = act_params

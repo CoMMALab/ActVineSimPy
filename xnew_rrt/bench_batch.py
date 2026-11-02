@@ -10,7 +10,7 @@ Run from the repo root (CPU; the sim never uses the GPU):
 Writes out/bench_batch.json (--out) and prints a table. On CUDA the process is capped at half the
 GPU's memory.
 
-For comparison, --pbd times master's soft-constraint JAX sim (pbd_vine.py, what kinodynamic/sst.py
+For comparison, --pbd times master's soft-constraint JAX sim (legacy/pbd_vine.py, what master's kinodynamic/sst.py
 plans with) on the GPU instead, capped at half its memory: one jitted, vmapped step of the whole
 batch, a vine of the same max_bodies among a few walls, no movable boxes (it has none), with a
 linear stand-in for the sPAM bending model:
@@ -66,7 +66,7 @@ def bench_pbd(batches, steps, max_bodies=60):
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.5")
     import jax, jax.numpy as jnp
-    from pbd_vine import VineParams, step_vine_batched
+    from legacy.pbd_vine import VineParams, step_vine_batched
     walls = [[-20, 20, 10, 80], [40, -40, 70, 30], [130, -20, 160, 80], [220, -40, 250, 30],
              [10, 60, 450, 80], [10, -60, 450, -40]]
     params = VineParams(max_bodies=max_bodies, body_length=12.0, radius=8.0, dt=1 / 10, grow_rate=20.0,

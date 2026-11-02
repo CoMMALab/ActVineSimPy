@@ -90,7 +90,7 @@ def trial_boxes(trial):
             out.append(dict(size_mm=tuple(b["size_mm"]), pose=pose,
                             mass_kg=b.get("mass_kg"), height_mm=b.get("height_mm", 0.0)))
     elif trial.get("env"):
-        from kinodynamic.env_loader import load_box_config
+        from legacy.env_loader import load_box_config
         cfg = load_box_config(trial["env"])
         for (x1, y1, x2, y2), (m,) in zip(cfg["dynamic_obstacles"], cfg["dynamic_object_masses"]):
             out.append(dict(size_mm=(abs(x2 - x1), abs(y2 - y1)), pose=((x1 + x2) / 2, (y1 + y2) / 2, 0.0),
@@ -106,7 +106,7 @@ def trial_base(trial, cal):
         heading = math.radians(b["heading_deg"]) if b.get("heading_deg") is not None else None
         return float(xy[0]), float(xy[1]), heading
     if trial.get("env"):
-        from kinodynamic.env_loader import load_box_config
+        from legacy.env_loader import load_box_config
         x, y, h = load_box_config(trial["env"])["start"]
         return x, y, h
     raise ValueError("the trial needs a base (or an env file with a start)")

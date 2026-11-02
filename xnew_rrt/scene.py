@@ -67,7 +67,7 @@ def default_scene():
 def load_scene(env_path):
     '''Build a Scene from an envs/*.txt file (mm in the file; `dynamic_obstacles:` are the
     movable boxes: x1 y1 x2 y2 mass_kg inertia -- the inertia column is ignored, dvsim derives it).'''
-    from kinodynamic.env_loader import load_box_config
+    from legacy.env_loader import load_box_config
     cfg = load_box_config(env_path)
     mm = 1e-3
     return Scene(walls_m=[[float(v) * mm for v in ob] for ob in cfg['obstacles']],

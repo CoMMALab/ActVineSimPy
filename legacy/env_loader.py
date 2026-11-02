@@ -372,7 +372,7 @@ if __name__ == "__main__":
     import sys
     import os
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from render import init_vis, render, draw_goal, clear_all_surfaces
+    from legacy.render import init_vis, render, draw_goal, clear_all_surfaces
     import pygame
     import time
     

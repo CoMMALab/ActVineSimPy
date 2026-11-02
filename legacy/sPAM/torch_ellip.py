@@ -2,7 +2,7 @@
 
 # import jax
 # import jax.numpy as jnp
-from sPAM.torch_carlson import rf, rd
+from legacy.sPAM.torch_carlson import rf, rd
 
 import torch
 

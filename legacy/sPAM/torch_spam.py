@@ -1,4 +1,4 @@
-from sPAM.torch_ellip import F, E
+from legacy.sPAM.torch_ellip import F, E
 from collections import namedtuple
 
 import torch
