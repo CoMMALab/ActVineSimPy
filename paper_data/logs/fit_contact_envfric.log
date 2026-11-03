@@ -1,0 +1,13 @@
+start (checkpoints/contact_launchfix.json): 62.6
+gen 0: best 61.8 at pressure_pa 2.11e+04, wrinkle_scale 1.12, ang_damp 0.0124, vine_friction 0.199, obj_friction 0.0615, obj_spin 2.97, wall_friction 0.359, box_friction 0.151  (all-time 61.8, 519 s)
+gen 1: best 60.1 at pressure_pa 1.43e+04, wrinkle_scale 0.691, ang_damp 0.0217, vine_friction 0.0473, obj_friction 0.0684, obj_spin 4.75, wall_friction 0.657, box_friction 0.156  (all-time 60.1, 786 s)
+gen 2: best 58.8 at pressure_pa 1.91e+04, wrinkle_scale 0.737, ang_damp 0.00935, vine_friction 0.0787, obj_friction 0.0521, obj_spin 4.6, wall_friction 2.45, box_friction 0.0711  (all-time 58.8, 1018 s)
+gen 3: best 56.4 at pressure_pa 1.5e+04, wrinkle_scale 1.04, ang_damp 0.0197, vine_friction 0.109, obj_friction 0.0639, obj_spin 3.81, wall_friction 4.01, box_friction 0.144  (all-time 56.4, 1248 s)
+gen 4: best 57.5 at pressure_pa 1.82e+04, wrinkle_scale 0.96, ang_damp 0.0197, vine_friction 0.122, obj_friction 0.0571, obj_spin 2.99, wall_friction 4.41, box_friction 0.0921  (all-time 56.4, 1478 s)
+gen 5: best 57.6 at pressure_pa 1.49e+04, wrinkle_scale 0.866, ang_damp 0.0195, vine_friction 0.0755, obj_friction 0.0758, obj_spin 3.47, wall_friction 1.74, box_friction 0.0867  (all-time 56.4, 1767 s)
+gen 6: best 56.1 at pressure_pa 1.46e+04, wrinkle_scale 0.693, ang_damp 0.0133, vine_friction 0.0983, obj_friction 0.0656, obj_spin 4.03, wall_friction 7.63, box_friction 0.107  (all-time 56.1, 1994 s)
+gen 7: best 55.0 at pressure_pa 1.56e+04, wrinkle_scale 0.721, ang_damp 0.0207, vine_friction 0.0846, obj_friction 0.0533, obj_spin 3.64, wall_friction 12.1, box_friction 0.0856  (all-time 55.0, 2379 s)
+gen 8: best 54.2 at pressure_pa 1.56e+04, wrinkle_scale 0.815, ang_damp 0.0187, vine_friction 0.102, obj_friction 0.0637, obj_spin 3.96, wall_friction 15, box_friction 0.0908  (all-time 54.2, 2903 s)
+gen 9: best 53.8 at pressure_pa 1.59e+04, wrinkle_scale 0.882, ang_damp 0.0185, vine_friction 0.114, obj_friction 0.0707, obj_spin 3.76, wall_friction 18.6, box_friction 0.0988  (all-time 53.8, 3392 s)
+wrote /home/yitian/vine-push/checkpoints/contact_envfric.json
+done

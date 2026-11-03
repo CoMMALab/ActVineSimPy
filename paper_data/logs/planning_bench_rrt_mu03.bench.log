@@ -116,3 +116,4 @@
 10-30 17:15:34 4c s6: exit 0, 53 s, success True, 4864 edges
 10-30 17:17:09 4d s6: exit 0, 95 s, success True, 3584 edges
 10-30 17:24:52 3b s6: killed after 463 s, other GPU processes [2503637]; requeued
+10-31 12:16:01 deadline reached while waiting

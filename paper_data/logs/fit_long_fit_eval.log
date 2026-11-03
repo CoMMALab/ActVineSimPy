@@ -1,0 +1,11 @@
+[W1031 12:20:14.158475545 Context.cpp:508] Warning: torch.backends.cuda.preferred_linalg_library is an experimental feature. If you see any error or unexpected behavior when this flag is set please file an issue on GitHub. (function operator())
+  long_train contact_envfric_mu2  long_01: 54/54 frames, vine 28.2, block 39.8, reaches block True
+  long_train contact_envfric_mu2  long_03: 43/43 frames, vine 11.4, block 14.0, reaches block True
+  long_train contact_envfric_mu2  long_04: 39/39 frames, vine 45.9, block 37.1, reaches block True
+  long_train contact_envfric_mu2  long_05: 45/45 frames, vine 11.8, block 11.9, reaches block True
+  long_train contact_envfric_mu2  long_06: 9/37 frames, vine 5.8, block 0.0, reaches block False
+  long_train contact_envfric_mu2  long_07: 16/42 frames, vine 44.8, block 0.1, reaches block False
+  long_train contact_envfric_mu2  long_08: 41/41 frames, vine 10.6, block 20.3, reaches block True
+  long_train contact_envfric_mu2  long_09: 29/29 frames, vine 24.6, block 30.0, reaches block True
+  long_train contact_envfric_mu2  long_10: 38/38 frames, vine 11.6, block 31.8, reaches block True
+long_train contact_envfric_mu2: vine 21.6 mm, block 20.5 mm, reaches block 7/9

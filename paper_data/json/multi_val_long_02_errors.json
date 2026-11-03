@@ -1,0 +1,49 @@
+{
+ "checkpoint": "checkpoints/long_fit.json",
+ "ref": "xnew_rrt/data/long.npz",
+ "trials": {
+  "long_02": {
+   "shape_mm": 16.177933870438892,
+   "box_mm": 15.287575817567872,
+   "box_deg": 3.200168804408823,
+   "frames_compared": 47,
+   "suspect_frames": [],
+   "window_matched": {
+    "vine_mm": 6.9725969484667445,
+    "box_mm": 5.422421836271827,
+    "frames": 47
+   },
+   "launch_fix": true,
+   "snapshots": [
+    {
+     "ref_frame": 7,
+     "video_frame": 63,
+     "vine_mm": 249.79127502441406,
+     "sim_vine_mm": 255.0,
+     "t_s": 2.101060606060606
+    },
+    {
+     "ref_frame": 16,
+     "video_frame": 93,
+     "vine_mm": 425.37078857421875,
+     "sim_vine_mm": 430.0,
+     "t_s": 3.1015656565656564
+    },
+    {
+     "ref_frame": 34,
+     "video_frame": 172,
+     "vine_mm": 787.1978149414062,
+     "sim_vine_mm": 695.0,
+     "t_s": 5.736228956228956
+    },
+    {
+     "ref_frame": 44,
+     "video_frame": 225,
+     "vine_mm": 1051.683349609375,
+     "sim_vine_mm": 1025.0,
+     "t_s": 7.503787878787879
+    }
+   ]
+  }
+ }
+}

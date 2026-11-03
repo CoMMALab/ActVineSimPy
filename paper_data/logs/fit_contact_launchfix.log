@@ -1,0 +1,13 @@
+[W1029 11:25:15.009653929 Context.cpp:508] Warning: torch.backends.cuda.preferred_linalg_library is an experimental feature. If you see any error or unexpected behavior when this flag is set please file an issue on GitHub. (function operator())
+start (checkpoints/spin8_manual.json): 66.5
+gen 0: best 66.5 at pressure_pa 9.9e+03, wrinkle_scale 1.38, ang_damp 0.00325, vine_friction 0.0928, obj_friction 0.2, obj_spin 4  (all-time 66.5, 694 s)
+gen 1: best 67.6 at pressure_pa 1.1e+04, wrinkle_scale 1.52, ang_damp 0.00279, vine_friction 0.0885, obj_friction 0.218, obj_spin 5.46  (all-time 66.5, 1278 s)
+gen 2: best 65.3 at pressure_pa 1.41e+04, wrinkle_scale 1.87, ang_damp 0.00858, vine_friction 0.0651, obj_friction 0.196, obj_spin 4.23  (all-time 65.3, 1738 s)
+gen 3: best 66.9 at pressure_pa 1.43e+04, wrinkle_scale 1.42, ang_damp 0.0106, vine_friction 0.0469, obj_friction 0.155, obj_spin 4.39  (all-time 65.3, 1997 s)
+gen 4: best 65.7 at pressure_pa 1.23e+04, wrinkle_scale 1.14, ang_damp 0.0118, vine_friction 0.0376, obj_friction 0.143, obj_spin 5.52  (all-time 65.3, 2844 s)
+gen 5: best 65.4 at pressure_pa 1.29e+04, wrinkle_scale 1.02, ang_damp 0.012, vine_friction 0.0567, obj_friction 0.141, obj_spin 4.59  (all-time 65.3, 3074 s)
+gen 6: best 64.7 at pressure_pa 1.23e+04, wrinkle_scale 1.16, ang_damp 0.0164, vine_friction 0.0629, obj_friction 0.151, obj_spin 4.47  (all-time 64.7, 3303 s)
+gen 7: best 65.3 at pressure_pa 1.22e+04, wrinkle_scale 1.19, ang_damp 0.0163, vine_friction 0.0461, obj_friction 0.145, obj_spin 4.48  (all-time 64.7, 3532 s)
+gen 8: best 64.9 at pressure_pa 1.34e+04, wrinkle_scale 1.19, ang_damp 0.0153, vine_friction 0.0489, obj_friction 0.141, obj_spin 5.25  (all-time 64.7, 3761 s)
+gen 9: best 64.8 at pressure_pa 1.31e+04, wrinkle_scale 1.15, ang_damp 0.0146, vine_friction 0.0542, obj_friction 0.139, obj_spin 5.01  (all-time 64.7, 3989 s)
+wrote /home/yitian/vine-push/checkpoints/contact_launchfix.json

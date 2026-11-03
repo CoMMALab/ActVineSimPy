@@ -1,0 +1,10 @@
+start (checkpoints/contact_from_base.json): 89.6
+gen 0: best 81.2 at pressure_pa 1.6e+04, wrinkle_scale 1.81, ang_damp 0.00243, vine_friction 0.111  (all-time 81.2, 471 s)
+gen 1: best 80.6 at pressure_pa 1.48e+04, wrinkle_scale 2.37, ang_damp 0.000798, vine_friction 0.107  (all-time 80.6, 822 s)
+gen 2: best 80.1 at pressure_pa 9.89e+03, wrinkle_scale 1.48, ang_damp 0.000447, vine_friction 0.0903  (all-time 80.1, 1044 s)
+gen 3: best 81.1 at pressure_pa 1e+04, wrinkle_scale 1.07, ang_damp 0.000445, vine_friction 0.12  (all-time 80.1, 1334 s)
+gen 4: best 78.1 at pressure_pa 1.05e+04, wrinkle_scale 1.3, ang_damp 0.00167, vine_friction 0.117  (all-time 78.1, 1530 s)
+gen 5: best 76.2 at pressure_pa 9.9e+03, wrinkle_scale 1.38, ang_damp 0.00325, vine_friction 0.0928  (all-time 76.2, 1722 s)
+gen 6: best 77.1 at pressure_pa 1.03e+04, wrinkle_scale 1.33, ang_damp 0.00168, vine_friction 0.12  (all-time 76.2, 1920 s)
+gen 7: best 77.4 at pressure_pa 9.69e+03, wrinkle_scale 1.4, ang_damp 0.00152, vine_friction 0.0992  (all-time 76.2, 2101 s)
+wrote /home/yitian/vine-push/checkpoints/wrinkle_mu03.json

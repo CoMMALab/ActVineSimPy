@@ -1,0 +1,17 @@
+[W1031 10:34:47.230544316 Context.cpp:508] Warning: torch.backends.cuda.preferred_linalg_library is an experimental feature. If you see any error or unexpected behavior when this flag is set please file an issue on GitHub. (function operator())
+demo_5b_push1: shape 10.2 mm, box 20.4 mm, turn 2.0 deg, 11/16 frames reached
+   window-matched over 11 unsuspect frames: vine 8.4 mm, block 13.1 mm (suspect: [])
+wrote out/paper_figs/demo_5b_spin8_manual/contact_demo_5b_push1_col.{pdf,png}
+wrote out/paper_figs/demo_5b_spin8_manual/contact_demo_5b_push1_wide.{pdf,png}
+demo_5b_push2: shape 18.5 mm, box 29.2 mm, turn 1.1 deg, 13/19 frames reached
+   window-matched over 10 unsuspect frames: vine 4.8 mm, block 12.6 mm (suspect: [16, 17, 18])
+wrote out/paper_figs/demo_5b_spin8_manual/contact_demo_5b_push2_col.{pdf,png}
+wrote out/paper_figs/demo_5b_spin8_manual/contact_demo_5b_push2_wide.{pdf,png}
+demo_5b_push3: shape 128.5 mm, box 24.9 mm, turn 2.6 deg, 8/14 frames reached
+   window-matched over 5 unsuspect frames: vine 6.6 mm, block 4.0 mm (suspect: [10, 11, 12, 13])
+wrote out/paper_figs/demo_5b_spin8_manual/contact_demo_5b_push3_col.{pdf,png}
+wrote out/paper_figs/demo_5b_spin8_manual/contact_demo_5b_push3_wide.{pdf,png}
+wrote out/paper_figs/demo_5b_spin8_manual/demo_5b_columns.{pdf,png}
+wrote out/paper_figs/demo_5b_spin8_manual/demo_5b_wide.{pdf,png}
+wrote out/paper_figs/demo_5b_spin8_manual/demo_5b_col.{pdf,png}
+wrote out/paper_figs/demo_5b_spin8_manual/errors.json

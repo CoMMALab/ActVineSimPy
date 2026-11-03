@@ -1,0 +1,20 @@
+start (stiffness 0.2, damping 1.24): 64.3 mm
+gen 0: best 64.3 mm at stiffness 0.0656, damping 0.311  (all-time best 64.3 mm, 1493 s)
+gen 1: best 70.6 mm at stiffness 0.292, damping 2.39  (all-time best 64.3 mm, 1644 s)
+gen 2: best 15.1 mm at stiffness 0.235, damping 2.57  (all-time best 15.1 mm, 1803 s)
+gen 3: best 15.3 mm at stiffness 0.303, damping 2.48  (all-time best 15.1 mm, 1958 s)
+gen 4: best 14.9 mm at stiffness 0.274, damping 2.72  (all-time best 14.9 mm, 2120 s)
+gen 5: best 14.9 mm at stiffness 0.315, damping 2.33  (all-time best 14.9 mm, 2277 s)
+
+best: stiffness_val 0.2744, damping 2.717 (si ang_damp 0.000272) -> 14.9 mm mean
+  free_straight        1.7 mm
+  free_k1              7.9 mm
+  free_k2             16.2 mm
+  free_k3.3           29.9 mm
+  free_k-2            15.5 mm
+  free_s_curve        11.1 mm
+  free_late_bend       6.4 mm
+  wall_45             36.2 mm
+  wall_parallel       11.6 mm
+  post                12.2 mm
+wrote out/fit_master_pbdonly/fit.json and compare.png

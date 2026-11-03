@@ -1,8 +1,0 @@
-long_02: shape 25.3 mm, box 32.6 mm, turn 3.9 deg, 47/50 frames reached
-   window-matched over 47 unsuspect frames: vine 9.0 mm, block 6.3 mm (suspect: [])
-wrote out/paper_figs/long_mu2/contact_long_02_col.{pdf,png}
-wrote out/paper_figs/long_mu2/contact_long_02_wide.{pdf,png}
-wrote out/paper_figs/long_mu2/contact_long_02_vert.{pdf,png}
-wrote out/paper_figs/long_mu2/long02_wide.{pdf,png}
-wrote out/paper_figs/long_mu2/long02_col.{pdf,png}
-wrote out/paper_figs/long_mu2/errors.json
